@@ -1,0 +1,31 @@
+[
+  {"model": "productos.categoria", "pk": 1, "fields": {"nombre": "Pisos", "tipo": "piso", "descripcion": "Pisos cerámicos y vinílicos", "activa": true, "orden": 1}},
+  {"model": "productos.categoria", "pk": 2, "fields": {"nombre": "Porcelanatos", "tipo": "porcelanato", "descripcion": "Porcelanatos rectificados y pulidos", "activa": true, "orden": 2}},
+  {"model": "productos.categoria", "pk": 3, "fields": {"nombre": "Cerámicas", "tipo": "ceramica", "descripcion": "Revestimientos cerámicos para paredes y pisos", "activa": true, "orden": 3}},
+  {"model": "productos.categoria", "pk": 4, "fields": {"nombre": "Sanitarios", "tipo": "sanitario", "descripcion": "Inodoros, bidets, lavatorios y piletas", "activa": true, "orden": 4}},
+  {"model": "productos.categoria", "pk": 5, "fields": {"nombre": "Accesorios de Baño", "tipo": "accesorio_bano", "descripcion": "Espejos, toalleros, jaboneras y más", "activa": true, "orden": 5}},
+  {"model": "productos.categoria", "pk": 6, "fields": {"nombre": "Artículos de Cocina", "tipo": "cocina", "descripcion": "Bachas, griferías y accesorios de cocina", "activa": true, "orden": 6}},
+
+  {"model": "productos.marca", "pk": 1, "fields": {"nombre": "Porcelanosa", "pais_origen": "España", "activa": true}},
+  {"model": "productos.marca", "pk": 2, "fields": {"nombre": "Roca", "pais_origen": "España", "activa": true}},
+  {"model": "productos.marca", "pk": 3, "fields": {"nombre": "Gresia", "pais_origen": "Brasil", "activa": true}},
+  {"model": "productos.marca", "pk": 4, "fields": {"nombre": "Cortines", "pais_origen": "Argentina", "activa": true}},
+  {"model": "productos.marca", "pk": 5, "fields": {"nombre": "Celima", "pais_origen": "Perú", "activa": true}},
+  {"model": "productos.marca", "pk": 6, "fields": {"nombre": "San Lorenzo", "pais_origen": "Argentina", "activa": true}},
+
+  {"model": "productos.acabado", "pk": 1, "fields": {"nombre": "Mate", "descripcion": "Superficie sin brillo, fácil mantenimiento"}},
+  {"model": "productos.acabado", "pk": 2, "fields": {"nombre": "Brillante", "descripcion": "Superficie lisa y brillante"}},
+  {"model": "productos.acabado", "pk": 3, "fields": {"nombre": "Antideslizante", "descripcion": "Superficie rugosa para mayor seguridad"}},
+  {"model": "productos.acabado", "pk": 4, "fields": {"nombre": "Natural", "descripcion": "Acabado natural sin tratamiento especial"}},
+  {"model": "productos.acabado", "pk": 5, "fields": {"nombre": "Pulido", "descripcion": "Superficie pulida a espejo"}},
+  {"model": "productos.acabado", "pk": 6, "fields": {"nombre": "Rectificado", "descripcion": "Bordes cortados con precisión para juntas mínimas"}},
+  {"model": "productos.acabado", "pk": 7, "fields": {"nombre": "Rústico", "descripcion": "Aspecto artesanal y natural"}},
+  {"model": "productos.acabado", "pk": 8, "fields": {"nombre": "Satinado", "descripcion": "Entre mate y brillante"}},
+
+  {"model": "productos.tipoinstalacion", "pk": 1, "fields": {"nombre": "Piso"}},
+  {"model": "productos.tipoinstalacion", "pk": 2, "fields": {"nombre": "Pared"}},
+  {"model": "productos.tipoinstalacion", "pk": 3, "fields": {"nombre": "Piso y pared"}},
+  {"model": "productos.tipoinstalacion", "pk": 4, "fields": {"nombre": "Exterior"}},
+  {"model": "productos.tipoinstalacion", "pk": 5, "fields": {"nombre": "Interior"}},
+  {"model": "productos.tipoinstalacion", "pk": 6, "fields": {"nombre": "Húmedo"}}
+]

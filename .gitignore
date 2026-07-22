@@ -1,0 +1,13 @@
+# Carpetas de dependencias (Node.js, Python, etc.)
+node_modules/
+venv/
+
+# Archivos de configuración con claves/secretos
+.env
+
+# Archivos generados por el sistema operativo
+.DS_Store
+Thumbs.db
+
+# Registros y logs
+*.log
