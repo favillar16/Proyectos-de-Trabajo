@@ -9,8 +9,13 @@ import { useEffect, useRef, useCallback } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 
 const WS_BASE = (() => {
-  const api = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1'
-  const host = api.replace(/^https?/, 'ws').replace('/api/v1', '')
+  // Misma lógica que services/api.js: usa VITE_API_URL si está fijada,
+  // si no deriva el host actual del navegador (funciona en localhost,
+  // en la PC servidor y en tablets sin recompilar).
+  const API_PORT = import.meta.env.VITE_API_PORT || '8000'
+  const api = import.meta.env.VITE_API_URL || `http://${window.location.hostname}:${API_PORT}/api/v1`
+  const wsProtocol = window.location.protocol === 'https:' ? 'wss' : 'ws'
+  const host = api.replace(/^https?/, wsProtocol).replace('/api/v1', '')
   return host
 })()
 

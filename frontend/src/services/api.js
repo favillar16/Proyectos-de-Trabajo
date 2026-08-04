@@ -1,6 +1,11 @@
 import axios from 'axios'
 
-const BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1'
+// Si VITE_API_URL está definida se respeta (útil para forzar una URL fija).
+// Si no, se deriva del host con el que el navegador cargó la página, para que
+// funcione automáticamente tanto en localhost como en la PC servidor y en
+// cualquier tablet conectada por IP en la red WiFi, sin recompilar.
+const API_PORT = import.meta.env.VITE_API_PORT || '8000'
+const BASE_URL = import.meta.env.VITE_API_URL || `http://${window.location.hostname}:${API_PORT}/api/v1`
 
 const api = axios.create({
   baseURL: BASE_URL,
