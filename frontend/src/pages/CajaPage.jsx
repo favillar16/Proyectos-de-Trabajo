@@ -28,7 +28,7 @@ import toast from 'react-hot-toast'
 
 const C = {
   sidebar:'#453941', sidebarHov:'#362F31',
-  gold:'#B99C74', goldDark:'#8a7355', goldMuted:'rgba(185,156,116,0.10)',
+  gold:'#B99C74', goldDark:'#8a7355', goldLight:'#d4bc98', goldMuted:'rgba(185,156,116,0.10)',
   border:'#e8e4df', bg:'#ffffff', bgSec:'#fafaf9', bgTer:'#f5f4f2',
   text:'#1a1714', textSec:'#6b6560', textMuted:'#9e9892',
   success:'#3d7a5a', successBg:'#edf7f1', successBorder:'#b8deca',
@@ -293,7 +293,11 @@ function PanelCobro({ pedido: pedidoResumen, sesion, onPagado, onCancelar }) {
     },
   })
 
+  const facturaSinDatos = tipoComprobante === 'factura' &&
+    !(cli.ruc.trim() && cli.razon_social.trim())
+
   const puedeConfirmar = pedido?.estado === 'listo' &&
+    !facturaSinDatos &&
     (medio !== 'efectivo' || Number(recibido) >= total || !recibido)
 
   return (
@@ -528,6 +532,12 @@ function PanelCobro({ pedido: pedidoResumen, sesion, onPagado, onCancelar }) {
             {cli.ruc && cli.razon_social && !cli.id && (
               <p style={{ fontSize:'11.5px', color:C.goldDark, marginBottom:'8px' }}>
                 Este cliente se guardará en el padrón para futuras compras.
+              </p>
+            )}
+
+            {facturaSinDatos && (
+              <p style={{ fontSize:'11.5px', color:C.danger, marginBottom:'8px' }}>
+                Para emitir factura, completá al menos la razón social y el RUC/CI.
               </p>
             )}
 

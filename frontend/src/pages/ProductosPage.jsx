@@ -11,7 +11,6 @@ import Layout from '../components/layout/Layout'
 import ProductoForm from '../components/productos/ProductoForm'
 import GestionCatalogos from '../components/productos/GestionCatalogos'
 import { useProductoForm } from '../hooks/useProductoForm'
-import toast from 'react-hot-toast'
 
 const C = {
   sidebar:    '#453941',
@@ -423,7 +422,7 @@ export default function ProductosPage() {
               key={p.id}
               producto={p}
               onEditar={abrirEdicion}
-              onVerDetalle={(prod) => toast(`Ver detalle: ${prod.nombre}`, { icon:'👁' })}
+              onVerDetalle={abrirEdicion}
             />
           ))}
         </div>

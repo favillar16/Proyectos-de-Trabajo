@@ -21,7 +21,8 @@ const WS_BASE = (() => {
 
 export function usePedidoSocket({ pedidoId, rol, onMensaje } = {}) {
   const ws          = useRef(null)
-  const reconectar  = useRef(null)
+  const timeoutId   = useRef(null)
+  const intentos    = useRef(0)
   const queryClient = useQueryClient()
 
   const conectar = useCallback(() => {
@@ -32,7 +33,8 @@ export function usePedidoSocket({ pedidoId, rol, onMensaje } = {}) {
     ws.current = new WebSocket(url)
 
     ws.current.onopen = () => {
-      clearTimeout(reconectar.current)
+      clearTimeout(timeoutId.current)
+      intentos.current = 0
     }
 
     ws.current.onmessage = (e) => {
@@ -51,9 +53,9 @@ export function usePedidoSocket({ pedidoId, rol, onMensaje } = {}) {
 
     ws.current.onclose = () => {
       // Reconexión exponencial: 2s, 4s, 8s… máx 30s
-      const delay = Math.min(30000, 2000 * (reconectar.current?.intentos ?? 1))
-      reconectar.current = setTimeout(() => {
-        reconectar.current = { intentos: (reconectar.current?.intentos ?? 1) + 1 }
+      const delay = Math.min(30000, 2000 * 2 ** intentos.current)
+      timeoutId.current = setTimeout(() => {
+        intentos.current += 1
         conectar()
       }, delay)
     }
@@ -67,7 +69,7 @@ export function usePedidoSocket({ pedidoId, rol, onMensaje } = {}) {
     if (!pedidoId && !rol) return
     conectar()
     return () => {
-      clearTimeout(reconectar.current)
+      clearTimeout(timeoutId.current)
       ws.current?.close()
     }
   }, [pedidoId, rol])

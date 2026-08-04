@@ -27,6 +27,7 @@ import { useShowroom, VISTA, ORDEN } from '../hooks/useShowroom'
 import { useDevice } from '../hooks/useDevice'
 import { useAuthStore } from '../store/authStore'
 import { ventasApi } from '../services/api'
+import { mensajeErrorApi } from '../utils/apiErrors'
 import toast from 'react-hot-toast'
 
 const C = {
@@ -251,6 +252,11 @@ function PanelDetalle({ producto, detalle, stock, cargando, onCerrar, device, on
     setCantidad(1)
   }, [producto?.id])
 
+  // Stock disponible de la variante elegida — limita cuánto se puede pedir
+  const stockSel = varianteSel
+    ? Math.max(0, Number(varianteSel.stock?.disponible ?? varianteSel.stock?.cantidad ?? 0))
+    : Infinity
+
   if (!producto) return null
 
   const imagenes  = detalle?.imagenes  || []
@@ -440,7 +446,10 @@ function PanelDetalle({ producto, detalle, stock, cargando, onCerrar, device, on
                   return (
                     <button key={v.id}
                       disabled={sinStock}
-                      onClick={() => setVarianteSel(v)}
+                      onClick={() => {
+                        setVarianteSel(v)
+                        setCantidad(c => Math.max(1, Math.min(c, Math.floor(Number(st)) || 1)))
+                      }}
                       style={{
                         display:'flex', alignItems:'center', justifyContent:'space-between',
                         gap:'10px', padding:'10px 12px', borderRadius:'9px',
@@ -467,6 +476,11 @@ function PanelDetalle({ producto, detalle, stock, cargando, onCerrar, device, on
               </div>
 
               {/* Cantidad + agregar */}
+              {varianteSel && stockSel < Infinity && (
+                <p style={{ fontSize:'10.5px', color:C.textMuted, marginBottom:'6px' }}>
+                  Máximo disponible: {Math.floor(stockSel)}
+                </p>
+              )}
               <div style={{ display:'flex', alignItems:'center', gap:'10px' }}>
                 <div style={{ display:'flex', alignItems:'center', gap:'6px' }}>
                   <button
@@ -478,17 +492,21 @@ function PanelDetalle({ producto, detalle, stock, cargando, onCerrar, device, on
                     <Minus size={16} />
                   </button>
                   <input
-                    type="number" min="1" step="1" value={cantidad}
-                    onChange={e => setCantidad(Math.max(1, Number(e.target.value) || 1))}
+                    type="number" min="1" max={stockSel === Infinity ? undefined : stockSel} step="1"
+                    value={cantidad}
+                    onChange={e => setCantidad(Math.min(Math.max(1, Number(e.target.value) || 1), Math.max(1, Math.floor(stockSel))))}
                     style={{ width:'56px', height: device.isTouch?'44px':'38px', textAlign:'center',
                       border:`1px solid ${C.border}`, borderRadius:'9px',
                       fontSize:'15px', fontWeight:'500', color:C.text, background:C.bg, outline:'none' }}
                   />
                   <button
-                    onClick={() => setCantidad(c => c + 1)}
+                    onClick={() => setCantidad(c => Math.min(c + 1, Math.max(1, Math.floor(stockSel))))}
+                    disabled={cantidad >= stockSel}
                     style={{ width: device.isTouch?'44px':'38px', height: device.isTouch?'44px':'38px',
                       borderRadius:'9px', background:C.bg, border:`1px solid ${C.border}`,
-                      cursor:'pointer', color:C.textSec, display:'flex', alignItems:'center',
+                      cursor: cantidad >= stockSel ? 'not-allowed' : 'pointer',
+                      opacity: cantidad >= stockSel ? 0.4 : 1,
+                      color:C.textSec, display:'flex', alignItems:'center',
                       justifyContent:'center', WebkitTapHighlightColor:'transparent' }}>
                     <Plus size={16} />
                   </button>
@@ -756,10 +774,7 @@ function CarritoShowroom({ items, onCambiarCantidad, onEliminar, onVaciar, onCer
       onCerrar()
     },
     onError: (err) => {
-      const msg = err.response?.data
-        ? JSON.stringify(err.response.data).slice(0, 120)
-        : 'Error al crear el pedido'
-      toast.error(msg)
+      toast.error(mensajeErrorApi(err, 'Error al crear el pedido'))
     },
   })
 

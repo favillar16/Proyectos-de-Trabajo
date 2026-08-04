@@ -17,6 +17,7 @@ import {
 import { ventasApi, productosApi } from '../../services/api'
 import { useDevice } from '../../hooks/useDevice'
 import { useAuthStore } from '../../store/authStore'
+import { mensajeErrorApi } from '../../utils/apiErrors'
 import toast from 'react-hot-toast'
 
 const C = {
@@ -553,10 +554,7 @@ export default function NuevoPedidoForm({ onPedidoCreado, onCancelar }) {
       onPedidoCreado?.(pedido)
     },
     onError: (err) => {
-      const msg = err.response?.data
-        ? JSON.stringify(err.response.data).slice(0, 120)
-        : 'Error al crear el pedido'
-      toast.error(msg)
+      toast.error(mensajeErrorApi(err, 'Error al crear el pedido'))
     },
   })
 
