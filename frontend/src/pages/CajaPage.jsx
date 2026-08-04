@@ -37,6 +37,10 @@ const C = {
   info:'#2a5c8a', infoBg:'#eef4fb',
 }
 
+// Tope de descuento que puede aplicar un cajero al cobrar (debe coincidir
+// con DESCUENTO_CAJA_MAXIMO en backend/apps/caja/views.py)
+const DESCUENTO_CAJA_MAXIMO = 70
+
 const MEDIOS = [
   { key:'efectivo',     label:'Efectivo',          icon:<Banknote size={18}/> },
   { key:'debito',       label:'Tarjeta débito',    icon:<CreditCard size={18}/> },
@@ -257,8 +261,8 @@ function PanelCobro({ pedido: pedidoResumen, sesion, onPagado, onCancelar }) {
 
   // Monto base = el que viene del pedido (ya considera precio negociado)
   const montoBase = Number(pedido?.monto_a_cobrar ?? pedido?.total ?? pedidoResumen?.monto_a_cobrar ?? pedidoResumen?.total ?? 0)
-  // Aplicar descuento porcentual de caja
-  const pct = Math.min(100, Math.max(0, Number(descuentoPct) || 0))
+  // Aplicar descuento porcentual de caja (tope alineado al backend: DESCUENTO_CAJA_MAXIMO)
+  const pct = Math.min(DESCUENTO_CAJA_MAXIMO, Math.max(0, Number(descuentoPct) || 0))
   const total = Math.round(montoBase * (100 - pct) / 100)
   const vuelto    = medio === 'efectivo' && Number(recibido) > total
     ? Number(recibido) - total
@@ -389,7 +393,7 @@ function PanelCobro({ pedido: pedidoResumen, sesion, onPagado, onCancelar }) {
         <div style={{ display:'flex', alignItems:'center', gap:'10px', marginBottom:'8px' }}>
           <div style={{ position:'relative', width:'120px' }}>
             <input
-              type="number" min="0" max="100" step="1"
+              type="number" min="0" max={DESCUENTO_CAJA_MAXIMO} step="1"
               value={descuentoPct}
               onChange={e => setDescuentoPct(e.target.value)}
               placeholder="0"

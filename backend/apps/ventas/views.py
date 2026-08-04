@@ -239,7 +239,7 @@ class CambioEstadoView(views.APIView):
     TRANSICIONES = {
         NotaPedido.ESTADO_PENDIENTE:       [NotaPedido.ESTADO_EN_PREPARACION, NotaPedido.ESTADO_CANCELADO],
         NotaPedido.ESTADO_EN_PREPARACION:  [NotaPedido.ESTADO_LISTO,          NotaPedido.ESTADO_CANCELADO],
-        NotaPedido.ESTADO_LISTO:           [NotaPedido.ESTADO_PAGADO,         NotaPedido.ESTADO_CANCELADO],
+        NotaPedido.ESTADO_LISTO:           [NotaPedido.ESTADO_CANCELADO],
     }
 
     EVENTO_POR_ESTADO = {
@@ -252,6 +252,17 @@ class CambioEstadoView(views.APIView):
     def post(self, request, pk):
         pedido      = get_object_or_404(NotaPedido, pk=pk)
         nuevo_estado = request.data.get('estado')
+
+        # El pago SIEMPRE se registra desde el módulo de Caja (RegistrarPagoView),
+        # que crea el Pago, descuenta stock e imprime el comprobante. Permitir
+        # "pagado" acá dejaría un pedido cerrado sin cobro, sin descuento de
+        # stock y sin rastro en los reportes de caja.
+        if nuevo_estado == NotaPedido.ESTADO_PAGADO:
+            return Response(
+                {'error': 'El pago se registra desde el módulo de Caja, no se puede '
+                          'marcar un pedido como pagado directamente.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         permitidos = self.TRANSICIONES.get(pedido.estado, [])
         if nuevo_estado not in permitidos:

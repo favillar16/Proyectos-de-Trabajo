@@ -2,6 +2,10 @@
 node_modules/
 venv/
 
+# Bytecode compilado de Python (binario, específico de cada máquina)
+__pycache__/
+*.pyc
+
 # Archivos de configuración con claves/secretos
 .env
 

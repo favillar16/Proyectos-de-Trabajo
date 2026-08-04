@@ -281,10 +281,21 @@ function PanelAjuste({ item, onCerrar }) {
 }
 
 // ─── Panel de historial de movimientos ───────────────────────────────────────
+const TIPO_MOV_CFG = {
+  entrada:    { color: 'success', signo: '+' },
+  devolucion: { color: 'success', signo: '+' },
+  liberacion: { color: 'success', signo: '+' },
+  salida:     { color: 'danger',  signo: '-' },
+  reserva:    { color: 'warning', signo: '-' },
+  ajuste:     { color: 'info',    signo: '' },
+}
+
 function PanelHistorial({ item, onCerrar }) {
-  // El historial completo se implementará en el sprint de reportes.
-  // Por ahora muestra el resumen de stock del ítem seleccionado.
-  const {} = {}  // placeholder para hooks futuros
+  const { data, isLoading, isError } = useQuery({
+    queryKey: ['movimientos-stock', item.variante_id],
+    queryFn: () => inventarioApi.movimientos({ variante_id: item.variante_id }).then(r => r.data),
+  })
+  const movimientos = data?.results || []
 
   return (
     <>
@@ -346,10 +357,53 @@ function PanelHistorial({ item, onCerrar }) {
             textTransform:'uppercase', letterSpacing:'0.06em', marginBottom:'12px' }}>
             Historial de movimientos
           </p>
-          <p style={{ fontSize:'13px', color:C.textMuted, textAlign:'center',
-            padding:'30px 0' }}>
-            El historial completo estará disponible en el módulo de reportes.
-          </p>
+
+          {isLoading && (
+            <p style={{ fontSize:'13px', color:C.textMuted, textAlign:'center', padding:'30px 0' }}>
+              Cargando…
+            </p>
+          )}
+
+          {isError && (
+            <p style={{ fontSize:'13px', color:C.danger, textAlign:'center', padding:'30px 0' }}>
+              No se pudo cargar el historial.
+            </p>
+          )}
+
+          {!isLoading && !isError && movimientos.length === 0 && (
+            <p style={{ fontSize:'13px', color:C.textMuted, textAlign:'center', padding:'30px 0' }}>
+              Todavía no hay movimientos registrados para esta variante.
+            </p>
+          )}
+
+          <div style={{ display:'flex', flexDirection:'column', gap:'10px' }}>
+            {movimientos.map(m => {
+              const cfg = TIPO_MOV_CFG[m.tipo] || { color:'textSec', signo:'' }
+              return (
+                <div key={m.id} style={{ padding:'10px 12px', borderRadius:'8px',
+                  border:`1px solid ${C.border}`, background:C.bgSec }}>
+                  <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start' }}>
+                    <div>
+                      <p style={{ fontSize:'12.5px', fontWeight:'600', color:C[cfg.color] || C.text }}>
+                        {m.tipo_display}
+                      </p>
+                      <p style={{ fontSize:'11px', color:C.textMuted, marginTop:'1px' }}>
+                        {formatFecha(m.fecha)}{m.usuario_nombre ? ` · ${m.usuario_nombre}` : ''}
+                      </p>
+                    </div>
+                    <p style={{ fontSize:'13px', fontWeight:'600', color:C[cfg.color] || C.text,
+                      whiteSpace:'nowrap' }}>
+                      {cfg.signo}{Number(m.cantidad).toFixed(2)}
+                    </p>
+                  </div>
+                  <p style={{ fontSize:'11px', color:C.textMuted, marginTop:'4px' }}>
+                    {Number(m.cantidad_anterior).toFixed(2)} → {Number(m.cantidad_posterior).toFixed(2)}
+                    {m.observaciones ? ` · ${m.observaciones}` : ''}
+                  </p>
+                </div>
+              )
+            })}
+          </div>
         </div>
       </div>
       <style>{`@keyframes slideIn{from{transform:translateX(100%)}to{transform:translateX(0)}}`}</style>

@@ -17,6 +17,7 @@ from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from django.db import transaction, IntegrityError
 from django.conf import settings
+from decimal import Decimal
 import logging
 
 logger = logging.getLogger(__name__)
@@ -24,6 +25,11 @@ logger = logging.getLogger(__name__)
 from .models import SesionCaja, Pago
 from .printer import imprimir_ticket, imprimir_factura, imprimir_cierre, ticket_a_texto
 from apps.ventas.models import NotaPedido
+
+# Tope de descuento que puede aplicar un cajero al cobrar. Un 100% equivaldría
+# a regalar la mercadería sin ninguna aprobación adicional; 70% ya cubre
+# cualquier negociación real de piso de venta.
+DESCUENTO_CAJA_MAXIMO = Decimal('70')
 
 
 # ─── Serializers inline ───────────────────────────────────────────────────────
@@ -298,9 +304,9 @@ class RegistrarPagoView(views.APIView):
             desc_pct = Decimal(str(request.data.get('descuento_porcentaje', 0) or 0))
         except Exception:
             desc_pct = Decimal('0')
-        if desc_pct < 0 or desc_pct > 100:
+        if desc_pct < 0 or desc_pct > DESCUENTO_CAJA_MAXIMO:
             return Response(
-                {'error': 'El descuento debe estar entre 0 y 100 por ciento.'},
+                {'error': f'El descuento debe estar entre 0 y {DESCUENTO_CAJA_MAXIMO} por ciento.'},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 

@@ -23,6 +23,8 @@ from django.utils import timezone
 from .models import Stock, MovimientoStock
 from apps.productos.models import Producto, Variante
 
+MAX_MOVIMIENTOS = 200
+
 
 # ─── Serializers inline (sin archivo separado para mantener todo junto) ───────
 
@@ -68,6 +70,21 @@ class AjusteStockSerializer(serializers.Serializer):
         choices=[('venta', 'Unidad de venta (m²/unidad)'), ('caja', 'Cajas')],
         required=False, default='venta')
     observaciones = serializers.CharField(required=False, allow_blank=True, default='')
+
+
+class MovimientoStockSerializer(serializers.ModelSerializer):
+    """Fila del historial de auditoría de una variante."""
+    tipo_display = serializers.CharField(source='get_tipo_display', read_only=True)
+    usuario_nombre = serializers.CharField(source='usuario.nombre_completo', read_only=True)
+
+    class Meta:
+        model  = MovimientoStock
+        fields = [
+            'id', 'tipo', 'tipo_display', 'cantidad',
+            'cantidad_anterior', 'cantidad_posterior',
+            'referencia_tipo', 'referencia_id',
+            'usuario_nombre', 'observaciones', 'fecha',
+        ]
 
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -313,3 +330,29 @@ class AjusteStockView(views.APIView):
             'disponible':str(stock.cantidad_disponible),
             'estado':    stock.estado,
         })
+
+
+# ─── Historial de movimientos ──────────────────────────────────────────────────
+
+class MovimientoStockListView(views.APIView):
+    """
+    GET /inventario/movimientos/?variante_id=<id>
+    Historial de auditoría (entradas, salidas, ajustes, reservas) de una
+    variante, más reciente primero. Es de solo lectura: MovimientoStock
+    nunca se edita ni se borra.
+    """
+    permission_classes = [TodosLosRoles]
+
+    def get(self, request):
+        variante_id = request.query_params.get('variante_id')
+        if not variante_id:
+            return Response({'error': 'variante_id es requerido.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        qs = (
+            MovimientoStock.objects
+            .filter(variante_id=variante_id)
+            .select_related('usuario')
+            .order_by('-fecha')[:MAX_MOVIMIENTOS]
+        )
+        data = MovimientoStockSerializer(qs, many=True).data
+        return Response({'results': data, 'count': len(data)})
