@@ -13,9 +13,11 @@ SECRET_KEY = config('SECRET_KEY', default='django-insecure-cambiar-en-produccion
 
 DEBUG = config('DEBUG', default=True, cast=bool)
 
+# '*' por defecto: la tablet llama a la API directo por su IP LAN (variable
+# según el local), no solo por localhost. Ver nota en .env.
 ALLOWED_HOSTS = config(
     'ALLOWED_HOSTS',
-    default='localhost,127.0.0.1,0.0.0.0',
+    default='*',
     cast=lambda v: [s.strip() for s in v.split(',')]
 )
 

@@ -15,3 +15,8 @@ Thumbs.db
 
 # Registros y logs
 *.log
+
+# Sync notebook — credenciales y datos locales de cada máquina, no van al repo
+sync_notebook/config.env
+sync_notebook/tmp/
+sync_notebook/estado/

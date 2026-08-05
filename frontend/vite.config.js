@@ -1,8 +1,56 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
+import { VitePWA } from 'vite-plugin-pwa'
 
 export default defineConfig({
-  plugins: [react()],
+  plugins: [
+    react(),
+    VitePWA({
+      registerType: 'autoUpdate',
+      injectRegister: 'auto',
+      includeAssets: ['favicon.ico'],
+      manifest: {
+        name: 'Oga Porã — Gestión Comercial',
+        short_name: 'Oga Porã',
+        description: 'Gestión comercial, stock y showroom — Oga Porã',
+        lang: 'es',
+        start_url: '/',
+        scope: '/',
+        display: 'standalone',
+        orientation: 'any',
+        background_color: '#0a0a0a',
+        theme_color: '#0a0a0a',
+        icons: [
+          { src: '/icons/icon-192.png', sizes: '192x192', type: 'image/png', purpose: 'any' },
+          { src: '/icons/icon-512.png', sizes: '512x512', type: 'image/png', purpose: 'any' },
+          { src: '/icons/icon-512-maskable.png', sizes: '512x512', type: 'image/png', purpose: 'maskable' },
+        ],
+      },
+      workbox: {
+        // Los datos de stock/ventas/caja deben ser siempre frescos: la API
+        // nunca se sirve desde caché, solo se cachea el "shell" de la app.
+        navigateFallbackDenylist: [/^\/api\//],
+        runtimeCaching: [
+          {
+            urlPattern: /\/api\//,
+            handler: 'NetworkOnly',
+          },
+          {
+            // Fotos de productos — sirven para el showroom aunque el wifi falle un instante
+            urlPattern: /\/media\//,
+            handler: 'StaleWhileRevalidate',
+            options: { cacheName: 'media-images', expiration: { maxEntries: 200 } },
+          },
+        ],
+      },
+      devOptions: {
+        // Habilita el service worker también con `npm run dev`, para poder
+        // probar la instalación en la tablet sin tener que hacer build.
+        enabled: true,
+        type: 'module',
+      },
+    }),
+  ],
   server: {
     host: '0.0.0.0',      // Accesible desde otros equipos en la red WiFi
     port: 5173,
