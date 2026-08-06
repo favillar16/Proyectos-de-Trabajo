@@ -341,21 +341,28 @@ python manage.py migrate --fake-initial
 ```
 
 ### El frontend muestra "Error de conexión"
-Verificar que el backend esté corriendo en el puerto 8000:
+Verificar que el backend esté corriendo en el puerto 8000 — con `iniciar.bat`
+(recomendado) o a mano con Daphne:
 ```cmd
-python manage.py runserver 0.0.0.0:8000
+daphne -b 0.0.0.0 -p 8000 config.asgi:application
 ```
+`python manage.py runserver` también responde en ese puerto, pero solo sirve
+HTTP: si el error de conexión era en realidad falta de actualizaciones en
+vivo (pedidos, alertas de stock), `runserver` no lo va a arreglar porque no
+soporta WebSocket — hace falta Daphne.
 
 ---
 
 ## Lista de entregables
 
-- [ ] ZIP con el código fuente completo (`ceramica_system_roles.zip`)
+- [ ] ZIP con el código fuente completo (`ceramica_final.zip`)
 - [ ] Este documento de checklist completado con ✓ en cada prueba
+- [ ] IP de la PC servidor reservada en el router (`guia_instalacion_dispositivos.md` §2) —
+      sin esto, un reinicio del router puede dejar tablets y PCs sin acceso
 - [ ] Contraseñas del sistema entregadas al propietario por escrito
 - [ ] Capacitación de 1 hora con cada rol (vendedor, cajero, depósito)
 - [ ] Manual de usuario en formato PDF (pendiente)
 
 ---
 
-*Última revisión: mayo 2025*
+*Última revisión: agosto 2026*
