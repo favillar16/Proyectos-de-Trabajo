@@ -20,3 +20,6 @@ Thumbs.db
 sync_notebook/config.env
 sync_notebook/tmp/
 sync_notebook/estado/
+
+# Service worker de PWA generado por Vite en modo dev, no es código fuente
+frontend/dev-dist/
