@@ -42,13 +42,14 @@ export default function PanelReportes() {
 
   const [desde, setDesde] = useState(primerDia)
   const [hasta, setHasta] = useState(hoyStr)
+  const [tamano, setTamano] = useState('a4') // tamaño de hoja del PDF: a4 | oficio
   const [cargando, setCargando] = useState(null) // `${tipo}-${formato}`
 
   const descargar = async (tipo, formato, nombre) => {
     const key = `${tipo}-${formato}`
     setCargando(key)
     try {
-      const params = tipo === 'stock' ? {} : { desde, hasta }
+      const params = { ...(tipo === 'stock' ? {} : { desde, hasta }), tamano }
       const res = await cajaApi.descargarReporte(tipo, formato, params)
       const ext = formato === 'pdf' ? 'pdf' : 'xlsx'
       const fecha = hoyStr.replace(/-/g,'')
@@ -72,7 +73,7 @@ export default function PanelReportes() {
             Descargá en PDF o Excel
           </p>
         </div>
-        {/* Rango de fechas (aplica a Ventas y Caja) */}
+        {/* Rango de fechas (aplica a Ventas y Caja) + tamaño de hoja del PDF */}
         <div style={{ display:'flex', alignItems:'center', gap:'8px' }}>
           <div>
             <label style={{ display:'block', fontSize:'10.5px', color:C.textMuted, marginBottom:'2px' }}>Desde</label>
@@ -85,6 +86,15 @@ export default function PanelReportes() {
             <input type="date" value={hasta} onChange={e=>setHasta(e.target.value)}
               style={{ height:'34px', padding:'0 8px', border:`1px solid ${C.border}`,
                 borderRadius:'7px', fontSize:'12.5px', color:C.text, background:C.bg, outline:'none' }}/>
+          </div>
+          <div>
+            <label style={{ display:'block', fontSize:'10.5px', color:C.textMuted, marginBottom:'2px' }}>Hoja (PDF)</label>
+            <select value={tamano} onChange={e=>setTamano(e.target.value)}
+              style={{ height:'34px', padding:'0 8px', border:`1px solid ${C.border}`,
+                borderRadius:'7px', fontSize:'12.5px', color:C.text, background:C.bg, outline:'none' }}>
+              <option value="a4">A4</option>
+              <option value="oficio">Oficio</option>
+            </select>
           </div>
         </div>
       </div>

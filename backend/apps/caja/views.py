@@ -575,11 +575,17 @@ def _formato(request):
     return 'xlsx' if f in ('xlsx', 'excel', 'csv') else 'pdf'
 
 
+def _tamanio(request):
+    """Tamaño de hoja para el PDF: 'a4' (default) u 'oficio'. Sin efecto en xlsx."""
+    t = request.query_params.get('tamano', request.query_params.get('tamanio', 'a4')).lower()
+    return 'oficio' if t in ('oficio', 'legal', 'ofic') else 'a4'
+
+
 class ReporteStockView(views.APIView):
     permission_classes = [EsAdmin]
     def get(self, request):
         reporte = rep.reporte_stock()
-        return rep.responder_reporte(reporte, _formato(request), 'reporte_stock')
+        return rep.responder_reporte(reporte, _formato(request), 'reporte_stock', tamanio=_tamanio(request))
 
 
 class ReporteVentasView(views.APIView):
@@ -587,7 +593,7 @@ class ReporteVentasView(views.APIView):
     def get(self, request):
         desde, hasta = _parse_rango(request)
         reporte = rep.reporte_ventas(desde, hasta)
-        return rep.responder_reporte(reporte, _formato(request), 'balance_ventas')
+        return rep.responder_reporte(reporte, _formato(request), 'balance_ventas', tamanio=_tamanio(request))
 
 
 class ReporteCajaView(views.APIView):
@@ -595,4 +601,4 @@ class ReporteCajaView(views.APIView):
     def get(self, request):
         desde, hasta = _parse_rango(request)
         reporte = rep.reporte_caja(desde, hasta)
-        return rep.responder_reporte(reporte, _formato(request), 'extracto_caja')
+        return rep.responder_reporte(reporte, _formato(request), 'extracto_caja', tamanio=_tamanio(request))
