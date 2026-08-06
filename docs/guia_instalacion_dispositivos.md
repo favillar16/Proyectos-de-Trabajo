@@ -44,10 +44,45 @@ Después de instalar:
 
 1. **Reservar la IP de esta PC en el router** (IP fija por MAC). Todos los
    demás dispositivos (PCs, tablets, notebook) apuntan a esta IP — si
-   cambia, hay que reconfigurar cada uno.
+   cambia, hay que reconfigurar cada uno (ver "Si la IP cambia igual" más
+   abajo y en `pwa_tablet.md`).
+
+   Pasos generales (varían según la marca del router):
+   1. Conseguir la dirección MAC de esta PC: en PowerShell,
+      `Get-NetAdapter | Where-Object Status -eq Up | Select Name,MacAddress`
+      (el adaptador Wi-Fi o Ethernet que esté "Up" es el que importa).
+   2. Entrar a la administración del router — normalmente
+      `http://192.168.0.1` o `http://192.168.1.1` desde un navegador en la
+      misma red (usuario/contraseña suele estar en una etiqueta del router).
+   3. Buscar una sección tipo **"DHCP" → "Reserva de IP" / "Static Lease" /
+      "Address Reservation" / "IP-MAC Binding"** (el nombre exacto cambia
+      según el fabricante).
+   4. Asociar la MAC de esta PC a la IP que ya tiene asignada (o a una IP
+      fija a elección, ej. `192.168.0.50`) y guardar. Puede pedir reiniciar
+      el router.
 2. Anotar esa IP — se necesita en los pasos §3, §4 y §5.
 3. Para el día a día, arrancar el sistema con `iniciar.bat` (abre backend y
    frontend, y el navegador local automáticamente).
+
+### Si la IP cambia igual (plan B: nombre en vez de número)
+
+Windows expone esta PC en la red local por su nombre además de por IP —
+esto **no reemplaza** la reserva de IP en el router (es más confiable), pero
+sirve como alternativa si por algún motivo la IP cambió y todavía no se
+actualizó en algún dispositivo:
+
+```
+http://DESKTOP-UAIGET9.local:5173
+```
+
+*(el nombre sale de `hostname` en la PC servidor — ya viene habilitado el
+firewall de Windows para responder a estas consultas en la red local)*
+
+⚠️ A diferencia de la IP, esto depende de que el router y el Chrome de cada
+tablet soporten mDNS — no todos los equipos Android lo resuelven de forma
+confiable. Probarlo una vez en cada tablet cuando haya tiempo, para saber
+si funciona en esta red antes de necesitarlo en un apuro. Si no carga,
+usar la IP como siempre.
 
 ---
 
