@@ -17,12 +17,11 @@ from apps.usuarios.permissions import (
 )
 
 from .models import (
-    Categoria, Marca, Acabado, TipoInstalacion,
+    Categoria, Marca, Acabado,
     Producto, Variante, ImagenProducto, ImagenVariante,
 )
 from .serializers import (
     CategoriaSerializer, MarcaSerializer, AcabadoSerializer,
-    TipoInstalacionSerializer,
     ProductoListSerializer, ProductoDetailSerializer, ProductoWriteSerializer,
     VarianteReadSerializer, VarianteWriteSerializer,
     ImagenProductoSerializer, ImagenVarianteSerializer,
@@ -32,6 +31,8 @@ from .filters import ProductoFilter
 
 def _producto_qs_completo():
     """QuerySet base con todos los prefetch necesarios."""
+    from apps.costos.models import PedidoProveedor
+
     return Producto.objects.select_related(
         'categoria', 'marca',
     ).prefetch_related(
@@ -48,7 +49,13 @@ def _producto_qs_completo():
                     'stock',
                 ),
         ),
-        'tipos_instalacion',
+        Prefetch(
+            'pedidos_proveedor',
+            queryset=PedidoProveedor.objects.filter(
+                estado__in=[PedidoProveedor.ESTADO_PENDIENTE, PedidoProveedor.ESTADO_EN_CAMINO]
+            ).select_related('proveedor').order_by('fecha_entrega_estimada'),
+            to_attr='pedidos_pendientes_prefetch',
+        ),
     )
 
 
@@ -85,12 +92,6 @@ class MarcaViewSet(viewsets.ModelViewSet):
 class AcabadoViewSet(viewsets.ModelViewSet):
     queryset         = Acabado.objects.order_by('nombre')
     serializer_class = AcabadoSerializer
-    permission_classes = [LecturaLibreEscrituraAdmin]
-
-
-class TipoInstalacionViewSet(viewsets.ModelViewSet):
-    queryset         = TipoInstalacion.objects.all()
-    serializer_class = TipoInstalacionSerializer
     permission_classes = [LecturaLibreEscrituraAdmin]
 
 

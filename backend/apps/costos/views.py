@@ -1,10 +1,12 @@
 """
 Apps: costos — Views completas (gastos, proveedores, salarios, pedidos a proveedor)
 """
+from decimal import Decimal
 from rest_framework import views, status
 from rest_framework.response import Response
 from django.contrib.auth import get_user_model
 from django.shortcuts import get_object_or_404
+from django.db import transaction
 from django.db.models import Sum, Count, Q, F as models_F
 from datetime import date, timedelta
 
@@ -13,6 +15,8 @@ from .models import (
     CategoriaGasto, Empleado, GastoOperativo,
     Proveedor, PedidoProveedor,
 )
+from apps.productos.models import Producto
+from apps.inventario.models import Stock
 from apps.usuarios.permissions import EsAdmin
 
 
@@ -116,12 +120,15 @@ class PedidoProveedorReadSerializer(serializers.ModelSerializer):
     proveedor_nombre = serializers.CharField(source="proveedor.nombre", read_only=True)
     estado_label     = serializers.CharField(source="get_estado_display", read_only=True)
     dias_entrega     = serializers.IntegerField(source="dias_para_entrega", read_only=True)
+    producto_nombre  = serializers.CharField(source="producto.nombre", read_only=True, allow_null=True)
+    producto_unidad_venta = serializers.CharField(source="producto.unidad_venta", read_only=True, allow_null=True)
     registrado_por_nombre = serializers.CharField(
         source="registrado_por.nombre_completo", read_only=True)
 
     class Meta:
         model  = PedidoProveedor
         fields = ["id","proveedor_id","proveedor_nombre","descripcion",
+                  "producto_id","producto_nombre","producto_unidad_venta","cantidad_pedida",
                   "monto_estimado","fecha_pedido","fecha_entrega_estimada",
                   "fecha_entrega_real","estado","estado_label","dias_entrega",
                   "notas","registrado_por_nombre","fecha_creacion"]
@@ -131,6 +138,11 @@ class PedidoProveedorWriteSerializer(serializers.Serializer):
     proveedor_id   = serializers.PrimaryKeyRelatedField(
         queryset=Proveedor.objects.filter(activo=True), source="proveedor")
     descripcion    = serializers.CharField(max_length=250)
+    producto_id    = serializers.PrimaryKeyRelatedField(
+        queryset=Producto.objects.filter(activo=True), source="producto",
+        required=False, allow_null=True)
+    cantidad_pedida = serializers.DecimalField(max_digits=10, decimal_places=4,
+                        required=False, allow_null=True, min_value=0.0001)
     monto_estimado = serializers.DecimalField(max_digits=14, decimal_places=2,
                         required=False, allow_null=True, min_value=0)
     fecha_pedido   = serializers.DateField(required=False)
@@ -288,11 +300,74 @@ class PedidoProveedorDetailView(views.APIView):
         p = get_object_or_404(PedidoProveedor, pk=pk)
         s = PedidoProveedorWriteSerializer(data=request.data, partial=True)
         if not s.is_valid(): return Response(s.errors, status=400)
+
+        estado_anterior = p.estado
+        estado_nuevo    = s.validated_data.get('estado', p.estado)
+        pasa_a_recibido = (
+            estado_nuevo == PedidoProveedor.ESTADO_RECIBIDO
+            and estado_anterior != PedidoProveedor.ESTADO_RECIBIDO
+        )
+
+        variante = None
+        cantidad_recibida = None
+        if pasa_a_recibido:
+            producto = s.validated_data.get('producto', p.producto)
+            if producto:
+                variantes_activas = list(producto.variantes.filter(activa=True))
+                if not variantes_activas:
+                    return Response(
+                        {'error': f'"{producto.nombre}" no tiene variantes activas; no se puede cargar el stock.'},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+                if len(variantes_activas) == 1:
+                    variante = variantes_activas[0]
+                else:
+                    variante_id = request.data.get('variante_id')
+                    if not variante_id:
+                        return Response({
+                            'error': 'Este producto tiene varias variantes; indicá a cuál entra el stock.',
+                            'variantes': [
+                                {'id': v.id, 'sku': v.sku, 'descripcion': str(v)}
+                                for v in variantes_activas
+                            ],
+                        }, status=status.HTTP_400_BAD_REQUEST)
+                    variante = next((v for v in variantes_activas if v.id == int(variante_id)), None)
+                    if not variante:
+                        return Response(
+                            {'error': 'La variante indicada no pertenece a este producto.'},
+                            status=status.HTTP_400_BAD_REQUEST,
+                        )
+
+                cantidad_recibida_raw = request.data.get('cantidad_recibida') or s.validated_data.get('cantidad_pedida') or p.cantidad_pedida
+                if not cantidad_recibida_raw or Decimal(str(cantidad_recibida_raw)) <= 0:
+                    return Response(
+                        {'error': 'Indicá la cantidad recibida para sumar al stock.'},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+                # Misma conversión cajas/pallets → unidad de venta que usa el
+                # ajuste manual de stock (apps.inventario), centralizada en
+                # Variante.convertir_a_unidad_venta.
+                unidad_recibido = request.data.get('unidad_recibido', 'venta')
+                try:
+                    cantidad_recibida = variante.convertir_a_unidad_venta(cantidad_recibida_raw, unidad_recibido)
+                except ValueError as e:
+                    return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
         for campo, valor in s.validated_data.items(): setattr(p, campo, valor)
         # Si pasa a recibido y no tiene fecha real, ponerla hoy
         if p.estado == PedidoProveedor.ESTADO_RECIBIDO and not p.fecha_entrega_real:
             p.fecha_entrega_real = date.today()
-        p.save()
+
+        with transaction.atomic():
+            p.save()
+            if pasa_a_recibido and variante:
+                stock = Stock.objects.select_for_update().get(variante=variante)
+                stock.registrar_movimiento(
+                    'entrada', cantidad_recibida, request.user,
+                    referencia_tipo='pedido_proveedor', referencia_id=p.id,
+                    observaciones=f'Pedido #{p.id} a {p.proveedor.nombre} — {p.descripcion[:60]}',
+                )
+
         return Response(PedidoProveedorReadSerializer(PedidoProveedor.objects.select_related("proveedor","registrado_por").get(pk=pk)).data)
     def delete(self, request, pk):
         get_object_or_404(PedidoProveedor, pk=pk).delete()

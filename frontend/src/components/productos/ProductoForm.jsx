@@ -14,6 +14,7 @@ import {
   CheckCircle,
 } from 'lucide-react'
 import { productosApi } from '../../services/api'
+import { tieneDimensiones, comboExtra } from './camposPorTipo'
 
 const C = {
   sidebar:     '#453941',
@@ -146,17 +147,6 @@ function PasoDatos({ form, errores, setField }) {
     queryKey: ['marcas'],
     queryFn: () => productosApi.marcas().then(r => r.data?.results || r.data || []),
   })
-  const { data: tiposInst } = useQuery({
-    queryKey: ['tipos-instalacion'],
-    queryFn: () => productosApi.tiposInstalacion().then(r => r.data?.results || r.data || []),
-  })
-
-  const toggleTipoInstalacion = (id) => {
-    const actual = form.tipos_instalacion_ids
-    setField('tipos_instalacion_ids',
-      actual.includes(id) ? actual.filter(x => x !== id) : [...actual, id]
-    )
-  }
 
   return (
     <div>
@@ -191,14 +181,6 @@ function PasoDatos({ form, errores, setField }) {
           onChange={e => setField('nombre', e.target.value)}
           placeholder="Ej: Porcelanato Roma"
           error={errores.nombre}
-        />
-      </Field>
-
-      <Field label="Descripción" hint="Visible en el showroom y catálogo">
-        <Textarea
-          value={form.descripcion}
-          onChange={e => setField('descripcion', e.target.value)}
-          placeholder="Características, uso recomendado, observaciones..."
         />
       </Field>
 
@@ -247,33 +229,6 @@ function PasoDatos({ form, errores, setField }) {
         </Field>
       </div>
 
-      {/* Tipos de instalación */}
-      {tiposInst && tiposInst.length > 0 && (
-        <Field label="Tipos de instalación">
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
-            {tiposInst.map(t => {
-              const sel = form.tipos_instalacion_ids.includes(t.id)
-              return (
-                <button
-                  key={t.id}
-                  type="button"
-                  onClick={() => toggleTipoInstalacion(t.id)}
-                  style={{
-                    padding: '5px 12px', borderRadius: '20px', cursor: 'pointer',
-                    fontSize: '12px', fontWeight: '500', transition: 'all 120ms',
-                    background: sel ? C.sidebar : 'transparent',
-                    border: `1px solid ${sel ? C.gold : C.border}`,
-                    color: sel ? C.gold : C.textSec,
-                  }}
-                >
-                  {t.nombre}
-                </button>
-              )
-            })}
-          </div>
-        </Field>
-      )}
-
       {/* Opciones showroom */}
       <div style={{
         background: C.bgSec, border: `1px solid ${C.border}`,
@@ -309,7 +264,10 @@ function PasoDatos({ form, errores, setField }) {
 
 // ─── Paso 1: Variantes ────────────────────────────────────────────────────────
 
-function FilaVariante({ variante, idx, errores, onChange, onEliminar, onAgregarImagen, onEliminarImagen }) {
+function FilaVariante({
+  variante, idx, errores, onChange, onEliminar, onAgregarImagen, onEliminarImagen,
+  categoriaTipo, mostrarPrecioDiferencial, unidadVenta,
+}) {
   const { data: acabados } = useQuery({
     queryKey: ['acabados'],
     queryFn: () => productosApi.acabados().then(r => r.data?.results || r.data || []),
@@ -317,6 +275,7 @@ function FilaVariante({ variante, idx, errores, onChange, onEliminar, onAgregarI
   const fileRef = useRef()
 
   const dimError = errores[`variante_${idx}_dim`]
+  const combo = comboExtra(categoriaTipo)
 
   return (
     <div style={{
@@ -378,84 +337,164 @@ function FilaVariante({ variante, idx, errores, onChange, onEliminar, onAgregarI
         </Field>
       </div>
 
-      {/* Dimensiones */}
-      <p style={{ fontSize: '11px', fontWeight: '500', color: C.textMuted,
-        textTransform: 'uppercase', letterSpacing: '0.06em', margin: '4px 0 10px' }}>
-        Dimensiones
-      </p>
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '0 10px' }}>
-        <Field label="Largo (cm)" error={dimError}>
-          <Input type="number" min="0" step="0.01"
-            value={variante.largo_cm}
-            onChange={e => onChange('largo_cm', e.target.value)}
-            placeholder="Ej: 60"
-            error={dimError}
-          />
-        </Field>
-        <Field label="Ancho (cm)" error={dimError ? ' ' : undefined}>
-          <Input type="number" min="0" step="0.01"
-            value={variante.ancho_cm}
-            onChange={e => onChange('ancho_cm', e.target.value)}
-            placeholder="Ej: 60"
-            error={dimError}
-          />
-        </Field>
-        <Field label="Espesor (mm)">
-          <Input type="number" min="0" step="0.1"
-            value={variante.espesor_mm}
-            onChange={e => onChange('espesor_mm', e.target.value)}
-            placeholder="Ej: 8"
-          />
-        </Field>
-      </div>
+      {/* Dimensiones — solo para categorías donde aplica (pisos, bachas, piletas, grifería, duchas, espejos...) */}
+      {tieneDimensiones(categoriaTipo) && (
+        <>
+          <p style={{ fontSize: '11px', fontWeight: '500', color: C.textMuted,
+            textTransform: 'uppercase', letterSpacing: '0.06em', margin: '4px 0 10px' }}>
+            Dimensiones
+          </p>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0 10px' }}>
+            <Field label="Largo (cm)" error={dimError}>
+              <Input type="number" min="0" step="0.01"
+                value={variante.largo_cm}
+                onChange={e => onChange('largo_cm', e.target.value)}
+                placeholder="Ej: 60"
+                error={dimError}
+              />
+            </Field>
+            <Field label="Ancho (cm)" error={dimError ? ' ' : undefined}>
+              <Input type="number" min="0" step="0.01"
+                value={variante.ancho_cm}
+                onChange={e => onChange('ancho_cm', e.target.value)}
+                placeholder="Ej: 60"
+                error={dimError}
+              />
+            </Field>
+          </div>
+        </>
+      )}
 
-      {/* Rendimiento */}
-      <p style={{ fontSize: '11px', fontWeight: '500', color: C.textMuted,
-        textTransform: 'uppercase', letterSpacing: '0.06em', margin: '4px 0 10px' }}>
-        Rendimiento por caja
-      </p>
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '0 10px' }}>
-        <Field label="Piezas/caja">
-          <Input type="number" min="1" step="1"
-            value={variante.piezas_por_caja}
-            onChange={e => onChange('piezas_por_caja', e.target.value)}
-            placeholder="Ej: 4"
-          />
-        </Field>
-        <Field label="m²/caja" hint="Se calcula si no se completa">
-          <Input type="number" min="0" step="0.0001"
-            value={variante.m2_por_caja}
-            onChange={e => onChange('m2_por_caja', e.target.value)}
-            placeholder="Auto"
-          />
-        </Field>
-        <Field label="Peso caja (kg)">
-          <Input type="number" min="0" step="0.01"
-            value={variante.peso_kg_caja}
-            onChange={e => onChange('peso_kg_caja', e.target.value)}
-            placeholder="Ej: 20.5"
-          />
-        </Field>
-      </div>
+      {/* Combo extra según tipo de producto */}
+      {combo === 'grifo' && (
+        <>
+          <p style={{ fontSize: '11px', fontWeight: '500', color: C.textMuted,
+            textTransform: 'uppercase', letterSpacing: '0.06em', margin: '4px 0 10px' }}>
+            Grifería
+          </p>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '0 10px' }}>
+            <Field label="Accionamiento">
+              <Select value={variante.tipo_grifo} onChange={e => onChange('tipo_grifo', e.target.value)}>
+                <option value="">Sin definir</option>
+                <option value="frio">Frío</option>
+                <option value="monocomando">Monocomando</option>
+              </Select>
+            </Field>
+            <Field label="Posición">
+              <Select value={variante.posicion_grifo} onChange={e => onChange('posicion_grifo', e.target.value)}>
+                <option value="">Sin definir</option>
+                <option value="alta">Alta</option>
+                <option value="baja">Baja</option>
+              </Select>
+            </Field>
+            <Field label="Montaje">
+              <Select value={variante.montaje_grifo} onChange={e => onChange('montaje_grifo', e.target.value)}>
+                <option value="">Sin definir</option>
+                <option value="mesa">De mesa</option>
+                <option value="pared">De pared</option>
+              </Select>
+            </Field>
+          </div>
+        </>
+      )}
+      {combo === 'ducha' && (
+        <>
+          <p style={{ fontSize: '11px', fontWeight: '500', color: C.textMuted,
+            textTransform: 'uppercase', letterSpacing: '0.06em', margin: '4px 0 10px' }}>
+            Ducha
+          </p>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '0 10px' }}>
+            <Field label="Accionamiento">
+              <Select value={variante.tipo_ducha} onChange={e => onChange('tipo_ducha', e.target.value)}>
+                <option value="">Sin definir</option>
+                <option value="frio">Frío</option>
+                <option value="electrico">Eléctrico</option>
+                <option value="monocomando">Monocomando</option>
+              </Select>
+            </Field>
+          </div>
+        </>
+      )}
+      {combo === 'cisterna' && (
+        <>
+          <p style={{ fontSize: '11px', fontWeight: '500', color: C.textMuted,
+            textTransform: 'uppercase', letterSpacing: '0.06em', margin: '4px 0 10px' }}>
+            Inodoro
+          </p>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '0 10px' }}>
+            <Field label="Cisterna">
+              <Select value={variante.tipo_cisterna} onChange={e => onChange('tipo_cisterna', e.target.value)}>
+                <option value="">Sin definir</option>
+                <option value="alta">Alta</option>
+                <option value="baja">Baja</option>
+              </Select>
+            </Field>
+          </div>
+        </>
+      )}
+
+      {/* Rendimiento — la conversión caja/pallet solo se usa (Inventario,
+          Pedidos a proveedor) cuando el producto se vende por m²; para
+          pieza/juego/caja/ml no aporta y solo confunde el alta. */}
+      {unidadVenta === 'm2' && (
+        <>
+          <p style={{ fontSize: '11px', fontWeight: '500', color: C.textMuted,
+            textTransform: 'uppercase', letterSpacing: '0.06em', margin: '4px 0 10px' }}>
+            Rendimiento por caja
+          </p>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '0 10px' }}>
+            <Field label="Piezas/caja">
+              <Input type="number" min="1" step="1"
+                value={variante.piezas_por_caja}
+                onChange={e => onChange('piezas_por_caja', e.target.value)}
+                placeholder="Ej: 4"
+              />
+            </Field>
+            <Field label="m²/caja" hint="Se calcula si no se completa">
+              <Input type="number" min="0" step="0.0001"
+                value={variante.m2_por_caja}
+                onChange={e => onChange('m2_por_caja', e.target.value)}
+                placeholder="Auto"
+              />
+            </Field>
+            <Field label="Cajas/pallet">
+              <Input type="number" min="1" step="1"
+                value={variante.cajas_por_pallet}
+                onChange={e => onChange('cajas_por_pallet', e.target.value)}
+                placeholder="Ej: 40"
+              />
+            </Field>
+          </div>
+        </>
+      )}
 
       {/* Precio y stock */}
       <p style={{ fontSize: '11px', fontWeight: '500', color: C.textMuted,
         textTransform: 'uppercase', letterSpacing: '0.06em', margin: '4px 0 10px' }}>
         Precio y stock inicial
       </p>
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: '0 10px' }}>
-        <Field label="Precio propio (Gs.)" hint="Vacío = usa precio base">
-          <Input type="number" min="0" step="100"
-            value={variante.precio_diferencial}
-            onChange={e => onChange('precio_diferencial', e.target.value)}
-            placeholder="Heredado"
-          />
-        </Field>
-        <Field label="Stock inicial">
+      <div style={{
+        display: 'grid',
+        gridTemplateColumns: mostrarPrecioDiferencial ? '1fr 1fr 1fr 1fr' : '1fr 1fr 1fr',
+        gap: '0 10px',
+      }}>
+        {mostrarPrecioDiferencial && (
+          <Field label="Precio diferencial (Gs.)" hint="Vacío = usa precio base">
+            <Input type="number" min="0" step="100"
+              value={variante.precio_diferencial}
+              onChange={e => onChange('precio_diferencial', e.target.value)}
+              placeholder="Heredado"
+            />
+          </Field>
+        )}
+        <Field label="Stock inicial"
+          hint={variante.id ? 'Para modificar el stock, usá el panel de Inventario' : undefined}>
           <Input type="number" min="0" step="0.01"
             value={variante.stock_inicial}
             onChange={e => onChange('stock_inicial', e.target.value)}
             placeholder="0"
+            disabled={Boolean(variante.id)}
+            style={variante.id ? { background: C.bgSec, color: C.textMuted, cursor: 'not-allowed' } : undefined}
           />
         </Field>
         <Field label="Stock mínimo">
@@ -538,7 +577,8 @@ function FilaVariante({ variante, idx, errores, onChange, onEliminar, onAgregarI
   )
 }
 
-function PasoVariantes({ variantes, errores, agregarVariante, eliminarVariante, setVarianteField, agregarImagenVariante, eliminarImagenVariante }) {
+function PasoVariantes({ variantes, errores, agregarVariante, eliminarVariante, setVarianteField, agregarImagenVariante, eliminarImagenVariante, categoriaTipo, unidadVenta }) {
+  const mostrarPrecioDiferencial = variantes.length > 1
   return (
     <div>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px' }}>
@@ -573,6 +613,9 @@ function PasoVariantes({ variantes, errores, agregarVariante, eliminarVariante, 
           onEliminar={() => eliminarVariante(idx)}
           onAgregarImagen={(files) => agregarImagenVariante(idx, files)}
           onEliminarImagen={(idxI) => eliminarImagenVariante(idx, idxI)}
+          categoriaTipo={categoriaTipo}
+          mostrarPrecioDiferencial={mostrarPrecioDiferencial}
+          unidadVenta={unidadVenta}
         />
       ))}
 
@@ -789,6 +832,12 @@ export default function ProductoForm({
 
   const esEdicion = Boolean(productoEdicion)
 
+  const { data: categorias } = useQuery({
+    queryKey: ['categorias'],
+    queryFn: () => productosApi.categorias().then(r => r.data?.results || r.data || []),
+  })
+  const categoriaTipo = categorias?.find(c => String(c.id) === String(form.categoria_id))?.tipo
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
       {/* Header */}
@@ -836,6 +885,8 @@ export default function ProductoForm({
             setVarianteField={setVarianteField}
             agregarImagenVariante={agregarImagenVariante}
             eliminarImagenVariante={eliminarImagenVariante}
+            categoriaTipo={categoriaTipo}
+            unidadVenta={form.unidad_venta}
           />
         )}
         {paso === 2 && (

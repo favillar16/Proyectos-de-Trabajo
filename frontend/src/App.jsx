@@ -2,6 +2,7 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { Toaster } from 'react-hot-toast'
 import { useAuthStore } from './store/authStore'
+import ErrorBoundary from './components/ErrorBoundary'
 
 // Páginas
 import LoginPage from './pages/LoginPage'
@@ -45,6 +46,7 @@ export default function App() {
   return (
     <QueryClientProvider client={queryClient}>
       <BrowserRouter>
+        <ErrorBoundary>
         <Routes>
           {/* Pública */}
           <Route path="/login" element={<LoginPage />} />
@@ -95,6 +97,7 @@ export default function App() {
           <Route path="/" element={<Navigate to="/showroom" replace />} />
           <Route path="*" element={<Navigate to="/showroom" replace />} />
         </Routes>
+        </ErrorBoundary>
       </BrowserRouter>
 
       <Toaster

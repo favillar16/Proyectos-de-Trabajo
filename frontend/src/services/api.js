@@ -87,9 +87,8 @@ export const productosApi = {
   categorias:       (params) => api.get('/productos/categorias/', { params }),
   marcas:           (params) => api.get('/productos/marcas/', { params }),
   acabados:         ()       => api.get('/productos/acabados/'),
-  tiposInstalacion: ()       => api.get('/productos/tipos-instalacion/'),
 
-  // Gestión de catálogos auxiliares (categorías, marcas, acabados, tipos)
+  // Gestión de catálogos auxiliares (categorías, marcas, acabados)
   crearCategoria:      (data)     => api.post('/productos/categorias/', data),
   editarCategoria:     (id, data) => api.patch(`/productos/categorias/${id}/`, data),
   eliminarCategoria:   (id)       => api.delete(`/productos/categorias/${id}/`),
@@ -99,9 +98,6 @@ export const productosApi = {
   crearAcabado:        (data)     => api.post('/productos/acabados/', data),
   editarAcabado:       (id, data) => api.patch(`/productos/acabados/${id}/`, data),
   eliminarAcabado:     (id)       => api.delete(`/productos/acabados/${id}/`),
-  crearTipoInstalacion:   (data)     => api.post('/productos/tipos-instalacion/', data),
-  editarTipoInstalacion:  (id, data) => api.patch(`/productos/tipos-instalacion/${id}/`, data),
-  eliminarTipoInstalacion:(id)       => api.delete(`/productos/tipos-instalacion/${id}/`),
 }
 
 // ─── Inventario ───────────────────────────────────────────────

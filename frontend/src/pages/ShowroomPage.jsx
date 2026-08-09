@@ -348,29 +348,7 @@ function PanelDetalle({ producto, detalle, stock, cargando, onCerrar, device, on
                   </p>
                   <p style={{ fontSize:'14px', color:C.textMuted }}>por {producto.unidad_venta}</p>
                 </div>
-                {detalle?.descripcion && (
-                  <p style={{ fontSize:'14px', color:C.textSec, lineHeight:'1.65' }}>
-                    {detalle.descripcion}
-                  </p>
-                )}
               </div>
-
-              {/* Tipos de instalación */}
-              {detalle?.tipos_instalacion?.length > 0 && (
-                <div style={{ marginTop:'16px' }}>
-                  <p style={{ fontSize:'11px', fontWeight:'500', color:C.textMuted,
-                    textTransform:'uppercase', letterSpacing:'0.06em', marginBottom:'8px' }}>
-                    Instalación
-                  </p>
-                  <div style={{ display:'flex', flexWrap:'wrap', gap:'7px' }}>
-                    {detalle.tipos_instalacion.map(t=>(
-                      <span key={t.id} style={{ padding:'5px 12px', borderRadius:'20px',
-                        background:C.bgTer, border:`1px solid ${C.border}`,
-                        fontSize:'13px', color:C.textSec }}>{t.nombre}</span>
-                    ))}
-                  </div>
-                </div>
-              )}
 
               {/* Stock por variante */}
               {stock.length > 0 && (

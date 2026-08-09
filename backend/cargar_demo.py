@@ -26,7 +26,7 @@ django.setup()
 
 from django.contrib.auth import get_user_model
 from apps.productos.models import (
-    Categoria, Marca, Acabado, TipoInstalacion,
+    Categoria, Marca, Acabado,
     Producto, Variante,
 )
 from apps.inventario.models import Stock
@@ -63,7 +63,6 @@ for u in usuarios_demo:
 cat  = {c.tipo: c for c in Categoria.objects.all()}
 marc = {m.nombre: m for m in Marca.objects.all()}
 acab = {a.nombre: a for a in Acabado.objects.all()}
-ti   = {t.nombre: t for t in TipoInstalacion.objects.all()}
 
 # Verificar que existan
 if not cat:
@@ -92,11 +91,6 @@ def crear_producto_con_variantes(data):
             'notas_internas':  data.get('notas', ''),
         }
     )
-
-    # Tipos de instalación
-    if data.get('instalacion'):
-        tipos = [ti[t] for t in data['instalacion'] if t in ti]
-        producto.tipos_instalacion.set(tipos)
 
     # Variantes
     for v in data.get('variantes', []):

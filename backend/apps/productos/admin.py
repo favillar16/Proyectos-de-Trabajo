@@ -1,6 +1,6 @@
 from django.contrib import admin
 from .models import (
-    Categoria, Marca, Acabado, TipoInstalacion,
+    Categoria, Marca, Acabado,
     Producto, Variante, ImagenProducto, ImagenVariante
 )
 
@@ -21,11 +21,6 @@ class MarcaAdmin(admin.ModelAdmin):
 @admin.register(Acabado)
 class AcabadoAdmin(admin.ModelAdmin):
     list_display = ['nombre', 'descripcion']
-
-
-@admin.register(TipoInstalacion)
-class TipoInstalacionAdmin(admin.ModelAdmin):
-    list_display = ['nombre']
 
 
 class ImagenProductoInline(admin.TabularInline):

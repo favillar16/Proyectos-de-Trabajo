@@ -52,7 +52,8 @@ function useDebounce(v, d=380) {
 function EstadoBadge({ estado, disponible }) {
   const cfg = {
     disponible: { bg:C.successBg, color:C.success, border:C.successBorder, icon:<CheckCircle size={11}/>, label:'OK' },
-    critico:    { bg:C.warningBg, color:C.warning, border:C.warningBorder, icon:<AlertCircle size={11}/>, label:'Bajo' },
+    bajo:       { bg:C.warningBg, color:C.warning, border:C.warningBorder, icon:<AlertCircle size={11}/>, label:'Bajo (25%)' },
+    critico:    { bg:C.dangerBg,  color:C.danger,  border:C.dangerBorder,  icon:<AlertCircle size={11}/>, label:'Crítico (15%)' },
     sin_stock:  { bg:C.dangerBg,  color:C.danger,  border:C.dangerBorder,  icon:<XCircle    size={11}/>, label:'Sin stock' },
   }
   const s = cfg[estado] || cfg.sin_stock
@@ -84,12 +85,16 @@ function PanelAjuste({ item, onCerrar }) {
   const [obs,    setObs]    = useState('')
   const [unidadIngreso, setUnidadIngreso] = useState('venta')
 
-  // ¿Este producto admite carga en cajas?
-  const admiteCajas = item.vende_por_m2 && item.m2_por_caja > 0
-  // Vista previa de la conversión cuando se carga en cajas
-  const previewM2 = (admiteCajas && unidadIngreso === 'caja' && cantidad)
-    ? (Number(cantidad) * Number(item.m2_por_caja)).toFixed(2)
-    : null
+  // ¿Este producto admite carga en cajas / pallets?
+  const admiteCajas   = item.vende_por_m2 && item.m2_por_caja > 0
+  const admitePallets = admiteCajas && item.cajas_por_pallet > 0
+  // Vista previa de la conversión cuando se carga en cajas o pallets
+  const previewM2 = (!cantidad) ? null
+    : unidadIngreso === 'caja' && admiteCajas
+      ? (Number(cantidad) * Number(item.m2_por_caja)).toFixed(2)
+      : unidadIngreso === 'pallet' && admitePallets
+        ? (Number(cantidad) * Number(item.cajas_por_pallet) * Number(item.m2_por_caja)).toFixed(2)
+        : null
 
   const mutation = useMutation({
     mutationFn: () => inventarioApi.ajustar({
@@ -152,7 +157,7 @@ function PanelAjuste({ item, onCerrar }) {
           <div style={{ display:'flex', gap:'16px' }}>
             {[
               { l:'En depósito', v:item.cantidad,   c:C.text    },
-              { l:'Reservado',   v:item.reservado,  c:C.warning },
+              { l:'Reservado',   v:item.cantidad_reservada,  c:C.warning },
               { l:'Disponible',  v:item.disponible, c:C.success },
             ].map(f=>(
               <div key={f.l}>
@@ -197,6 +202,7 @@ function PanelAjuste({ item, onCerrar }) {
               {[
                 { key:'venta', label:'Metros² (m²)' },
                 { key:'caja',  label:'Cajas' },
+                ...(admitePallets ? [{ key:'pallet', label:'Pallets' }] : []),
               ].map(u => (
                 <button key={u.key} type="button"
                   onClick={() => setUnidadIngreso(u.key)}
@@ -218,10 +224,11 @@ function PanelAjuste({ item, onCerrar }) {
             color:C.textSec, marginBottom:'6px' }}>
             {tipo === 'ajuste'
               ? 'Nueva cantidad total (m²)'
-              : (unidadIngreso === 'caja' ? 'Cantidad de cajas' : 'Cantidad')}
+              : (unidadIngreso === 'caja' ? 'Cantidad de cajas'
+                : unidadIngreso === 'pallet' ? 'Cantidad de pallets' : 'Cantidad')}
           </label>
           <input
-            type="number" min="0" step={unidadIngreso === 'caja' ? '1' : '0.5'}
+            type="number" min="0" step={unidadIngreso === 'caja' || unidadIngreso === 'pallet' ? '1' : '0.5'}
             value={cantidad}
             onChange={e => setCantidad(e.target.value)}
             placeholder="0"
@@ -233,9 +240,14 @@ function PanelAjuste({ item, onCerrar }) {
             onFocus={e=>e.target.style.borderColor=C.gold}
             onBlur={e=>e.target.style.borderColor=C.border}
           />
-          {previewM2 && (
+          {previewM2 && unidadIngreso === 'caja' && (
             <p style={{ fontSize:'12px', color:C.success, marginTop:'6px', textAlign:'right' }}>
               = {previewM2} m² ({cantidad} caja{Number(cantidad)!==1?'s':''} × {item.m2_por_caja} m²)
+            </p>
+          )}
+          {previewM2 && unidadIngreso === 'pallet' && (
+            <p style={{ fontSize:'12px', color:C.success, marginTop:'6px', textAlign:'right' }}>
+              = {previewM2} m² ({cantidad} pallet{Number(cantidad)!==1?'s':''} × {item.cajas_por_pallet} cajas × {item.m2_por_caja} m²)
             </p>
           )}
         </div>
@@ -332,7 +344,7 @@ function PanelHistorial({ item, onCerrar }) {
           <div style={{ display:'flex', gap:'20px' }}>
             {[
               { l:'En depósito', v:item.cantidad,   c:C.text    },
-              { l:'Reservado',   v:item.reservado,  c:C.warning },
+              { l:'Reservado',   v:item.cantidad_reservada,  c:C.warning },
               { l:'Disponible',  v:item.disponible, c:C.success },
             ].map(f=>(
               <div key={f.l}>
@@ -450,7 +462,7 @@ function FilaStock({ item, onAjustar, onVerHistorial }) {
       <td style={{ padding:'10px 14px', borderBottom:`1px solid ${C.border}`,
         textAlign:'right' }}>
         <p style={{ fontSize:'13px', color:C.warning }}>
-          {Number(item.reservado).toFixed(2)}
+          {Number(item.cantidad_reservada).toFixed(2)}
         </p>
       </td>
       <td style={{ padding:'10px 14px', borderBottom:`1px solid ${C.border}`,
@@ -523,7 +535,10 @@ export default function InventarioPage() {
         if (msg.estado === 'sin_stock') {
           toast.error(`Sin stock: ${msg.nombre} (${msg.sku})`, { duration: 6000 })
         } else if (msg.estado === 'critico') {
-          toast(`Stock bajo: ${msg.nombre} — ${msg.disponible} disponible`,
+          toast.error(`Stock crítico (15%): ${msg.nombre} — ${msg.disponible} disponible`,
+            { duration: 6000 })
+        } else if (msg.estado === 'bajo') {
+          toast(`Stock bajo (25%): ${msg.nombre} — ${msg.disponible} disponible`,
             { icon:'⚠️', duration: 5000 })
         }
       }
@@ -555,6 +570,7 @@ export default function InventarioPage() {
 
   // Stats
   const conStock  = items.filter(i => i.estado === 'disponible').length
+  const bajo      = items.filter(i => i.estado === 'bajo').length
   const critico   = items.filter(i => i.estado === 'critico').length
   const sinStock  = items.filter(i => i.estado === 'sin_stock').length
 
@@ -562,7 +578,7 @@ export default function InventarioPage() {
     <Layout pageTitle="Inventario" breadcrumbs={['Inventario']}>
 
       {/* Alertas urgentes */}
-      {(critico > 0 || sinStock > 0) && (
+      {(sinStock > 0 || critico > 0 || bajo > 0) && (
         <div style={{ marginBottom:'16px', display:'flex', flexDirection:'column', gap:'8px' }}>
           {sinStock > 0 && (
             <div style={{ display:'flex', alignItems:'center', gap:'10px',
@@ -584,15 +600,33 @@ export default function InventarioPage() {
           )}
           {critico > 0 && (
             <div style={{ display:'flex', alignItems:'center', gap:'10px',
+              padding:'11px 16px', background:C.dangerBg,
+              border:`1px solid ${C.dangerBorder}`, borderLeft:`3px solid ${C.danger}`,
+              borderRadius:'10px' }}>
+              <AlertCircle size={17} style={{ color:C.danger, flexShrink:0 }} />
+              <p style={{ fontSize:'13.5px', color:C.text, flex:1 }}>
+                <strong>{critico} variante{critico!==1?'s':''} en stock crítico</strong>
+                {' '}— quedan al 15% o menos del stock inicial.
+              </p>
+              <button onClick={() => setFiltroEstado('critico')}
+                style={{ padding:'5px 12px', background:'transparent',
+                  border:`1px solid ${C.danger}`, borderRadius:'7px',
+                  color:C.danger, fontSize:'12px', cursor:'pointer', whiteSpace:'nowrap' }}>
+                Ver
+              </button>
+            </div>
+          )}
+          {bajo > 0 && (
+            <div style={{ display:'flex', alignItems:'center', gap:'10px',
               padding:'11px 16px', background:C.warningBg,
               border:`1px solid ${C.warningBorder}`, borderLeft:`3px solid ${C.warning}`,
               borderRadius:'10px' }}>
               <AlertCircle size={17} style={{ color:C.warning, flexShrink:0 }} />
               <p style={{ fontSize:'13.5px', color:C.text, flex:1 }}>
-                <strong>{critico} variante{critico!==1?'s':''} con stock bajo</strong>
-                {' '}— por debajo del mínimo configurado.
+                <strong>{bajo} variante{bajo!==1?'s':''} con stock bajo</strong>
+                {' '}— quedan al 25% o menos del stock inicial.
               </p>
-              <button onClick={() => setFiltroEstado('critico')}
+              <button onClick={() => setFiltroEstado('bajo')}
                 style={{ padding:'5px 12px', background:'transparent',
                   border:`1px solid ${C.warning}`, borderRadius:'7px',
                   color:C.warning, fontSize:'12px', cursor:'pointer', whiteSpace:'nowrap' }}>
@@ -609,7 +643,8 @@ export default function InventarioPage() {
         {[
           { l:'Total variantes', v:total,    c:C.text,    onClick:()=>setFiltroEstado('') },
           { l:'Con stock',       v:conStock,  c:C.success, onClick:()=>setFiltroEstado('disponible') },
-          { l:'Stock bajo',      v:critico,   c:C.warning, onClick:()=>setFiltroEstado('critico') },
+          { l:'Stock bajo (25%)',    v:bajo,    c:C.warning, onClick:()=>setFiltroEstado('bajo') },
+          { l:'Stock crítico (15%)', v:critico, c:C.danger,  onClick:()=>setFiltroEstado('critico') },
           { l:'Sin stock',       v:sinStock,  c:C.danger,  onClick:()=>setFiltroEstado('sin_stock') },
         ].map(s=>(
           <div key={s.l}
@@ -660,7 +695,8 @@ export default function InventarioPage() {
             background:filtroEstado?C.goldMuted:C.bg, outline:'none', cursor:'pointer' }}>
           <option value="">Todos los estados</option>
           <option value="disponible">Con stock</option>
-          <option value="critico">Stock bajo</option>
+          <option value="bajo">Stock bajo (25%)</option>
+          <option value="critico">Stock crítico (15%)</option>
           <option value="sin_stock">Sin stock</option>
         </select>
 

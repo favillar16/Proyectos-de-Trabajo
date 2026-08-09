@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { X, Plus, Edit2, Trash2, Tag, Award, Layers, Wrench, Check } from 'lucide-react'
+import { X, Plus, Edit2, Trash2, Tag, Award, Layers, Check } from 'lucide-react'
 import { productosApi } from '../../services/api'
 import toast from 'react-hot-toast'
 
@@ -15,6 +15,15 @@ const TIPOS_CATEGORIA = [
   { v:'piso', l:'Pisos' }, { v:'porcelanato', l:'Porcelanatos' },
   { v:'ceramica', l:'Cerámicas' }, { v:'sanitario', l:'Sanitarios' },
   { v:'accesorio_bano', l:'Accesorios de Baño' }, { v:'cocina', l:'Artículos de Cocina' },
+  { v:'bacha', l:'Bachas' }, { v:'pileta_cocina', l:'Piletas para cocina' },
+  { v:'pileta_ropa', l:'Piletas para ropa' }, { v:'griferia', l:'Grifería' },
+  { v:'ducha', l:'Duchas' }, { v:'inodoro', l:'Inodoros' },
+  { v:'migitorio', l:'Migitorios' }, { v:'bide', l:'Bidés' },
+  { v:'ducha_higienica', l:'Duchas higiénicas' }, { v:'cisterna', l:'Cisternas' },
+  { v:'tapa_inodoro', l:'Tapas para inodoro' }, { v:'nicho_bano', l:'Nichos para baño' },
+  { v:'espejo', l:'Espejos' }, { v:'adhesivo', l:'Adhesivos' },
+  { v:'pastina', l:'Pastinas' }, { v:'plomeria', l:'Plomería' },
+  { v:'tira_fondo', l:'Tiras de fondo con tarugo' },
   { v:'otro', l:'Otro' },
 ]
 
@@ -22,7 +31,7 @@ const TIPOS_CATEGORIA = [
 const CATALOGOS = {
   categorias: {
     label: 'Categorías', icon: Layers,
-    listar: () => productosApi.categorias().then(r => r.data),
+    listar: () => productosApi.categorias().then(r => r.data?.results || r.data || []),
     crear: productosApi.crearCategoria, editar: productosApi.editarCategoria, eliminar: productosApi.eliminarCategoria,
     queryKey: ['categorias'],
     campos: [
@@ -36,7 +45,7 @@ const CATALOGOS = {
   },
   marcas: {
     label: 'Marcas', icon: Award,
-    listar: () => productosApi.marcas().then(r => r.data),
+    listar: () => productosApi.marcas().then(r => r.data?.results || r.data || []),
     crear: productosApi.crearMarca, editar: productosApi.editarMarca, eliminar: productosApi.eliminarMarca,
     queryKey: ['marcas'],
     campos: [
@@ -48,7 +57,7 @@ const CATALOGOS = {
   },
   acabados: {
     label: 'Acabados', icon: Tag,
-    listar: () => productosApi.acabados().then(r => r.data),
+    listar: () => productosApi.acabados().then(r => r.data?.results || r.data || []),
     crear: productosApi.crearAcabado, editar: productosApi.editarAcabado, eliminar: productosApi.eliminarAcabado,
     queryKey: ['acabados'],
     campos: [
@@ -57,17 +66,6 @@ const CATALOGOS = {
     ],
     vacio: { nombre:'', descripcion:'' },
     resumen: (it) => it.descripcion || '—',
-  },
-  tipos: {
-    label: 'Tipos de instalación', icon: Wrench,
-    listar: () => productosApi.tiposInstalacion().then(r => r.data),
-    crear: productosApi.crearTipoInstalacion, editar: productosApi.editarTipoInstalacion, eliminar: productosApi.eliminarTipoInstalacion,
-    queryKey: ['tipos-instalacion'],
-    campos: [
-      { k:'nombre', label:'Nombre', tipo:'text', req:true, ph:'Ej: Piso, Pared, Piscina' },
-    ],
-    vacio: { nombre:'' },
-    resumen: () => '',
   },
 }
 
@@ -139,7 +137,7 @@ export default function GestionCatalogos({ onCerrar }) {
           padding:'16px 20px', borderBottom:`1px solid ${C.border}` }}>
           <div>
             <h2 style={{ fontSize:'17px', fontWeight:'600', color:C.text }}>Gestión de catálogos</h2>
-            <p style={{ fontSize:'12px', color:C.textMuted }}>Marcas, categorías, acabados y tipos</p>
+            <p style={{ fontSize:'12px', color:C.textMuted }}>Marcas, categorías y acabados</p>
           </div>
           <button onClick={onCerrar} style={{ background:'transparent', border:'none',
             cursor:'pointer', color:C.textMuted, padding:'4px' }}><X size={20}/></button>

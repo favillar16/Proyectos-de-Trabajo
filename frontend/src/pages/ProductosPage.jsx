@@ -5,12 +5,13 @@
  */
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { Plus, Search, Package, Image, Edit2, Eye, X, SlidersHorizontal, Layers } from 'lucide-react'
+import { Plus, Search, Package, Image, Edit2, Eye, X, SlidersHorizontal, Layers, Truck } from 'lucide-react'
 import { productosApi } from '../services/api'
 import Layout from '../components/layout/Layout'
 import ProductoForm from '../components/productos/ProductoForm'
 import GestionCatalogos from '../components/productos/GestionCatalogos'
 import { useProductoForm } from '../hooks/useProductoForm'
+import { useAuthStore } from '../store/authStore'
 
 const C = {
   sidebar:    '#453941',
@@ -29,6 +30,9 @@ const C = {
   dangerBg:   '#fef0f0',
   warning:    '#8a6a1a',
   warningBg:  '#fef9ee',
+  info:       '#2a5c8a',
+  infoBg:     '#eef4fb',
+  infoBorder: '#b8d4ee',
 }
 
 // ─── Card de producto ─────────────────────────────────────────────────────────
@@ -43,6 +47,8 @@ function EstadoStock({ stock }) {
 function ProductoCard({ producto, onEditar, onVerDetalle }) {
   const [hovered, setHovered] = useState(false)
   const imagenUrl = producto.imagen_principal?.imagen_url || producto.imagen_principal?.imagen
+  const { usuario } = useAuthStore()
+  const vePrecioCosto = ['admin', 'deposito'].includes(usuario?.rol) && producto.precio_costo != null
 
   return (
     <div
@@ -111,8 +117,32 @@ function ProductoCard({ producto, onEditar, onVerDetalle }) {
             <p style={{ fontSize:'11px', color: C.textMuted, marginTop:'2px' }}>
               por {producto.unidad_venta}
             </p>
+            {vePrecioCosto && (
+              <p style={{ fontSize:'11px', color: C.textMuted, marginTop:'2px' }}>
+                Costo: Gs. {Number(producto.precio_costo).toLocaleString('es-PY')}
+              </p>
+            )}
           </div>
           <div style={{ textAlign:'right' }}>
+            {producto.pedido_pendiente && (
+              <p style={{ margin:'0 0 4px' }}>
+                <span
+                  title={`Pedido a ${producto.pedido_pendiente.proveedor_nombre} — entrega estimada ${
+                    producto.pedido_pendiente.fecha_entrega_estimada
+                      ? new Date(producto.pedido_pendiente.fecha_entrega_estimada).toLocaleDateString('es-PY')
+                      : 'sin fecha'
+                  }`}
+                  style={{
+                    display:'inline-flex', alignItems:'center', gap:'4px',
+                    padding:'2px 8px', borderRadius:'20px',
+                    background: C.infoBg, border:`1px solid ${C.infoBorder}`, color: C.info,
+                    fontSize:'10.5px', fontWeight:'500', whiteSpace:'nowrap',
+                  }}
+                >
+                  <Truck size={11}/> Pedido realizado
+                </span>
+              </p>
+            )}
             <EstadoStock stock={producto.stock_total} />
             <p style={{ fontSize:'11px', color: C.textMuted, marginTop:'2px' }}>
               {producto.variantes_count} variante{producto.variantes_count !== 1 ? 's' : ''}
@@ -222,6 +252,7 @@ export default function ProductosPage() {
   const [busqueda,       setBusqueda]       = useState('')
   const [categoriaFiltro,setCategoriaFiltro]= useState('')
   const [soloConStock,   setSoloConStock]   = useState(false)
+  const [orden,          setOrden]          = useState('-destacado,nombre')
   const [panelAbierto,   setPanelAbierto]   = useState(false)
   const [productoEdicion,setProductoEdicion]= useState(null)
   const [catalogosAbierto, setCatalogosAbierto] = useState(false)
@@ -231,11 +262,12 @@ export default function ProductosPage() {
   })
 
   const { data, isLoading } = useQuery({
-    queryKey: ['productos', busqueda, categoriaFiltro, soloConStock],
+    queryKey: ['productos', busqueda, categoriaFiltro, soloConStock, orden],
     queryFn: () => productosApi.listar({
       search:     busqueda      || undefined,
       categoria:  categoriaFiltro || undefined,
       con_stock:  soloConStock  || undefined,
+      ordering:   orden,
     }).then(r => r.data),
     staleTime: 30_000,
   })
@@ -316,6 +348,24 @@ export default function ProductosPage() {
           ))}
         </select>
 
+        {/* Orden */}
+        <select
+          value={orden}
+          onChange={e => setOrden(e.target.value)}
+          style={{
+            padding:'8.5px 12px', border:`1px solid ${C.border}`, borderRadius:'9px',
+            fontSize:'13.5px', color: C.text,
+            background: C.bg, outline:'none', cursor:'pointer',
+          }}
+        >
+          <option value="-destacado,nombre">Destacados primero</option>
+          <option value="nombre">Nombre (A-Z)</option>
+          <option value="-nombre">Nombre (Z-A)</option>
+          <option value="precio_base">Precio (menor a mayor)</option>
+          <option value="-precio_base">Precio (mayor a menor)</option>
+          <option value="-fecha_creacion">Más recientes</option>
+        </select>
+
         {/* Filtro stock */}
         <button
           onClick={() => setSoloConStock(s => !s)}
@@ -333,7 +383,7 @@ export default function ProductosPage() {
           Solo con stock
         </button>
 
-        {/* Gestionar catálogos (marcas, categorías, acabados, tipos) */}
+        {/* Gestionar catálogos (marcas, categorías, acabados) */}
         <button
           onClick={() => setCatalogosAbierto(true)}
           style={{

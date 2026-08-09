@@ -40,13 +40,31 @@ def variante_imagen_path(instance, filename):
 
 class Categoria(models.Model):
     TIPOS = [
-        ('piso',           'Pisos'),
-        ('porcelanato',    'Porcelanatos'),
-        ('ceramica',       'Cerámicas'),
-        ('sanitario',      'Sanitarios'),
-        ('accesorio_bano', 'Accesorios de Baño'),
-        ('cocina',         'Artículos de Cocina'),
-        ('otro',           'Otro'),
+        ('piso',             'Pisos'),
+        ('porcelanato',      'Porcelanatos'),
+        ('ceramica',         'Cerámicas'),
+        ('sanitario',        'Sanitarios'),
+        ('accesorio_bano',   'Accesorios de Baño'),
+        ('cocina',           'Artículos de Cocina'),
+        # ── Subtipos de sanitarios/accesorios (docs/Listado de Productos.docx) ──
+        ('bacha',            'Bachas'),
+        ('pileta_cocina',    'Piletas para cocina'),
+        ('pileta_ropa',      'Piletas para ropa'),
+        ('griferia',         'Grifería'),
+        ('ducha',            'Duchas'),
+        ('inodoro',          'Inodoros'),
+        ('migitorio',        'Migitorios'),
+        ('bide',             'Bidés'),
+        ('ducha_higienica',  'Duchas higiénicas'),
+        ('cisterna',         'Cisternas'),
+        ('tapa_inodoro',     'Tapas para inodoro'),
+        ('nicho_bano',       'Nichos para baño'),
+        ('espejo',           'Espejos'),
+        ('adhesivo',         'Adhesivos'),
+        ('pastina',          'Pastinas'),
+        ('plomeria',         'Plomería'),
+        ('tira_fondo',       'Tiras de fondo con tarugo'),
+        ('otro',             'Otro'),
     ]
 
     nombre      = models.CharField(max_length=100)
@@ -106,19 +124,6 @@ class Acabado(models.Model):
         return self.nombre
 
 
-class TipoInstalacion(models.Model):
-    """Piso, Pared, Piso y Pared, Exterior, Interior, Húmedo."""
-    nombre = models.CharField(max_length=80, unique=True)
-
-    class Meta:
-        db_table            = 'tipos_instalacion'
-        verbose_name        = 'Tipo de instalación'
-        verbose_name_plural = 'Tipos de instalación'
-
-    def __str__(self):
-        return self.nombre
-
-
 # ─── Producto ─────────────────────────────────────────────────────────────────
 
 class Producto(models.Model):
@@ -151,7 +156,6 @@ class Producto(models.Model):
         Marca, on_delete=models.PROTECT,
         related_name='productos', null=True, blank=True, db_index=True
     )
-    tipos_instalacion = models.ManyToManyField(TipoInstalacion, blank=True)
 
     # ── Precios ───────────────────────────────────────────────
     precio_base = models.DecimalField(
@@ -200,13 +204,30 @@ class Producto(models.Model):
 
     # Prefijos de código por tipo de categoría (3 letras, legibles)
     PREFIJOS_TIPO = {
-        'piso':           'PIS',
-        'porcelanato':    'POR',
-        'ceramica':       'CER',
-        'sanitario':      'SAN',
-        'accesorio_bano': 'ACC',
-        'cocina':         'COC',
-        'otro':           'GEN',
+        'piso':            'PIS',
+        'porcelanato':     'POR',
+        'ceramica':        'CER',
+        'sanitario':       'SAN',
+        'accesorio_bano':  'ACC',
+        'cocina':          'COC',
+        'bacha':           'BAC',
+        'pileta_cocina':   'PIC',
+        'pileta_ropa':     'PIR',
+        'griferia':        'GRI',
+        'ducha':           'DUC',
+        'inodoro':         'INO',
+        'migitorio':       'MIG',
+        'bide':            'BID',
+        'ducha_higienica': 'DUH',
+        'cisterna':        'CIS',
+        'tapa_inodoro':    'TAP',
+        'nicho_bano':      'NIC',
+        'espejo':          'ESP',
+        'adhesivo':        'ADH',
+        'pastina':         'PAS',
+        'plomeria':        'PLO',
+        'tira_fondo':      'TIR',
+        'otro':            'GEN',
     }
     SUFIJO_CODIGO = 'OG'   # identifica a Oga Porã
 
@@ -383,6 +404,10 @@ class Variante(models.Model):
         null=True, blank=True,
         help_text='Peso de la caja en kg'
     )
+    cajas_por_pallet = models.PositiveSmallIntegerField(
+        null=True, blank=True,
+        help_text='Cantidad de cajas por pallet (para cargar stock en pallets)'
+    )
 
     # ── Precio propio ─────────────────────────────────────────
     precio_diferencial = models.DecimalField(
@@ -391,6 +416,25 @@ class Variante(models.Model):
         validators=[MinValueValidator(0)],
         help_text='Precio propio de esta variante. Si es nulo, hereda el precio base del producto.'
     )
+
+    # ── Atributos específicos por tipo de producto ────────────
+    # Solo aplican según la categoría (ver camposPorTipo.js en el frontend):
+    # grifería usa tipo_grifo/posicion_grifo/montaje_grifo, duchas usa
+    # tipo_ducha, inodoros usa tipo_cisterna. El resto de las categorías
+    # los deja en blanco.
+    TIPO_GRIFO_CHOICES = [('frio', 'Frío'), ('monocomando', 'Monocomando')]
+    POSICION_GRIFO_CHOICES = [('alta', 'Alta'), ('baja', 'Baja')]
+    MONTAJE_GRIFO_CHOICES = [('mesa', 'De mesa'), ('pared', 'De pared')]
+    TIPO_DUCHA_CHOICES = [
+        ('frio', 'Frío'), ('electrico', 'Eléctrico'), ('monocomando', 'Monocomando'),
+    ]
+    TIPO_CISTERNA_CHOICES = [('alta', 'Alta'), ('baja', 'Baja')]
+
+    tipo_grifo     = models.CharField(max_length=20, choices=TIPO_GRIFO_CHOICES, blank=True)
+    posicion_grifo = models.CharField(max_length=20, choices=POSICION_GRIFO_CHOICES, blank=True)
+    montaje_grifo  = models.CharField(max_length=20, choices=MONTAJE_GRIFO_CHOICES, blank=True)
+    tipo_ducha     = models.CharField(max_length=20, choices=TIPO_DUCHA_CHOICES, blank=True)
+    tipo_cisterna  = models.CharField(max_length=20, choices=TIPO_CISTERNA_CHOICES, blank=True)
 
     # ── Identificación ────────────────────────────────────────
     sku    = models.CharField(max_length=100, unique=True, blank=True, db_index=True)
@@ -480,6 +524,36 @@ class Variante(models.Model):
                 float(self.largo_cm / 100) * float(self.ancho_cm / 100) * self.piezas_por_caja, 4
             )
         return None
+
+    def convertir_a_unidad_venta(self, cantidad, unidad='venta'):
+        """
+        Convierte una cantidad ingresada en 'venta' (m²/unidad tal cual),
+        'caja' o 'pallet' a la unidad de venta de esta variante (m²
+        normalmente). Único punto de conversión — lo usan tanto el ajuste
+        manual de stock (apps.inventario) como la recepción de pedidos a
+        proveedor (apps.costos), para no repetir la cuenta en dos lugares.
+        Lanza ValueError con un mensaje legible si a la variante le faltan
+        los datos necesarios para la conversión pedida.
+        """
+        from decimal import Decimal
+        cantidad = Decimal(str(cantidad))
+        if unidad == 'venta':
+            return cantidad
+
+        m2_caja = self.m2_por_caja_calculado
+        if not m2_caja or m2_caja <= 0:
+            raise ValueError('Esta variante no tiene m² por caja definido; no se puede cargar en cajas.')
+
+        if unidad == 'caja':
+            return (cantidad * Decimal(str(m2_caja))).quantize(Decimal('0.0001'))
+
+        if unidad == 'pallet':
+            if not self.cajas_por_pallet or self.cajas_por_pallet <= 0:
+                raise ValueError('Esta variante no tiene cajas por pallet definidas; no se puede cargar en pallets.')
+            cajas = cantidad * self.cajas_por_pallet
+            return (cajas * Decimal(str(m2_caja))).quantize(Decimal('0.0001'))
+
+        raise ValueError(f'Unidad de ingreso desconocida: {unidad}')
 
     @property
     def stock_actual(self):

@@ -64,10 +64,15 @@ class AjusteStockSerializer(serializers.Serializer):
         ('devolucion', 'Devolución'),
     ])
     cantidad      = serializers.DecimalField(max_digits=10, decimal_places=4, min_value=0.0001)
-    # Si el producto se vende por m², el depósito puede cargar en cajas y el
-    # sistema convierte a m² automáticamente usando m2_por_caja de la variante.
+    # Si el producto se vende por m², el depósito puede cargar en cajas o en
+    # pallets y el sistema convierte a m² automáticamente usando
+    # m2_por_caja / cajas_por_pallet de la variante.
     unidad_ingreso = serializers.ChoiceField(
-        choices=[('venta', 'Unidad de venta (m²/unidad)'), ('caja', 'Cajas')],
+        choices=[
+            ('venta', 'Unidad de venta (m²/unidad)'),
+            ('caja', 'Cajas'),
+            ('pallet', 'Pallets'),
+        ],
         required=False, default='venta')
     observaciones = serializers.CharField(required=False, allow_blank=True, default='')
 
@@ -140,6 +145,7 @@ def _stock_a_dict(stock, request=None):
         'cajas_completas':   stock.cajas_completas,
         'm2_sueltos':        stock.m2_sueltos,
         'detalle_cajas':     stock.detalle_cajas,
+        'cajas_por_pallet':  v.cajas_por_pallet,
     }
 
 
@@ -248,12 +254,8 @@ class StockListView(views.APIView):
         estado = request.query_params.get('estado')
         # Filtrado por estado en Python (no en SQL para aprovechar properties)
         stocks_list = list(qs)
-        if estado == 'sin_stock':
-            stocks_list = [s for s in stocks_list if s.sin_stock]
-        elif estado == 'critico':
-            stocks_list = [s for s in stocks_list if s.en_stock_critico]
-        elif estado == 'disponible':
-            stocks_list = [s for s in stocks_list if not s.sin_stock and not s.en_stock_critico]
+        if estado in ('sin_stock', 'critico', 'bajo', 'disponible'):
+            stocks_list = [s for s in stocks_list if s.estado == estado]
 
         # Paginación simple
         page      = int(request.query_params.get('page', 1))
@@ -297,19 +299,22 @@ class AjusteStockView(views.APIView):
                 status=status.HTTP_404_NOT_FOUND,
             )
 
-        # Si el ingreso es en cajas, convertir a la unidad de venta (m²)
-        cantidad_final = data['cantidad']
+        # Si el ingreso es en cajas o pallets, convertir a la unidad de venta (m²)
+        # — misma cuenta que usa la recepción de pedidos a proveedor (apps.costos),
+        # centralizada en Variante.convertir_a_unidad_venta para no repetirla.
+        unidad_ingreso = data.get('unidad_ingreso', 'venta')
         obs = data.get('observaciones', '')
-        if data.get('unidad_ingreso') == 'caja':
-            m2_caja = stock.variante.m2_por_caja_calculado
-            if not m2_caja or m2_caja <= 0:
-                return Response(
-                    {'error': 'Esta variante no tiene m² por caja definido; no se puede cargar en cajas.'},
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
-            cajas = float(cantidad_final)
-            cantidad_final = round(cajas * float(m2_caja), 4)
-            detalle = f'{cajas:.0f} caja(s) × {m2_caja} m² = {cantidad_final} m²'
+        try:
+            cantidad_final = stock.variante.convertir_a_unidad_venta(data['cantidad'], unidad_ingreso)
+        except ValueError as e:
+            return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+        if unidad_ingreso == 'caja':
+            detalle = f"{data['cantidad']:.0f} caja(s) × {stock.variante.m2_por_caja_calculado} m² = {cantidad_final} m²"
+            obs = f'{obs} [{detalle}]'.strip()
+        elif unidad_ingreso == 'pallet':
+            detalle = (f"{data['cantidad']:.0f} pallet(s) × {stock.variante.cajas_por_pallet} cajas "
+                       f"× {stock.variante.m2_por_caja_calculado} m² = {cantidad_final} m²")
             obs = f'{obs} [{detalle}]'.strip()
 
         try:

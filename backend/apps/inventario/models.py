@@ -47,6 +47,16 @@ class Stock(models.Model):
         validators=[MinValueValidator(0)],
         help_text='Umbral de alerta de stock bajo. 0 = sin alerta.'
     )
+    stock_referencia = models.DecimalField(
+        max_digits=10, decimal_places=4,
+        null=True, blank=True,
+        validators=[MinValueValidator(0)],
+        help_text=(
+            'Stock inicial cargado, usado como el 100% de referencia para '
+            'las alertas de stock bajo (25%) y crítico (15%). Se fija al '
+            'crear la variante y no se recalcula solo con reposiciones.'
+        )
+    )
 
     # ── Ubicación física en depósito ──────────────────────────
     ubicacion = models.CharField(
@@ -85,17 +95,49 @@ class Stock(models.Model):
         return self.cantidad_disponible <= 0
 
     @property
+    def porcentaje_disponible(self):
+        """% del stock inicial (stock_referencia) que queda disponible. None si no hay referencia."""
+        if not self.stock_referencia or self.stock_referencia <= 0:
+            return None
+        return float(self.cantidad_disponible) / float(self.stock_referencia) * 100
+
+    @property
     def en_stock_critico(self):
-        """True cuando está bajo el mínimo pero aún tiene algo."""
-        return not self.sin_stock and self.cantidad_disponible <= self.stock_minimo
+        """
+        True cuando el disponible cayó a 15% o menos del stock inicial
+        (rojo, "Stock crítico"), pero todavía queda algo.
+        Sin stock_referencia cargado (variantes viejas), no hay forma de
+        calcular el porcentaje: queda en False y se resuelve por 'bajo'.
+        """
+        if self.sin_stock:
+            return False
+        pct = self.porcentaje_disponible
+        return pct is not None and pct <= 15
+
+    @property
+    def en_stock_bajo(self):
+        """
+        True cuando el disponible cayó a 25% o menos del stock inicial
+        (amarillo, "Stock bajo"), sin llegar al umbral crítico.
+        Fallback para variantes sin stock_referencia: usa el criterio
+        histórico de comparar contra 'stock_minimo'.
+        """
+        if self.sin_stock or self.en_stock_critico:
+            return False
+        pct = self.porcentaje_disponible
+        if pct is not None:
+            return pct <= 25
+        return self.cantidad_disponible <= self.stock_minimo
 
     @property
     def estado(self):
-        """Texto de estado para mostrar en UI."""
+        """Texto de estado para mostrar en UI: disponible | bajo | critico | sin_stock."""
         if self.sin_stock:
             return 'sin_stock'
         if self.en_stock_critico:
             return 'critico'
+        if self.en_stock_bajo:
+            return 'bajo'
         return 'disponible'
 
     # ── Conversión cajas ↔ unidad de venta (m²) ──────────────

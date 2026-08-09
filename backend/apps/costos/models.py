@@ -173,6 +173,14 @@ class PedidoProveedor(models.Model):
 
     proveedor        = models.ForeignKey(Proveedor, on_delete=models.PROTECT, related_name='pedidos')
     descripcion      = models.CharField(max_length=250, help_text='Qué se pidió')
+    producto         = models.ForeignKey(
+                          'productos.Producto', on_delete=models.SET_NULL,
+                          null=True, blank=True, related_name='pedidos_proveedor',
+                          help_text='Producto del catálogo que se está reponiendo (opcional)')
+    cantidad_pedida  = models.DecimalField(max_digits=10, decimal_places=4,
+                          null=True, blank=True,
+                          validators=[MinValueValidator(Decimal('0.0001'))],
+                          help_text='Cantidad pedida, en la unidad de venta del producto')
     monto_estimado   = models.DecimalField(max_digits=14, decimal_places=2,
                           null=True, blank=True,
                           validators=[MinValueValidator(Decimal('0'))])
