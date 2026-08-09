@@ -16,6 +16,9 @@ Thumbs.db
 # Registros y logs
 *.log
 
+# Artefacto generado por Vite/PWA en modo desarrollo, se regenera solo
+frontend/dev-dist/
+
 # Sync notebook — credenciales y datos locales de cada máquina, no van al repo
 sync_notebook/config.env
 sync_notebook/tmp/
