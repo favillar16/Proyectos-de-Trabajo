@@ -1,0 +1,92 @@
+factura;codigo_prov;nombre;categoria_tipo;marca;color;largo_cm;ancho_cm;unidad_venta;m2_por_caja;cantidad;precio_costo;precio_base;notas
+0005877;45410;Piso Design 45410;piso;Incefra;;45;45;m2;2.32;389.76;20000;28000;
+0005877;45420;Piso Design 45420;piso;Incefra;;45;45;m2;2.32;389.76;20000;28000;
+0005877;45430;Piso Design 45430;piso;Incefra;;45;45;m2;2.32;389.76;20000;28000;
+0005877;45070;Piso Design 45070;piso;Incefra;;45;45;m2;2.32;389.76;20000;28000;
+0005877;PD45360;Piso Design PD45360;piso;Incefra;;45;45;m2;2.32;389.76;20000;28000;
+0005877;35700;Piso Design 35700;piso;Incefra;;45;45;m2;2.32;129.92;20000;28000;VERIFICAR cantidad contra factura fisica
+0005965;45020;Piso Design 45020;piso;Incefra;;45;45;m2;2.32;129.92;20000;28000;
+0005965;HD57049;Piso 58x58 HD57049;piso;;madera;58;58;m2;2.32;222.72;23500;33000;VERIFICAR cantidad contra factura fisica
+0005965;HD57048;Piso 58x58 HD57048;piso;;madera;58;58;m2;2.32;222.72;23500;33000;VERIFICAR cantidad contra factura fisica
+0005965;HD170000;Piso 58x58 HD170000;piso;;;58;58;m2;2.32;111.36;23500;33000;VERIFICAR cantidad contra factura fisica
+0005965;HD170118;Piso 58x58 HD170118;piso;Vivence;negro;58;58;m2;2.32;111.36;23500;33000;VERIFICAR cantidad contra factura fisica
+0005965;HD240009;Revestimiento 32x58 HD240009;ceramica;Marmoceramica;gris;32;58;m2;2.02;145.44;23500;33000;VERIFICAR cantidad contra factura fisica
+0005965;40055;Revestimiento 32x58 40055;ceramica;Bellacer;blanco;32;58;m2;2.02;160.56;23500;33000;VERIFICAR cantidad contra factura fisica
+0005965;64260092A;Porcelanato Esmaltado 61x61 Prime Beige;porcelanato;;beige;61;61;m2;2.23;180.56;35000;49000;VERIFICAR cantidad contra factura fisica
+0005965;64260018A;Porcelanato Esmaltado 61x61 Prime Cinza;porcelanato;;gris;61;61;m2;2.23;146.7;35000;49000;VERIFICAR cantidad contra factura fisica
+0005965;PP-AMAZON-AMBAR;Porcelanato Esmaltado 20x90 Amazon Ambar;porcelanato;Incepa;ambar/madera;20;90;m2;;56.32;45000;63000;VERIFICAR cantidad contra factura fisica
+0005965;UFPIASL1224PO;Porcelanato 30x60 Piasentina Silver;porcelanato;Roca;gris plata;30;60;m2;1.76;56.32;25000;35000;VERIFICAR cantidad contra factura fisica
+0005965;LFBIAV1224PO;Porcelanato 30x60 Bianco Venatino;porcelanato;Roca;blanco;30;60;m2;1.76;56.32;25000;35000;VERIFICAR cantidad contra factura fisica
+0006044;71260;Porcelanato 71x71 Max Loft Off White;porcelanato;;blanco/beige;71;71;m2;2.52;161.28;60000;84000;
+0006044;71211;Porcelanato 71x71 Max Gales Sanity;porcelanato;;gris;71;71;m2;2.52;241.92;43500;61000;
+0006044;71220;Porcelanato 71x71 Max Loft Grigio;porcelanato;;gris;71;71;m2;2.52;241.92;43500;61000;
+0006044;45030;Piso 45x45 Design 45030;piso;Incefra;beige piedra;45;45;m2;2.32;204.16;20000;28000;
+0006044;RT60027;Piso 60x60 Avalon Lux Retificado;piso;;;60;60;m2;2.52;161.28;27000;38000;
+0006044;RT60527;Piso 60x60 Monte Beige;piso;;beige;60;60;m2;2.52;80.64;27000;38000;
+0006044;RT60034;Piso 60x60 Nevada Mate;piso;;blanco;60;60;m2;2.52;161.28;27000;38000;
+0006044;RT60542;Piso 60x60 Pettros Gray;piso;;gris;60;60;m2;2.52;241.92;27000;38000;VERIFICAR cantidad contra factura fisica
+0006044;RT60506;Piso 60x60 Almond;piso;;beige;60;60;m2;2.52;161.28;27000;38000;VERIFICAR cantidad contra factura fisica
+0006044;PPF34120;Piso 34x34 Adelaide;piso;Incefra;;34;34;m2;2.1;100.8;38000;53000;
+0006044;PPF34090;Piso 34x34 Malasia;piso;Incefra;;34;34;m2;2.1;100.8;38000;53000;
+0006044;PPF34030;Piso 34x34 Florida;piso;Incefra;;34;34;m2;2.1;100.8;38000;53000;
+0006044;PPF34020;Piso 34x34 Iucata;piso;Incefra;;34;34;m2;2.1;100.8;38000;53000;
+0006044;SINKS107;Bacha de cocina Laundry Max 10046;cocina;;;;;pieza;;2;800000;1120000;
+0006044;SINKS108;Bacha de cocina Inox Basic 920x450mm;cocina;;acero inoxidable;;;pieza;;2;550000;770000;
+0006044;SINKS109;Bacha de cocina Inox Compact 780x430mm;cocina;;acero inoxidable;;;pieza;;2;450000;630000;
+0006044;3005;Inodoro Aveiro c/cx acoplada 670x360x750;sanitario;Sanilux;blanco;;;pieza;;3;485000;680000;
+0006220;500114;Tanque 100x51cm Duplo N1 fondo Beige;otro;;beige;100;51;pieza;;3;220000;308000;
+0006220;500110;Tanque 100x51cm Duplo N1 fondo Cinza;otro;;gris;100;51;pieza;;2;220000;308000;
+0006220;500107;Tanque 100x51cm Duplo N1 fondo P.Clara;otro;;beige claro;100;51;pieza;;2;220000;308000;
+0006220;500108;Tanque 100x51cm Duplo N1 fondo Preto;otro;;negro;100;51;pieza;;3;220000;308000;
+0006220;502514;Tanque 124x62cm Duplo N5 simples Beige;otro;;beige;124;62;pieza;;2;330000;462000;
+0006220;502510;Tanque 124x62cm Duplo N5 simples Cinza;otro;;gris;124;62;pieza;;2;330000;462000;
+0006220;502507;Tanque 124x62cm Duplo N5 simples P.Clara;otro;;beige claro;124;62;pieza;;1;330000;462000;
+0006220;502508;Tanque 124x62cm Duplo N5 simples Preto;otro;;negro;124;62;pieza;;2;330000;462000;
+0006220;500314;Tanque 60x60cm simples N1 Beige;otro;;beige;60;60;pieza;;3;180000;252000;
+0006220;500310;Tanque 60x60cm simples N1 Cinza;otro;;gris;60;60;pieza;;2;180000;252000;
+0006220;500307;Tanque 60x60cm simples N1 P.Clara;otro;;beige claro;60;60;pieza;;2;180000;252000;
+0006220;500308;Tanque 60x60cm simples N1 Preto;otro;;negro;60;60;pieza;;2;180000;252000;VERIFICAR cantidad contra factura fisica
+0006220;500614;Tanque 145x52cm Triplo N3 Beige;otro;;beige;145;52;pieza;;3;180000;252000;VERIFICAR cantidad/precio contra factura fisica
+0006220;500610;Tanque 145x52cm Triplo N3 Cinza;otro;;gris;145;52;pieza;;1;350000;490000;
+0006220;500608;Tanque 145x52cm Triplo N3 Preto;otro;;negro;145;52;pieza;;1;350000;490000;
+0006220;502214;Pia Roralit Granito 120x55cm c/bacha inox Beige;cocina;;beige;120;55;pieza;;1;350000;490000;
+0006220;562208;Pia Roralit Granito 120x55cm c/bacha inox Preto;cocina;;negro;120;55;pieza;;1;440000;616000;
+0006220;504214;Pia Sint.Std Granito 100x53cm N-42 Beige;cocina;;beige;100;53;pieza;;1;440000;616000;
+0006220;504210;Pia Sint.Std Granito 100x53cm N-42 Cinza;cocina;;gris;100;53;pieza;;2;200000;280000;
+0006220;504207;Pia Sint.Std Granito 100x53cm N-42 P.Clara;cocina;;beige claro;100;53;pieza;;1;200000;280000;
+0006220;504208;Pia Sint.Std Granito 100x53cm N-42 Preto;cocina;;negro;100;53;pieza;;1;200000;280000;
+0006220;504314;Pia Sint.Std Granito 120x55cm N-43 Beige (tri);cocina;;beige;120;55;pieza;;2;200000;280000;
+0006220;504310;Pia Sint.Std Granito 120x55cm N-43 Cinza;cocina;;gris;120;55;pieza;;2;240000;336000;
+0006220;504307;Pia Sint.Std Granito 120x55cm N-43 P.Clara;cocina;;beige claro;120;55;pieza;;1;240000;336000;
+0006220;504308;Pia Sint.Std Granito 120x55cm N-43 Preto;cocina;;negro;120;55;pieza;;2;240000;336000;
+0006285;PPI70020R;Porcelanato Inout Speciale Polido 74x74 Gris Piedra;porcelanato;Incefra;gris piedra;74;74;m2;2.19;157.68;40000;56000;
+0006285;PPI70900R;Porcelanato Inout Speciale Polido 74x74 Blanco Calacata;porcelanato;Incefra;blanco calacata;74;74;m2;2.19;78.84;40000;56000;
+0006285;PPI70820R;Porcelanato Inout Speciale Polido 74x74 Marron;porcelanato;Incefra;marron;74;74;m2;2.19;157.68;40000;56000;
+0006285;PPI70860R;Porcelanato Inout Speciale Polido 74x74 Gris Marron;porcelanato;Incefra;gris marron;74;74;m2;2.19;78.84;40000;56000;
+0006285;PPI70340R;Porcelanato Inout Speciale Polido 74x74 Blanco;porcelanato;Incefra;blanco;74;74;m2;2.19;157.68;40000;56000;
+0005910;45090;Piso 45x45 Design 45090;piso;Incefra;;45;45;m2;2.32;259.84;20000;28000;VERIFICAR cantidad contra factura fisica
+0005910;35710;Piso 45x45 Design 35710;piso;Incefra;;45;45;m2;2.32;129.92;20000;28000;VERIFICAR cantidad contra factura fisica
+0005910;45000;Piso 45x45 Design 45000;piso;Incefra;;45;45;m2;2.32;129.92;20000;28000;VERIFICAR cantidad contra factura fisica
+0005910;45060;Piso 45x45 Design 45060;piso;Incefra;;45;45;m2;2.32;145.44;20000;28000;VERIFICAR cantidad contra factura fisica
+0005910;35720;Piso 45x45 Design 35720;piso;Incefra;;45;45;m2;2.32;145.44;20000;28000;VERIFICAR cantidad contra factura fisica
+0005910;60175;Piso 45x45 Incefra 60175;piso;Incefra;;45;45;m2;2.32;145.44;20000;28000;VERIFICAR cantidad contra factura fisica
+0005910;HD57107;Piso 58x58 HD57107;piso;;madera;58;58;m2;2.32;222.72;23500;33000;VERIFICAR cantidad contra factura fisica
+0005910;HD160130;Piso 58x58 HD160130;piso;;;58;58;m2;2.32;145.44;23500;33000;VERIFICAR cantidad contra factura fisica
+0005910;HD160133;Revestimiento 32x58 HD160133;ceramica;;;32;58;m2;2.02;145.44;23500;33000;VERIFICAR cantidad contra factura fisica
+0005910;HD160135;Revestimiento 32x58 HD160135;ceramica;;;32;58;m2;2.02;138.24;23500;33000;VERIFICAR cantidad contra factura fisica
+0005910;HD40081;Revestimiento 32x58 HD40081;ceramica;;;32;58;m2;2.88;145.44;25000;35000;VERIFICAR cantidad contra factura fisica
+0005910;DR90094;Revestimiento 32x58 Retif. Onix Gold;ceramica;Decore;dorado;32;58;m2;2.88;145.44;25000;35000;VERIFICAR cantidad contra factura fisica
+0005910;60006;Piso 60x60 Retificado 60006;piso;Decore;madera;60;60;m2;2.02;145.44;23500;33000;VERIFICAR cantidad contra factura fisica
+promo_sideragro;20329;Kit Inodoro Cisterna Baja Dona + Gabinete Sider Opera + Asiento Astra Paris;sanitario;Sider;gris claro;;;pieza;;1;;799000;Precio de oferta SiderAgro (promo 101 14/05); sin costo mayorista confirmado
+promo_sideragro;27372;Kit Inodoro Cisterna Baja Alamo + Gabinete Sider Blanco + Asiento Thema;sanitario;Sider;blanco;;;pieza;;1;;647000;Precio de oferta SiderAgro (promo 112 25/05); sin costo mayorista confirmado
+catalogo_minga;19964;Conjunto p/Baño Mod. KS 65cm Blanco/Volakas c/pie;sanitario;Sao Joao;blanco;;;pieza;;1;399365;559000;Precio2 de catalogo usado como costo distribuidor
+catalogo_minga;30959;Conjunto p/Baño Mod. Lyon 55cm Solanum/Provence c/pie;sanitario;Sao Joao;madera/blanco;;;pieza;;1;471450;660000;Precio2 de catalogo usado como costo distribuidor
+catalogo_minga;19963;Conjunto p/Baño Mod. KS 65cm Blanco/Nero c/pie;sanitario;Sao Joao;blanco/negro;;;pieza;;1;399460;559000;Precio2 de catalogo usado como costo distribuidor
+catalogo_minga;30962;Conjunto p/Baño Mod. Nix 50cm c/pie Blanco/Solanum;sanitario;Sao Joao;blanco/madera;;;pieza;;1;376950;528000;Precio2 de catalogo usado como costo distribuidor
+catalogo_minga;20420;Inodoro Cisterna Baja Araxa Blanco Santa Clara;sanitario;Santa Clara;blanco;;;pieza;;;;;PENDIENTE precio - no se carga hasta completar
+catalogo_minga;20422;Inodoro Cisterna Baja Araxa Gris Claro Santa Clara;sanitario;Santa Clara;gris claro;;;pieza;;;;;PENDIENTE precio - no se carga hasta completar
+catalogo_minga;20400;Inodoro Alta Araxa Blanco Santa Clara;sanitario;Santa Clara;blanco;;;pieza;;;;;PENDIENTE precio - no se carga hasta completar
+catalogo_minga;17031;Nivelador de piso 1.0mm pct c/100 incoloro cj c/12;otro;Metasul;incoloro;;;pieza;;;;;PENDIENTE precio - no se carga hasta completar
+catalogo_minga;16855;Nivelador de piso 1.5mm pct c/100 incoloro cj c/12;otro;Metasul;incoloro;;;pieza;;;;;PENDIENTE precio - no se carga hasta completar
+catalogo_minga;16856;Nivelador de piso 2.0mm pct c/100 incoloro cj c/12;otro;Metasul;incoloro;;;pieza;;;;;PENDIENTE precio - no se carga hasta completar
+sin_factura;;Argamassa Multiuso Cola Bem 14 en 1 (20kg);otro;Cola Bem;;;;pieza;;;;;PENDIENTE precio y codigo - no se carga hasta completar

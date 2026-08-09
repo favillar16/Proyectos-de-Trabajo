@@ -1,0 +1,90 @@
+archivo;producto_codigo;notas
+IMG-20260612-WA0013(1).jpg;POR-009-OG;codigo 70020 confirmado
+IMG-20260612-WA0012(1).jpg;POR-010-OG;codigo 70900 confirmado
+IMG-20260612-WA0011(1).jpg;POR-011-OG;codigo 70820 confirmado
+IMG-20260612-WA0010(1).jpg;POR-012-OG;codigo 70860 confirmado
+IMG-20260612-WA0014(1).jpg;POR-013-OG;codigo 70340 confirmado
+IMG-20260612-WA0064(1).jpg;PIS-021-OG;codigo 34020 confirmado
+IMG-20260612-WA0073(1).jpg;PIS-021-OG;codigo 34020 confirmado (duplicado)
+IMG-20260612-WA0064(2).jpg;PIS-019-OG;codigo 34090 confirmado
+IMG-20260612-WA0074(2).jpg;PIS-019-OG;codigo 34090 confirmado (duplicado)
+IMG-20260612-WA0074(3).jpg;PIS-019-OG;codigo 34090 confirmado (duplicado)
+IMG-20260612-WA0065(1).jpg;PIS-018-OG;codigo 34120 confirmado
+IMG-20260612-WA0075(2).jpg;PIS-018-OG;codigo 34120 confirmado (duplicado)
+IMG-20260612-WA0072(1).jpg;PIS-020-OG;codigo 34030 (lectura de primera pasada, no re-verificada)
+IMG-20260612-WA0095.jpg;PIS-006-OG;codigo 35700 (lectura de primera pasada, no re-verificada)
+IMG-20260612-WA0096.jpg;PIS-005-OG;codigo PD45360 confirmado
+IMG-20260612-WA0097.jpg;PIS-004-OG;codigo 45070 confirmado
+IMG-20260612-WA0079.jpg;PIS-003-OG;codigo 45430 confirmado
+IMG-20260612-WA0081.jpg;PIS-002-OG;codigo 45420 confirmado
+IMG-20260612-WA0082.jpg;PIS-001-OG;codigo 45410 confirmado
+IMG-20260618-WA0165.jpg;PIS-001-OG;codigo 45410 confirmado (duplicado)
+IMG-20260618-WA0148.jpg;PIS-007-OG;codigo PD45020 confirmado
+IMG-20260618-WA0149.jpg;PIS-009-OG;codigo 57048 confirmado
+IMG-20260618-WA0150.jpg;PIS-008-OG;codigo 57049 confirmado
+IMG-20260618-WA0151.jpg;PIS-011-OG;codigo HD170118 confirmado
+IMG-20260618-WA0152.jpg;PIS-010-OG;codigo 170000 confirmado
+IMG-20260618-WA0153.jpg;CER-002-OG;codigo 40055 confirmado
+IMG-20260618-WA0154.jpg;CER-001-OG;codigo 240009 confirmado
+IMG-20260618-WA0155.jpg;POR-001-OG;muestra "Prime Beye" escrita a mano, confirmada
+IMG-20260618-WA0156.jpg;POR-002-OG;muestra "Prime Cinza" escrita a mano (lectura de primera pasada)
+IMG-20260618-WA0158.jpg;POR-003-OG;flyer JS Comercial codigo 154704 Amazon Ambar (lectura de primera pasada)
+IMG-20260618-WA0164.jpg;PIS-030-OG;codigo DR60006 confirmado
+IMG-20260612-WA0059.jpg;POR-008-OG;screenshot Max Loft Grigio 71220 confirmado
+IMG-20260612-WA0062(1).jpg;POR-007-OG;screenshot Max Gales Gray Satiny 71211 confirmado
+IMG-20260618-WA0122.jpg;SAN-002-OG;screenshot con Cod: 20329 explicito
+IMG-20260618-WA0123.jpg;SAN-003-OG;screenshot con Cod: 27372 explicito
+IMG-20260618-WA0126.jpg;SAN-004-OG;screenshot con Cod: 19964 explicito
+IMG-20260618-WA0127.jpg;SAN-005-OG;screenshot con Cod: 30959 explicito
+IMG-20260618-WA0128.jpg;SAN-006-OG;screenshot con Cod: 19963 explicito
+IMG-20260618-WA0129.jpg;SAN-007-OG;screenshot con Cod: 30962 explicito
+IMG-20260612-WA0061(1).jpg;PIS-012-OG;piso, reclasificado por el usuario (grupo pisos)
+IMG-20260612-WA0060.jpg;GEN-010-OG;simple gris, identificacion confirmada correcta por el usuario
+IMG-20260612-WA0024(1).jpg;GEN-001-OG;doble beige, grupo duplo confirmado por el usuario
+IMG-20260612-WA0024(1).jpg;GEN-005-OG;doble beige, mismo candidato que 100x51 (no se distingue el tamano)
+IMG-20260612-WA0029(1).jpg;GEN-005-OG;doble beige/gris, grupo duplo confirmado por el usuario
+IMG-20260612-WA0025(2).jpg;GEN-002-OG;doble gris, grupo duplo confirmado por el usuario
+IMG-20260612-WA0025(2).jpg;GEN-006-OG;doble gris, mismo candidato que 100x51 (no se distingue el tamano)
+IMG-20260612-WA0029(1).jpg;GEN-006-OG;doble gris/beige, grupo duplo confirmado por el usuario
+IMG-20260612-WA0027(1).jpg;GEN-003-OG;doble p.clara, grupo duplo confirmado por el usuario
+IMG-20260612-WA0027(1).jpg;GEN-007-OG;doble p.clara, mismo candidato que 100x51 (no se distingue el tamano)
+IMG-20260612-WA0041(1).jpg;GEN-007-OG;doble blanco/crema, grupo duplo confirmado por el usuario
+IMG-20260612-WA0026(1).jpg;GEN-004-OG;doble negro, grupo duplo confirmado por el usuario
+IMG-20260612-WA0026(1).jpg;GEN-008-OG;doble negro, mismo candidato que 100x51 (no se distingue el tamano)
+IMG-20260612-WA0030(1).jpg;GEN-008-OG;doble negro, grupo duplo confirmado por el usuario
+IMG-20260612-WA0031(1).jpg;GEN-013-OG;triplo beige, grupo triplo confirmado por el usuario
+IMG-20260612-WA0028(1).jpg;GEN-014-OG;triplo gris, grupo triplo confirmado por el usuario
+IMG-20260612-WA0032(1).jpg;GEN-014-OG;triplo gris oscuro, grupo triplo confirmado por el usuario
+IMG-20260612-WA0032(1).jpg;GEN-015-OG;triplo gris oscuro/negro, grupo triplo confirmado por el usuario
+IMG-20260612-WA0033(1).jpg;GEN-015-OG;triplo negro, grupo triplo confirmado por el usuario
+IMG-20260612-WA0034(1).jpg;GEN-009-OG;simple/pia beige - 3 modelos comparten el mismo color, foto real del color
+IMG-20260612-WA0035(1).jpg;GEN-009-OG;simple/pia beige
+IMG-20260612-WA0037(1).jpg;GEN-009-OG;simple/pia beige
+IMG-20260612-WA0034(1).jpg;COC-004-OG;pia beige - 3 modelos comparten el mismo color, foto real del color
+IMG-20260612-WA0035(1).jpg;COC-004-OG;pia beige
+IMG-20260612-WA0037(1).jpg;COC-004-OG;pia beige
+IMG-20260612-WA0034(1).jpg;COC-006-OG;pia beige - 3 modelos comparten el mismo color, foto real del color
+IMG-20260612-WA0035(1).jpg;COC-006-OG;pia beige
+IMG-20260612-WA0037(1).jpg;COC-006-OG;pia beige
+IMG-20260612-WA0034(1).jpg;COC-010-OG;pia beige - 3 modelos comparten el mismo color, foto real del color
+IMG-20260612-WA0035(1).jpg;COC-010-OG;pia beige
+IMG-20260612-WA0037(1).jpg;COC-010-OG;pia beige
+IMG-20260612-WA0038(1).jpg;GEN-012-OG;simple/pia negro - 3 modelos comparten el mismo color, foto real del color
+IMG-20260612-WA0051(1).jpg;GEN-012-OG;simple/pia negro
+IMG-20260612-WA0038(1).jpg;COC-005-OG;pia negro - 3 modelos comparten el mismo color, foto real del color
+IMG-20260612-WA0051(1).jpg;COC-005-OG;pia negro
+IMG-20260612-WA0038(1).jpg;COC-009-OG;pia negro - 3 modelos comparten el mismo color, foto real del color
+IMG-20260612-WA0051(1).jpg;COC-009-OG;pia negro
+IMG-20260612-WA0038(1).jpg;COC-013-OG;pia negro - 3 modelos comparten el mismo color, foto real del color
+IMG-20260612-WA0051(1).jpg;COC-013-OG;pia negro
+IMG-20260612-WA0052(1).jpg;COC-007-OG;pia gris
+IMG-20260612-WA0052(1).jpg;COC-011-OG;pia gris
+IMG-20260612-WA0036(1).jpg;GEN-011-OG;simple/pia blanco/p.clara - 3 modelos comparten el mismo color
+IMG-20260612-WA0039(1).jpg;GEN-011-OG;simple/pia blanco/p.clara
+IMG-20260612-WA0048(1).jpg;GEN-011-OG;simple/pia blanco/p.clara
+IMG-20260612-WA0036(1).jpg;COC-008-OG;pia blanco/p.clara - 3 modelos comparten el mismo color
+IMG-20260612-WA0039(1).jpg;COC-008-OG;pia blanco/p.clara
+IMG-20260612-WA0048(1).jpg;COC-008-OG;pia blanco/p.clara
+IMG-20260612-WA0036(1).jpg;COC-012-OG;pia blanco/p.clara - 3 modelos comparten el mismo color
+IMG-20260612-WA0039(1).jpg;COC-012-OG;pia blanco/p.clara
+IMG-20260612-WA0048(1).jpg;COC-012-OG;pia blanco/p.clara
