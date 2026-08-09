@@ -27,26 +27,34 @@ def _gs(v):
 # ════════════════════════════════════════════════════════
 # Render a PDF (reportlab)
 # ════════════════════════════════════════════════════════
-def render_pdf(reporte: dict) -> bytes:
+def render_pdf(reporte: dict, tamanio: str = 'a4') -> bytes:
     from reportlab.lib import colors
     from reportlab.lib.pagesizes import A4, landscape
-    from reportlab.lib.units import mm
+    from reportlab.lib.units import mm, inch
     from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
     from reportlab.platypus import (
         SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer,
     )
+    from xml.sax.saxutils import escape
+
+    # "Oficio" — tamaño de hoja de uso administrativo habitual en Paraguay
+    # (8.5 × 13 pulgadas). Distinto del A4 (210 × 297 mm) y no incluido en
+    # reportlab.lib.pagesizes (que solo trae LEGAL = 8.5 × 14").
+    OFICIO = (8.5 * inch, 13 * inch)
 
     GOLD     = colors.HexColor('#B99C74')
     GOLDDARK = colors.HexColor('#8a7355')
     SIDEBAR  = colors.HexColor('#453941')
     BORDER   = colors.HexColor('#e8e4df')
     TEXTSEC  = colors.HexColor('#6b6560')
+    TEXT     = colors.HexColor('#1a1714')
 
     buffer = io.BytesIO()
     muchas_cols = len(reporte['columnas']) > 5
-    pagesize = landscape(A4) if muchas_cols else A4
+    base_pagesize = OFICIO if tamanio == 'oficio' else A4
+    pagesize = landscape(base_pagesize) if muchas_cols else base_pagesize
     doc = SimpleDocTemplate(buffer, pagesize=pagesize,
-                            topMargin=18*mm, bottomMargin=16*mm,
+                            topMargin=18*mm, bottomMargin=20*mm,
                             leftMargin=14*mm, rightMargin=14*mm)
 
     styles = getSampleStyleSheet()
@@ -56,6 +64,11 @@ def render_pdf(reporte: dict) -> bytes:
         fontSize=10, textColor=GOLDDARK, spaceAfter=1)
     st_sub = ParagraphStyle('sub', parent=styles['Normal'],
         fontSize=9, textColor=TEXTSEC, spaceAfter=12)
+    st_th = ParagraphStyle('th', parent=styles['Normal'],
+        fontSize=8.5, textColor=GOLD, fontName='Helvetica-Bold', leading=11)
+    st_celda = ParagraphStyle('celda', parent=styles['Normal'],
+        fontSize=8, textColor=TEXT, leading=10)
+    st_celda_der = ParagraphStyle('celda_der', parent=st_celda, alignment=2)
 
     elementos = []
     elementos.append(Paragraph('ÓGA PORÃ — Acabados de Construcción', st_marca))
@@ -64,27 +77,42 @@ def render_pdf(reporte: dict) -> bytes:
     generado = datetime.now().strftime('%d/%m/%Y %H:%M')
     elementos.append(Paragraph(f'{sub}  ·  Generado: {generado}', st_sub))
 
-    # Tabla
-    data = [reporte['columnas']] + reporte['filas']
-    tabla = Table(data, repeatRows=1)
-    estilo = [
-        ('BACKGROUND', (0,0), (-1,0), SIDEBAR),
-        ('TEXTCOLOR',  (0,0), (-1,0), GOLD),
-        ('FONTNAME',   (0,0), (-1,0), 'Helvetica-Bold'),
-        ('FONTSIZE',   (0,0), (-1,0), 8.5),
-        ('FONTSIZE',   (0,1), (-1,-1), 8),
-        ('TEXTCOLOR',  (0,1), (-1,-1), colors.HexColor('#1a1714')),
+    # ── Tabla ────────────────────────────────────────────────
+    # colWidths explícitos: sin esto reportlab no envuelve el texto y da
+    # a cada columna su ancho "natural", desbordando la hoja apenas hay
+    # nombres largos de producto o cliente. Las celdas van en Paragraph
+    # (en vez de strings planos) para que sí hagan wrap dentro del ancho
+    # asignado, y escapadas porque son texto libre cargado por el usuario.
+    columnas    = reporte['columnas']
+    cols_der    = set(reporte.get('cols_derecha', []))
+    n_cols      = len(columnas)
+    ancho_total = pagesize[0] - doc.leftMargin - doc.rightMargin
+
+    ancho_num   = ancho_total * 0.09
+    n_texto     = max(n_cols - len(cols_der), 1)
+    ancho_texto = (ancho_total - ancho_num * len(cols_der)) / n_texto
+    col_widths  = [ancho_num if i in cols_der else ancho_texto for i in range(n_cols)]
+
+    header = [Paragraph(escape(str(c)), st_th) for c in columnas]
+    filas_pdf = []
+    for fila in reporte['filas']:
+        fila_pdf = []
+        for i, valor in enumerate(fila):
+            estilo_celda = st_celda_der if i in cols_der else st_celda
+            fila_pdf.append(Paragraph(escape(str(valor)), estilo_celda))
+        filas_pdf.append(fila_pdf)
+
+    tabla = Table([header] + filas_pdf, repeatRows=1, colWidths=col_widths)
+    tabla.setStyle(TableStyle([
+        ('BACKGROUND',     (0,0), (-1,0), SIDEBAR),
         ('ROWBACKGROUNDS', (0,1), (-1,-1), [colors.white, colors.HexColor('#fafaf9')]),
-        ('GRID',       (0,0), (-1,-1), 0.5, BORDER),
-        ('VALIGN',     (0,0), (-1,-1), 'MIDDLE'),
-        ('TOPPADDING', (0,0), (-1,-1), 5),
-        ('BOTTOMPADDING', (0,0), (-1,-1), 5),
-        ('LEFTPADDING', (0,0), (-1,-1), 6),
-    ]
-    # Alinear a la derecha las columnas numéricas (heurística: última/penúltima)
-    for col_idx in reporte.get('cols_derecha', []):
-        estilo.append(('ALIGN', (col_idx,0), (col_idx,-1), 'RIGHT'))
-    tabla.setStyle(TableStyle(estilo))
+        ('GRID',           (0,0), (-1,-1), 0.5, BORDER),
+        ('VALIGN',         (0,0), (-1,-1), 'MIDDLE'),
+        ('TOPPADDING',     (0,0), (-1,-1), 5),
+        ('BOTTOMPADDING',  (0,0), (-1,-1), 5),
+        ('LEFTPADDING',    (0,0), (-1,-1), 6),
+        ('RIGHTPADDING',   (0,0), (-1,-1), 6),
+    ]))
     elementos.append(tabla)
 
     # Totales
@@ -92,11 +120,21 @@ def render_pdf(reporte: dict) -> bytes:
         elementos.append(Spacer(1, 10))
         for k, v in reporte['totales'].items():
             elementos.append(Paragraph(
-                f'<b>{k}:</b> {v}',
+                f'<b>{escape(str(k))}:</b> {escape(str(v))}',
                 ParagraphStyle('tot', parent=styles['Normal'],
                     fontSize=10, textColor=SIDEBAR, alignment=2, spaceAfter=2)))
 
-    doc.build(elementos)
+    def _pie_pagina(canvas, doc_):
+        """Pie con marca y número de página — evita hojas sueltas sin identificar."""
+        canvas.saveState()
+        canvas.setFont('Helvetica', 7.5)
+        canvas.setFillColor(TEXTSEC)
+        ancho_pagina = doc_.pagesize[0]
+        canvas.drawString(doc_.leftMargin, 10*mm, 'Oga Porã — Documento de uso interno')
+        canvas.drawRightString(ancho_pagina - doc_.rightMargin, 10*mm, f'Página {doc_.page}')
+        canvas.restoreState()
+
+    doc.build(elementos, onFirstPage=_pie_pagina, onLaterPages=_pie_pagina)
     return buffer.getvalue()
 
 
@@ -291,10 +329,10 @@ def reporte_caja(desde: date, hasta: date):
 # ════════════════════════════════════════════════════════
 # Entrega como HttpResponse
 # ════════════════════════════════════════════════════════
-def responder_reporte(reporte: dict, formato: str, nombre_base: str) -> HttpResponse:
+def responder_reporte(reporte: dict, formato: str, nombre_base: str, tamanio: str = 'a4') -> HttpResponse:
     hoy = date.today().strftime('%Y%m%d')
     if formato == 'pdf':
-        contenido = render_pdf(reporte)
+        contenido = render_pdf(reporte, tamanio=tamanio)
         resp = HttpResponse(contenido, content_type='application/pdf')
         resp['Content-Disposition'] = f'attachment; filename="{nombre_base}_{hoy}.pdf"'
         return resp
