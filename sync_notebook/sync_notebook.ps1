@@ -113,14 +113,39 @@ try {
     }
     Log "Dump generado: $archivoDump ($([math]::Round((Get-Item $archivoDump).Length / 1KB, 1)) KB)"
 
-    # ─── 2) Restaurar en la base LOCAL de la notebook ────────────────────────
+    # ─── 2) Recrear la base LOCAL de la notebook desde cero ──────────────────
+    # No se restaura encima de la base existente: si el servidor borró una
+    # tabla o columna en una migración (como pasó con "tipos_instalacion"
+    # el 09/08/2026), esa tabla queda huérfana en la notebook — y la
+    # próxima vez que el dump nuevo intente recrear una tabla de la que esa
+    # huérfana depende por foreign key (ej. "productos"), el restore se
+    # corta a la mitad con "cannot drop constraint ... because other
+    # objects depend on it", dejando la base de la notebook a medio
+    # actualizar. Recrear la base de cero en cada sync elimina esa clase
+    # entera de problema, no solo el de hoy — probado localmente
+    # reproduciendo el escenario antes de este cambio.
     $env:PGPASSWORD = $cfg['LOCAL_DB_PASSWORD']
+    $dbNombre = $cfg['LOCAL_DB_NOMBRE']
 
+    & $psql `
+        --host=localhost --port=$($cfg['LOCAL_DB_PUERTO']) --username=$($cfg['LOCAL_DB_USUARIO']) `
+        --dbname=postgres --set=ON_ERROR_STOP=1 --quiet `
+        --command="DROP DATABASE IF EXISTS $dbNombre WITH (FORCE);" `
+        --command="CREATE DATABASE $dbNombre OWNER $($cfg['LOCAL_DB_USUARIO']);" `
+        *> (Join-Path $tmpDir 'ultimo_recreate.log')
+
+    if ($LASTEXITCODE -ne 0) {
+        Log "ERROR: no se pudo recrear la base local (código $LASTEXITCODE). Ver tmp/ultimo_recreate.log — probablemente el usuario $($cfg['LOCAL_DB_USUARIO']) no tiene el atributo CREATEDB (ver docs/sync_notebook.md)."
+        Escribir-Estado 'error' "Recrear base local falló (código $LASTEXITCODE)"
+        exit 1
+    }
+
+    # ─── 3) Restaurar el dump en la base recién creada ───────────────────────
     & $psql `
         --host=localhost `
         --port=$($cfg['LOCAL_DB_PUERTO']) `
         --username=$($cfg['LOCAL_DB_USUARIO']) `
-        --dbname=$($cfg['LOCAL_DB_NOMBRE']) `
+        --dbname=$dbNombre `
         --set=ON_ERROR_STOP=1 `
         --quiet `
         --file=$archivoDump `

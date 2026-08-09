@@ -114,6 +114,81 @@ Y revisar:
 
 ---
 
+## Actualizar la base de la notebook al instante (`actualizar_notebook.bat`)
+
+Además del sync automático cada 5 minutos, hay una herramienta para forzar
+la actualización **en el momento**, sin esperar ni depender de la tarea
+programada — por ejemplo, justo después de instalar una actualización del
+sistema en el servidor y querer que la notebook quede al día ya mismo.
+
+Doble clic en `sync_notebook/actualizar_notebook.bat`, estando la notebook
+conectada a la misma red WiFi que el servidor. Usa el mismo `config.env` ya
+configurado (paso 2.2) — no pide nada nuevo. Hace, en un solo paso: baja los
+datos del servidor, **recrea la base local de cero** (mismo motivo que la
+sección de abajo — evita tablas huérfanas) y restaura los datos ahí. Al
+final queda un mensaje de éxito o de error con el detalle del problema en
+`sync_notebook/tmp/` (`ultimo_dump.log`, `ultimo_recreate.log`,
+`ultimo_restore.log`, según en qué paso haya fallado).
+
+Es un archivo autónomo — no depende de `sync_notebook.ps1` ni hay que
+copiar nada a mano para que funcione. Sirve para esta actualización y para
+cualquier actualización futura del sistema: alcanza con volver a correr
+este mismo archivo cada vez que haga falta traer los cambios más recientes
+del servidor a la notebook.
+
+## Actualizar la copia del script en la notebook
+
+`sync_notebook.ps1` vive en el repo y se copia una vez a la notebook al
+instalarlo (paso 2.2) — no se actualiza solo. Cada vez que se corrija este
+script en el repo (como el cambio del 09/08/2026 de abajo), hay que volver
+a copiar el archivo `sync_notebook/sync_notebook.ps1` actualizado a la
+misma carpeta de la notebook (pisando el viejo), sin tocar `config.env`
+(ese sí es local y no se toca). No hace falta reinstalar la tarea
+programada — la va a tomar sola en la próxima corrida.
+
+Esto solo afecta al **sync automático** cada 5 minutos. Si se prefiere
+evitar la copia manual del script, alcanza con usar
+`actualizar_notebook.bat` (arriba) cada vez que se necesite una
+actualización — es independiente y no requiere pisar ningún archivo en la
+notebook.
+
+### 09/08/2026 — la base local ahora se recrea de cero en cada sync
+
+Antes, cada sync **restauraba encima** de la base ya existente en la
+notebook. Si en algún momento el servidor borra una tabla o columna en una
+migración (pasó el 09/08/2026 con el campo "Tipos de instalación"), esa
+tabla le queda **huérfana** a la notebook — y la próxima vez que el dump
+nuevo intenta recrear una tabla de la que esa huérfana depende (por
+ejemplo "productos", por una foreign key), el restore se corta a la mitad
+con un error de dependencias, dejando la base de la notebook a medio
+actualizar (mezcla de esquema viejo y nuevo).
+
+Ahora cada sync **borra y vuelve a crear** la base local completa antes de
+restaurar, así nunca puede quedar un resto de una versión de esquema
+anterior. Se probó localmente reproduciendo el escenario exacto (tabla
+huérfana con foreign key a una tabla que el dump nuevo intenta recrear):
+sin este cambio el restore fallaba con `cannot drop constraint ... because
+other objects depend on it`; con el cambio, corre limpio.
+
+Esto no necesita ningún cambio en `config.env` — usa las mismas
+credenciales (`LOCAL_DB_USUARIO`/`LOCAL_DB_PASSWORD`) que ya estaban
+configuradas, siempre que ese usuario tenga el atributo `CREATEDB` (se
+verificó que `ceramica_user`, creado siguiendo `docs/instalacion.md`, ya
+lo tiene). Si en alguna instalación puntual no lo tuviera, otorgarlo una
+vez como superusuario:
+```sql
+ALTER ROLE ceramica_user CREATEDB;
+```
+
+**Una sola vez, en la notebook, antes de que corra el próximo sync
+programado:** copiar el `sync_notebook.ps1` actualizado (ver arriba). Si
+el sync ya corrió con el script viejo después de esta migración y quedó
+en `status: "error"` con "psql (restore) falló", no hay ningún dato
+corrupto que limpiar a mano — apenas se actualice el script, el próximo
+sync se resuelve solo (recrea la base de cero).
+
+---
+
 ## Diagnóstico rápido
 
 - **`status: "omitido"` todo el tiempo, incluso en el local** → revisar que
@@ -122,10 +197,20 @@ Y revisar:
 - **`status: "error"` con "pg_dump falló"** → generalmente credenciales
   mal cargadas en `config.env`, o falta agregar la línea de `pg_hba.conf`
   (paso 1.1.2) para la IP/subred de la notebook.
+- **`status: "error"` con "Recrear base local falló"** → revisar
+  `sync_notebook/tmp/ultimo_recreate.log`; casi siempre falta el atributo
+  `CREATEDB` en `LOCAL_DB_USUARIO` (ver sección de arriba) o
+  `LOCAL_DB_PASSWORD` está mal en `config.env`.
 - **`status: "error"` con "psql (restore) falló"** → revisar
-  `sync_notebook/tmp/ultimo_restore.log` para el detalle exacto; suele ser
-  la base local (`LOCAL_DB_NOMBRE`) inexistente o credenciales locales
-  incorrectas.
+  `sync_notebook/tmp/ultimo_restore.log` para el detalle exacto; con la
+  base recreándose de cero en cada corrida, ya no debería deberse a
+  esquemas desincronizados — más probable un problema real de datos en el
+  dump.
+- **`actualizar_notebook.bat` termina con "ERROR"** → el mensaje en
+  pantalla indica en qué paso falló; el detalle completo queda en
+  `sync_notebook/tmp/ultimo_dump.log`, `ultimo_recreate.log` o
+  `ultimo_restore.log` según corresponda (mismos archivos y mismas causas
+  típicas que las tres entradas de arriba).
 - **Desinstalar el sync** (por ejemplo, si se decide operar la notebook
   como una tablet más en vez de espejo local):
   ```bat
