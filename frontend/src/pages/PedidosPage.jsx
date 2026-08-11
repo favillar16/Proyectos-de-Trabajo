@@ -69,7 +69,7 @@ function EstadoBadge({ estado }) {
 }
 
 // ─── Card de pedido en la lista ───────────────────────────────────────────────
-function PedidoCard({ pedido, onAbrir, esActivo }) {
+function PedidoCard({ pedido, onAbrir, esActivo, rol }) {
   return (
     <div
       onClick={() => onAbrir(pedido)}
@@ -97,7 +97,9 @@ function PedidoCard({ pedido, onAbrir, esActivo }) {
           </p>
         </div>
         <div style={{ textAlign:'right', flexShrink:0 }}>
-          <p style={{ fontSize:'15px', fontWeight:'600', color:C.goldDark }}>{formatGs(pedido.total)}</p>
+          {rol !== 'deposito' && (
+            <p style={{ fontSize:'15px', fontWeight:'600', color:C.goldDark }}>{formatGs(pedido.total)}</p>
+          )}
           <p style={{ fontSize:'11px', color:C.textMuted, marginTop:'2px' }}>
             {pedido.items_count} ítem{pedido.items_count!==1?'s':''}
           </p>
@@ -270,7 +272,9 @@ function PanelDetalle({ pedido: pedidoResumen, rol, puedeEditarPrecio, onCerrar 
                         {item.descripcion}
                       </p>
                       <p style={{ fontSize:'11px', color:C.textMuted, marginTop:'1px' }}>
-                        {Number(item.cantidad).toFixed(2)} × {formatGs(item.precio_unitario)} = {formatGs(item.subtotal)}
+                        {rol === 'deposito'
+                          ? `${Number(item.cantidad).toFixed(2)} unidad${Number(item.cantidad)!==1?'es':''}`
+                          : `${Number(item.cantidad).toFixed(2)} × ${formatGs(item.precio_unitario)} = ${formatGs(item.subtotal)}`}
                       </p>
                       {item.observaciones && (
                         <p style={{ fontSize:'11px', color:C.info, marginTop:'2px' }}>
@@ -306,7 +310,8 @@ function PanelDetalle({ pedido: pedidoResumen, rol, puedeEditarPrecio, onCerrar 
                 ))}
               </div>
 
-              {/* Totales */}
+              {/* Totales — depósito no maneja montos */}
+              {rol !== 'deposito' && (
               <div style={{ padding:'14px 20px', borderTop:`1px solid ${C.border}` }}>
                 {[
                   { l:'Subtotal', v:pedido.subtotal, muted:true },
@@ -393,6 +398,7 @@ function PanelDetalle({ pedido: pedidoResumen, rol, puedeEditarPrecio, onCerrar 
                   </div>
                 )}
               </div>
+              )}
             </>
           ) : null}
         </div>
@@ -648,6 +654,7 @@ export default function PedidosPage() {
                 pedido={p}
                 onAbrir={setPedidoActivo}
                 esActivo={pedidoActivo?.id === p.id}
+                rol={rol}
               />
             ))
           }

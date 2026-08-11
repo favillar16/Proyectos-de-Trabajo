@@ -122,16 +122,37 @@ class PedidoProveedorReadSerializer(serializers.ModelSerializer):
     dias_entrega     = serializers.IntegerField(source="dias_para_entrega", read_only=True)
     producto_nombre  = serializers.CharField(source="producto.nombre", read_only=True, allow_null=True)
     producto_unidad_venta = serializers.CharField(source="producto.unidad_venta", read_only=True, allow_null=True)
+    unidad_pedido_label = serializers.CharField(source="get_unidad_pedido_display", read_only=True)
+    cantidad_pedida_m2 = serializers.SerializerMethodField()
     registrado_por_nombre = serializers.CharField(
         source="registrado_por.nombre_completo", read_only=True)
 
     class Meta:
         model  = PedidoProveedor
         fields = ["id","proveedor_id","proveedor_nombre","descripcion",
-                  "producto_id","producto_nombre","producto_unidad_venta","cantidad_pedida",
+                  "producto_id","producto_nombre","producto_unidad_venta",
+                  "cantidad_pedida","unidad_pedido","unidad_pedido_label","cantidad_pedida_m2",
                   "monto_estimado","fecha_pedido","fecha_entrega_estimada",
                   "fecha_entrega_real","estado","estado_label","dias_entrega",
                   "notas","registrado_por_nombre","fecha_creacion"]
+
+    def get_cantidad_pedida_m2(self, obj):
+        """
+        Equivalente aproximado en m² para mostrar en pantalla. Es best-effort:
+        a la altura del pedido (todavía sin recibir) no se eligió una variante
+        puntual si el producto tiene varias, así que se usa la primera activa
+        solo para estimar — el valor real se fija recién al confirmar la
+        recepción, cuando sí se elige la variante exacta.
+        """
+        if obj.cantidad_pedida is None or obj.unidad_pedido == PedidoProveedor.UNIDAD_VENTA or not obj.producto:
+            return None
+        variante = obj.producto.variantes.filter(activa=True).first()
+        if not variante:
+            return None
+        try:
+            return float(variante.convertir_a_unidad_venta(obj.cantidad_pedida, obj.unidad_pedido))
+        except Exception:
+            return None
 
 
 class PedidoProveedorWriteSerializer(serializers.Serializer):
@@ -143,6 +164,11 @@ class PedidoProveedorWriteSerializer(serializers.Serializer):
         required=False, allow_null=True)
     cantidad_pedida = serializers.DecimalField(max_digits=10, decimal_places=4,
                         required=False, allow_null=True, min_value=0.0001)
+    # A los proveedores se les compra en pallets o cajas, no en m² — se
+    # guarda la cantidad tal como se cargó (no convertida) junto con su
+    # unidad, para no perder el dato original de "cuántos pallets/cajas".
+    unidad_pedido  = serializers.ChoiceField(choices=PedidoProveedor.UNIDADES_PEDIDO,
+                        required=False, default=PedidoProveedor.UNIDAD_VENTA)
     monto_estimado = serializers.DecimalField(max_digits=14, decimal_places=2,
                         required=False, allow_null=True, min_value=0)
     fecha_pedido   = serializers.DateField(required=False)
@@ -151,6 +177,19 @@ class PedidoProveedorWriteSerializer(serializers.Serializer):
     estado         = serializers.ChoiceField(choices=PedidoProveedor.ESTADOS,
                         default=PedidoProveedor.ESTADO_PENDIENTE)
     notas          = serializers.CharField(required=False, allow_blank=True, default="")
+
+
+class RecepcionPedidoSerializer(serializers.Serializer):
+    """
+    Datos extra que solo aplican al confirmar la recepción (pasar a
+    'recibido') de un PedidoProveedor.WriteSerializer no los incluye porque
+    no son campos del modelo — son parámetros de la conversión a stock.
+    """
+    variante_id       = serializers.IntegerField(required=False, allow_null=True)
+    cantidad_recibida = serializers.DecimalField(max_digits=10, decimal_places=4,
+                            required=False, allow_null=True, min_value=0.0001)
+    unidad_recibido   = serializers.ChoiceField(choices=PedidoProveedor.UNIDADES_PEDIDO,
+                            required=False, allow_null=True)
 
 
 # ════════════════════════════════════════════════════════
@@ -297,68 +336,89 @@ class PedidoProveedorDetailView(views.APIView):
         p = get_object_or_404(PedidoProveedor.objects.select_related("proveedor","registrado_por"), pk=pk)
         return Response(PedidoProveedorReadSerializer(p).data)
     def patch(self, request, pk):
-        p = get_object_or_404(PedidoProveedor, pk=pk)
-        s = PedidoProveedorWriteSerializer(data=request.data, partial=True)
-        if not s.is_valid(): return Response(s.errors, status=400)
+        # Todo el método corre bajo un mismo lock de fila (select_for_update)
+        # sobre el pedido: dos PATCH casi simultáneos marcando "Recibido"
+        # (doble clic/doble submit) se serializan, así el segundo ve el
+        # estado ya actualizado y pasa_a_recibido da False — sin eso, ambos
+        # podían leer 'pendiente' a la vez y duplicar la entrada de stock.
+        with transaction.atomic():
+            p = get_object_or_404(PedidoProveedor.objects.select_for_update(), pk=pk)
+            s = PedidoProveedorWriteSerializer(data=request.data, partial=True)
+            if not s.is_valid(): return Response(s.errors, status=400)
+            rs = RecepcionPedidoSerializer(data=request.data)
+            if not rs.is_valid(): return Response(rs.errors, status=400)
+            recepcion = rs.validated_data
 
-        estado_anterior = p.estado
-        estado_nuevo    = s.validated_data.get('estado', p.estado)
-        pasa_a_recibido = (
-            estado_nuevo == PedidoProveedor.ESTADO_RECIBIDO
-            and estado_anterior != PedidoProveedor.ESTADO_RECIBIDO
-        )
+            estado_anterior = p.estado
+            estado_nuevo    = s.validated_data.get('estado', p.estado)
+            pasa_a_recibido = (
+                estado_nuevo == PedidoProveedor.ESTADO_RECIBIDO
+                and estado_anterior != PedidoProveedor.ESTADO_RECIBIDO
+            )
 
-        variante = None
-        cantidad_recibida = None
-        if pasa_a_recibido:
-            producto = s.validated_data.get('producto', p.producto)
-            if producto:
-                variantes_activas = list(producto.variantes.filter(activa=True))
-                if not variantes_activas:
-                    return Response(
-                        {'error': f'"{producto.nombre}" no tiene variantes activas; no se puede cargar el stock.'},
-                        status=status.HTTP_400_BAD_REQUEST,
-                    )
-                if len(variantes_activas) == 1:
-                    variante = variantes_activas[0]
-                else:
-                    variante_id = request.data.get('variante_id')
-                    if not variante_id:
-                        return Response({
-                            'error': 'Este producto tiene varias variantes; indicá a cuál entra el stock.',
-                            'variantes': [
-                                {'id': v.id, 'sku': v.sku, 'descripcion': str(v)}
-                                for v in variantes_activas
-                            ],
-                        }, status=status.HTTP_400_BAD_REQUEST)
-                    variante = next((v for v in variantes_activas if v.id == int(variante_id)), None)
-                    if not variante:
+            variante = None
+            cantidad_recibida = None
+            if pasa_a_recibido:
+                producto = s.validated_data.get('producto', p.producto)
+                if producto:
+                    variantes_activas = list(producto.variantes.filter(activa=True))
+                    if not variantes_activas:
                         return Response(
-                            {'error': 'La variante indicada no pertenece a este producto.'},
+                            {'error': f'"{producto.nombre}" no tiene variantes activas; no se puede cargar el stock.'},
                             status=status.HTTP_400_BAD_REQUEST,
                         )
+                    if len(variantes_activas) == 1:
+                        variante = variantes_activas[0]
+                    else:
+                        variante_id = recepcion.get('variante_id')
+                        if not variante_id:
+                            return Response({
+                                'error': 'Este producto tiene varias variantes; indicá a cuál entra el stock.',
+                                'variantes': [
+                                    {'id': v.id, 'sku': v.sku, 'descripcion': str(v)}
+                                    for v in variantes_activas
+                                ],
+                            }, status=status.HTTP_400_BAD_REQUEST)
+                        variante = next((v for v in variantes_activas if v.id == variante_id), None)
+                        if not variante:
+                            return Response(
+                                {'error': 'La variante indicada no pertenece a este producto.'},
+                                status=status.HTTP_400_BAD_REQUEST,
+                            )
 
-                cantidad_recibida_raw = request.data.get('cantidad_recibida') or s.validated_data.get('cantidad_pedida') or p.cantidad_pedida
-                if not cantidad_recibida_raw or Decimal(str(cantidad_recibida_raw)) <= 0:
-                    return Response(
-                        {'error': 'Indicá la cantidad recibida para sumar al stock.'},
-                        status=status.HTTP_400_BAD_REQUEST,
-                    )
-                # Misma conversión cajas/pallets → unidad de venta que usa el
-                # ajuste manual de stock (apps.inventario), centralizada en
-                # Variante.convertir_a_unidad_venta.
-                unidad_recibido = request.data.get('unidad_recibido', 'venta')
-                try:
-                    cantidad_recibida = variante.convertir_a_unidad_venta(cantidad_recibida_raw, unidad_recibido)
-                except ValueError as e:
-                    return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+                    # Sin cantidad_recibida/unidad_recibido explícitos, se usa lo
+                    # pedido tal cual — en SU unidad (unidad_pedido), no
+                    # forzado a 'venta'. Antes de que existiera unidad_pedido,
+                    # cantidad_pedida siempre estaba en m²/unidad de venta y el
+                    # default 'venta' era correcto; ahora puede estar en cajas
+                    # o pallets, así que hay que arrastrar la unidad también.
+                    cantidad_recibida_raw = recepcion.get('cantidad_recibida')
+                    unidad_recibido = recepcion.get('unidad_recibido')
+                    if cantidad_recibida_raw is None:
+                        cantidad_recibida_raw = s.validated_data.get('cantidad_pedida') or p.cantidad_pedida
+                        if unidad_recibido is None:
+                            unidad_recibido = s.validated_data.get('unidad_pedido', p.unidad_pedido)
+                    if unidad_recibido is None:
+                        unidad_recibido = PedidoProveedor.UNIDAD_VENTA
 
-        for campo, valor in s.validated_data.items(): setattr(p, campo, valor)
-        # Si pasa a recibido y no tiene fecha real, ponerla hoy
-        if p.estado == PedidoProveedor.ESTADO_RECIBIDO and not p.fecha_entrega_real:
-            p.fecha_entrega_real = date.today()
+                    if not cantidad_recibida_raw or Decimal(str(cantidad_recibida_raw)) <= 0:
+                        return Response(
+                            {'error': 'Indicá la cantidad recibida para sumar al stock.'},
+                            status=status.HTTP_400_BAD_REQUEST,
+                        )
+                    # Misma conversión cajas/pallets → unidad de venta que usa el
+                    # ajuste manual de stock (apps.inventario), centralizada en
+                    # Variante.convertir_a_unidad_venta.
+                    try:
+                        cantidad_recibida = variante.convertir_a_unidad_venta(cantidad_recibida_raw, unidad_recibido)
+                    except ValueError as e:
+                        return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
-        with transaction.atomic():
+            for campo, valor in s.validated_data.items(): setattr(p, campo, valor)
+            # Si pasa a recibido y no tiene fecha real, ponerla hoy
+            if p.estado == PedidoProveedor.ESTADO_RECIBIDO and not p.fecha_entrega_real:
+                p.fecha_entrega_real = date.today()
+
             p.save()
             if pasa_a_recibido and variante:
                 stock = Stock.objects.select_for_update().get(variante=variante)

@@ -120,6 +120,16 @@ class VarianteWriteSerializer(serializers.ModelSerializer):
         required=False, allow_null=True, write_only=True,
         min_value=0,
     )
+    # A la mercadería nueva se la recibe en cajas o pallets, no en m² — mismo
+    # criterio que el ajuste manual de stock (apps.inventario.AjusteStockView).
+    stock_inicial_unidad = serializers.ChoiceField(
+        choices=[
+            ('venta', 'Unidad de venta (m²/unidad)'),
+            ('caja', 'Cajas'),
+            ('pallet', 'Pallets'),
+        ],
+        required=False, default='venta', write_only=True,
+    )
     stock_minimo   = serializers.DecimalField(
         max_digits=10, decimal_places=4,
         required=False, allow_null=True, write_only=True,
@@ -136,7 +146,7 @@ class VarianteWriteSerializer(serializers.ModelSerializer):
             'precio_diferencial', 'activa',
             'tipo_grifo', 'posicion_grifo', 'montaje_grifo',
             'tipo_ducha', 'tipo_cisterna',
-            'stock_inicial', 'stock_minimo', 'ubicacion',
+            'stock_inicial', 'stock_inicial_unidad', 'stock_minimo', 'ubicacion',
         ]
 
     def validate(self, attrs):
@@ -146,34 +156,81 @@ class VarianteWriteSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError(
                 'Debe indicar largo y ancho juntos, o dejar ambos vacíos.'
             )
+
+        # Cruce m2_por_caja vs. dimensiones — mismo criterio que Variante.clean(),
+        # que nunca corre acá porque el ModelViewSet no llama full_clean().
+        piezas  = attrs.get('piezas_por_caja')
+        m2_caja = attrs.get('m2_por_caja')
+        if largo and ancho and piezas and m2_caja:
+            calculado = (float(largo) / 100) * (float(ancho) / 100) * float(piezas)
+            if abs(float(m2_caja) - calculado) > 0.05:
+                raise serializers.ValidationError({
+                    'm2_por_caja': (
+                        f'El valor ingresado ({m2_caja} m²) no coincide con el calculado '
+                        f'({calculado:.4f} m²). Verificar dimensiones o piezas por caja.'
+                    )
+                })
         return attrs
 
     def create(self, validated_data):
-        stock_inicial = validated_data.pop('stock_inicial', 0) or 0
-        stock_minimo  = validated_data.pop('stock_minimo', 0)  or 0
-        ubicacion     = validated_data.pop('ubicacion', '')
+        stock_inicial        = validated_data.pop('stock_inicial', 0) or 0
+        stock_inicial_unidad = validated_data.pop('stock_inicial_unidad', 'venta')
+        stock_minimo         = validated_data.pop('stock_minimo', 0)  or 0
+        ubicacion            = validated_data.pop('ubicacion', '')
 
         variante = super().create(validated_data)
 
-        # La señal ya crea el Stock con cantidad=0; lo actualizamos si hay inicial.
-        # stock_referencia queda fijo en el valor inicial cargado: es la base
-        # del 100% contra la que se calculan las alertas de stock bajo/crítico.
+        # Si el stock inicial se cargó en cajas o pallets, convertir a la
+        # unidad de venta — misma cuenta que usa el ajuste manual de stock
+        # (apps.inventario.AjusteStockView) y la recepción de pedidos a
+        # proveedor, centralizada en Variante.convertir_a_unidad_venta.
+        if stock_inicial > 0 and stock_inicial_unidad != 'venta':
+            try:
+                stock_inicial = variante.convertir_a_unidad_venta(stock_inicial, stock_inicial_unidad)
+            except ValueError as e:
+                raise serializers.ValidationError({'stock_inicial': str(e)})
+
+        # La señal ya crea el Stock con cantidad=0.
         if stock_inicial > 0 or stock_minimo > 0 or ubicacion:
-            Stock.objects.filter(variante=variante).update(
-                cantidad         = stock_inicial,
-                stock_referencia = stock_inicial or None,
-                stock_minimo     = stock_minimo,
-                ubicacion        = ubicacion,
-            )
+            stock = Stock.objects.get(variante=variante)
+            if stock_minimo:
+                stock.stock_minimo = stock_minimo
+            if ubicacion:
+                stock.ubicacion = ubicacion
+            if stock_inicial > 0:
+                # stock_referencia queda fijo en el valor inicial cargado (ya
+                # convertido): es la base del 100% contra la que se calculan
+                # las alertas de stock bajo/crítico.
+                stock.stock_referencia = stock_inicial
+            stock.save()
+
+            if stock_inicial > 0:
+                # Vía registrar_movimiento (no un update() directo) para que
+                # la primera carga de stock también quede en el historial de
+                # auditoría, igual que cualquier otro movimiento.
+                stock.registrar_movimiento(
+                    tipo            = 'entrada',
+                    cantidad        = stock_inicial,
+                    usuario         = self.context['request'].user,
+                    referencia_tipo = 'alta_producto',
+                    observaciones   = f'Stock inicial al crear la variante {variante.sku}',
+                )
         return variante
 
     def update(self, instance, validated_data):
         # Actualizar stock si se envían los campos
-        stock_inicial = validated_data.pop('stock_inicial', None)
+        stock_inicial        = validated_data.pop('stock_inicial', None)
+        stock_inicial_unidad = validated_data.pop('stock_inicial_unidad', 'venta')
         stock_minimo  = validated_data.pop('stock_minimo', None)
         ubicacion     = validated_data.pop('ubicacion', None)
 
         instance = super().update(instance, validated_data)
+
+        if stock_inicial is not None and stock_inicial > 0 and stock_inicial_unidad != 'venta':
+            try:
+                stock_inicial = instance.convertir_a_unidad_venta(stock_inicial, stock_inicial_unidad)
+            except ValueError as e:
+                raise serializers.ValidationError({'stock_inicial': str(e)})
 
         if any(v is not None for v in [stock_inicial, stock_minimo, ubicacion]):
             stock_qs = Stock.objects.filter(variante=instance)
@@ -209,6 +266,15 @@ def _pedido_pendiente_de(obj):
     }
 
 
+def _puede_ver_costo(context):
+    # Solo admin/depósito pueden ver el costo de adquisición y el margen que
+    # se deriva de él — el resto del personal (vendedor, encargada de
+    # ventas, cajero) no debe recibirlo ni en el listado ni en el detalle.
+    request = context.get('request')
+    usuario = getattr(request, 'user', None)
+    return bool(usuario and getattr(usuario, 'rol', None) in ('admin', 'deposito'))
+
+
 class ProductoListSerializer(serializers.ModelSerializer):
     categoria_nombre = serializers.CharField(source='categoria.nombre', read_only=True)
     categoria_tipo   = serializers.CharField(source='categoria.tipo',   read_only=True)
@@ -216,7 +282,7 @@ class ProductoListSerializer(serializers.ModelSerializer):
     imagen_principal = ImagenProductoSerializer(read_only=True)
     stock_total      = serializers.DecimalField(max_digits=10, decimal_places=4, read_only=True)
     variantes_count  = serializers.SerializerMethodField()
-    margen_bruto     = serializers.FloatField(read_only=True)
+    margen_bruto     = serializers.SerializerMethodField()
     precio_costo     = serializers.SerializerMethodField()
     pedido_pendiente = serializers.SerializerMethodField()
 
@@ -239,13 +305,10 @@ class ProductoListSerializer(serializers.ModelSerializer):
         return obj.variantes.filter(activa=True).count()
 
     def get_precio_costo(self, obj):
-        # Solo admin/depósito pueden ver el costo de adquisición, para
-        # negociar precio sin tener que abrir el detalle del producto.
-        request = self.context.get('request')
-        usuario = getattr(request, 'user', None)
-        if usuario and getattr(usuario, 'rol', None) in ('admin', 'deposito'):
-            return obj.precio_costo
-        return None
+        return obj.precio_costo if _puede_ver_costo(self.context) else None
+
+    def get_margen_bruto(self, obj):
+        return obj.margen_bruto if _puede_ver_costo(self.context) else None
 
     def get_pedido_pendiente(self, obj):
         return _pedido_pendiente_de(obj)
@@ -259,7 +322,8 @@ class ProductoDetailSerializer(serializers.ModelSerializer):
     imagenes          = ImagenProductoSerializer(many=True, read_only=True)
     variantes         = VarianteReadSerializer(many=True, read_only=True)
     stock_total       = serializers.DecimalField(max_digits=10, decimal_places=4, read_only=True)
-    margen_bruto      = serializers.FloatField(read_only=True)
+    precio_costo      = serializers.SerializerMethodField()
+    margen_bruto      = serializers.SerializerMethodField()
     pedido_pendiente  = serializers.SerializerMethodField()
 
     class Meta:
@@ -273,6 +337,12 @@ class ProductoDetailSerializer(serializers.ModelSerializer):
             'imagenes', 'variantes',
             'fecha_creacion', 'fecha_actualizacion',
         ]
+
+    def get_precio_costo(self, obj):
+        return obj.precio_costo if _puede_ver_costo(self.context) else None
+
+    def get_margen_bruto(self, obj):
+        return obj.margen_bruto if _puede_ver_costo(self.context) else None
 
     def get_pedido_pendiente(self, obj):
         return _pedido_pendiente_de(obj)
@@ -307,6 +377,20 @@ class ProductoWriteSerializer(serializers.ModelSerializer):
         if value <= 0:
             raise serializers.ValidationError('El precio base debe ser mayor a 0.')
         return value
+
+    def create(self, validated_data):
+        if not _puede_ver_costo(self.context):
+            validated_data.pop('precio_costo', None)
+        return super().create(validated_data)
+
+    def update(self, instance, validated_data):
+        # precio_costo no viaja al frontend para roles sin permiso (ver
+        # ProductoDetailSerializer) — si el formulario de un vendedor lo
+        # reenvía en null porque nunca lo vio, no debe borrar el costo real
+        # ya cargado por admin/depósito.
+        if not _puede_ver_costo(self.context):
+            validated_data.pop('precio_costo', None)
+        return super().update(instance, validated_data)
 
     def to_representation(self, instance):
         # Al crear/editar devolver el detalle completo

@@ -400,8 +400,10 @@ function ProductoEnBuscador({ producto, onAgregar, idsEnCarrito }) {
 // ─── Fila de ítem en el carrito ───────────────────────────────────────────────
 function FilaItem({ item, onChange, onEliminar, esTouch }) {
   const btnSize = esTouch ? 36 : 30
-  const setQty = (n) => onChange('cantidad', Math.max(0.01, Number(n.toFixed(2))))
+  const max = item.stock_disponible != null ? Number(item.stock_disponible) : Infinity
+  const setQty = (n) => onChange('cantidad', Math.min(max, Math.max(0.01, Number(n.toFixed(2)))))
   const cant = Number(item.cantidad)
+  const alMaximo = max < Infinity && cant >= max
 
   return (
     <div style={{
@@ -436,9 +438,9 @@ function FilaItem({ item, onChange, onEliminar, esTouch }) {
             <Minus size={15} />
           </button>
           <input
-            type="number" min="0.01" step="0.5"
+            type="number" min="0.01" max={max === Infinity ? undefined : max} step="0.5"
             value={item.cantidad}
-            onChange={e => onChange('cantidad', e.target.value)}
+            onChange={e => setQty(Number(e.target.value) || 0.01)}
             style={{ width:'62px', height:`${btnSize}px`, textAlign:'center', padding:'0 4px',
               border:`1px solid ${C.border}`, borderRadius:'8px',
               fontSize:'15px', fontWeight:'500', color:C.text, background:C.bg, outline:'none' }}
@@ -446,19 +448,23 @@ function FilaItem({ item, onChange, onEliminar, esTouch }) {
             onBlur={e => e.target.style.borderColor = C.border}
           />
           <button
+            disabled={alMaximo}
             onClick={() => setQty(cant + 1)}
             style={{ width:`${btnSize}px`, height:`${btnSize}px`, borderRadius:'8px',
-              background:C.bgSec, border:`1px solid ${C.border}`, cursor:'pointer',
-              color:C.textSec, display:'flex', alignItems:'center', justifyContent:'center' }}>
+              background:C.bgSec, border:`1px solid ${C.border}`, cursor: alMaximo ? 'not-allowed' : 'pointer',
+              color:C.textSec, display:'flex', alignItems:'center', justifyContent:'center',
+              opacity: alMaximo ? 0.4 : 1 }}>
             <Plus size={15} />
           </button>
           {/* Atajos rápidos para venta por cantidad */}
           <div style={{ display:'flex', gap:'4px', marginLeft:'4px' }}>
             {[5, 10].map(n => (
-              <button key={n} onClick={() => setQty(cant + n)}
+              <button key={n} disabled={alMaximo} onClick={() => setQty(cant + n)}
                 style={{ height:`${btnSize}px`, padding:'0 9px', borderRadius:'8px',
-                  background:'transparent', border:`1px solid ${C.border}`, cursor:'pointer',
-                  color:C.goldDark, fontSize:'12px', fontWeight:'500' }}>
+                  background:'transparent', border:`1px solid ${C.border}`,
+                  cursor: alMaximo ? 'not-allowed' : 'pointer',
+                  color:C.goldDark, fontSize:'12px', fontWeight:'500',
+                  opacity: alMaximo ? 0.4 : 1 }}>
                 +{n}
               </button>
             ))}
@@ -471,6 +477,11 @@ function FilaItem({ item, onChange, onEliminar, esTouch }) {
           {formatGs(Number(item.precio_unitario) * cant)}
         </p>
       </div>
+      {alMaximo && (
+        <p style={{ fontSize:'10.5px', color:C.danger, marginTop:'4px' }}>
+          Máximo disponible: {max}
+        </p>
+      )}
     </div>
   )
 }
@@ -499,11 +510,18 @@ export default function NuevoPedidoForm({ onPedidoCreado, onCancelar }) {
   const idsEnCarrito = items.map(i => i.variante_id)
 
   const agregarVariante = useCallback((variante, producto) => {
+    // Tope de stock disponible — antes solo se validaba al elegir la
+    // variante en el buscador; una vez en el carrito se podía subir la
+    // cantidad libremente por encima del stock real.
+    const stockDisp = variante.stock?.disponible != null
+      ? Number(variante.stock.disponible)
+      : (variante.stock?.cantidad != null ? Number(variante.stock.cantidad) : Infinity)
     setItems(prev => {
       const existe = prev.findIndex(i => i.variante_id === variante.id)
       if (existe >= 0) {
         return prev.map((i, idx) => idx === existe
-          ? { ...i, cantidad: Number(i.cantidad) + 1 } : i)
+          ? { ...i, cantidad: Math.min(stockDisp, Number(i.cantidad) + 1), stock_disponible: stockDisp }
+          : i)
       }
       const partes = [producto?.nombre || variante.producto_nombre || '']
       if (variante.dimension_display) partes.push(variante.dimension_display)
@@ -514,10 +532,11 @@ export default function NuevoPedidoForm({ onPedidoCreado, onCancelar }) {
         sku:            variante.sku,
         descripcion:    partes.filter(Boolean).join(' — '),
         precio_unitario:variante.precio_venta,
-        cantidad:       1,
+        cantidad:       Math.min(stockDisp, 1),
         unidad_venta:   producto?.unidad_venta || 'm2',
         descuento_item: 0,
         observaciones:  '',
+        stock_disponible: stockDisp,
       }]
     })
     toast.success('Agregado al pedido', { duration: 1000 })

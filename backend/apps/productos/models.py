@@ -469,8 +469,23 @@ class Variante(models.Model):
         return sku
 
     def save(self, *args, **kwargs):
+        from django.db import IntegrityError, transaction
+
         if not self.sku:
+            # Reintentar ante colisión por concurrencia (dos altas simultáneas
+            # generando el mismo SKU base) — mismo patrón que Producto.save().
+            for _ in range(5):
+                self.sku = self._generar_sku()
+                try:
+                    with transaction.atomic():
+                        super().save(*args, **kwargs)
+                    return
+                except IntegrityError:
+                    self.sku = ''   # forzar regeneración en el siguiente intento
+                    continue
+            # Último intento sin capturar (que propague el error real si persiste)
             self.sku = self._generar_sku()
+
         super().save(*args, **kwargs)
 
     def clean(self):

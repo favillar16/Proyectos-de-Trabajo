@@ -8,6 +8,7 @@ from rest_framework.response import Response
 from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 from django_filters.rest_framework import DjangoFilterBackend
 from django.db.models import Prefetch
+from django.db.models.deletion import ProtectedError
 from django.shortcuts import get_object_or_404
 
 from apps.usuarios.permissions import (
@@ -61,7 +62,26 @@ def _producto_qs_completo():
 
 # ─── Auxiliares ───────────────────────────────────────────────────────────────
 
-class CategoriaViewSet(viewsets.ModelViewSet):
+class ProtegeAlBorrarMixin:
+    """
+    El ModelViewSet por defecto hace un delete() físico. Varios modelos acá
+    tienen FKs con on_delete=PROTECT apuntándoles (MovimientoStock, ItemPedido,
+    Producto.categoria/marca) — sin este mixin, borrar algo que ya tuvo
+    movimiento/uso propaga un ProtectedError sin capturar y DRF lo devuelve
+    como 500 crudo en vez de un error legible.
+    """
+    def destroy(self, request, *args, **kwargs):
+        try:
+            return super().destroy(request, *args, **kwargs)
+        except ProtectedError:
+            return Response(
+                {'error': 'No se puede eliminar: está en uso (tiene productos, '
+                          'variantes o movimientos asociados). Desactivalo en su lugar.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+
+class CategoriaViewSet(ProtegeAlBorrarMixin, viewsets.ModelViewSet):
     queryset         = Categoria.objects.order_by('orden', 'nombre')
     serializer_class = CategoriaSerializer
     filter_backends  = [filters.SearchFilter]
@@ -75,7 +95,7 @@ class CategoriaViewSet(viewsets.ModelViewSet):
         return qs
 
 
-class MarcaViewSet(viewsets.ModelViewSet):
+class MarcaViewSet(ProtegeAlBorrarMixin, viewsets.ModelViewSet):
     queryset         = Marca.objects.order_by('nombre')
     serializer_class = MarcaSerializer
     filter_backends  = [filters.SearchFilter]
@@ -97,7 +117,7 @@ class AcabadoViewSet(viewsets.ModelViewSet):
 
 # ─── Productos ────────────────────────────────────────────────────────────────
 
-class ProductoViewSet(viewsets.ModelViewSet):
+class ProductoViewSet(ProtegeAlBorrarMixin, viewsets.ModelViewSet):
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     filterset_class = ProductoFilter
     search_fields   = ['nombre', 'codigo', 'descripcion', 'marca__nombre']
@@ -239,7 +259,7 @@ class ProductoViewSet(viewsets.ModelViewSet):
 
 # ─── Variantes ────────────────────────────────────────────────────────────────
 
-class VarianteViewSet(viewsets.ModelViewSet):
+class VarianteViewSet(ProtegeAlBorrarMixin, viewsets.ModelViewSet):
     parser_classes = [MultiPartParser, FormParser, JSONParser]
     permission_classes = [PermisosPorAccion]
     permisos_por_accion = {

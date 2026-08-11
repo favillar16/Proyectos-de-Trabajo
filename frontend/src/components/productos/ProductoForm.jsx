@@ -277,6 +277,24 @@ function FilaVariante({
   const dimError = errores[`variante_${idx}_dim`]
   const combo = comboExtra(categoriaTipo)
 
+  // A la mercadería nueva se la recibe en cajas o pallets, no en m² — mismo
+  // criterio que ya usan Inventario y Pedidos a proveedor para cargar stock.
+  // m²/caja puede venir tipeado o quedar para que el backend lo calcule solo
+  // desde las dimensiones; acá se estima en el cliente solo para el preview.
+  const m2PorCajaEfectivo = Number(variante.m2_por_caja) > 0
+    ? Number(variante.m2_por_caja)
+    : (variante.largo_cm && variante.ancho_cm && variante.piezas_por_caja
+        ? (Number(variante.largo_cm) / 100) * (Number(variante.ancho_cm) / 100) * Number(variante.piezas_por_caja)
+        : 0)
+  const admiteCajasStock   = unidadVenta === 'm2' && m2PorCajaEfectivo > 0
+  const admitePalletsStock = admiteCajasStock && Number(variante.cajas_por_pallet) > 0
+  const previewStockM2 = (!variante.stock_inicial) ? null
+    : variante.stock_inicial_unidad === 'caja' && admiteCajasStock
+      ? (Number(variante.stock_inicial) * m2PorCajaEfectivo).toFixed(2)
+      : variante.stock_inicial_unidad === 'pallet' && admitePalletsStock
+        ? (Number(variante.stock_inicial) * Number(variante.cajas_por_pallet) * m2PorCajaEfectivo).toFixed(2)
+        : null
+
   return (
     <div style={{
       background: C.bg, border: `1px solid ${C.border}`,
@@ -487,8 +505,31 @@ function FilaVariante({
             />
           </Field>
         )}
-        <Field label="Stock inicial"
+        <Field label={
+            variante.stock_inicial_unidad === 'caja' ? 'Stock inicial (cajas)'
+              : variante.stock_inicial_unidad === 'pallet' ? 'Stock inicial (pallets)'
+              : 'Stock inicial'
+          }
           hint={variante.id ? 'Para modificar el stock, usá el panel de Inventario' : undefined}>
+          {!variante.id && admiteCajasStock && (
+            <div style={{ display: 'flex', gap: '6px', marginBottom: '6px' }}>
+              {[
+                { key: 'venta', label: 'Metros² (m²)' },
+                { key: 'caja', label: 'Cajas' },
+                ...(admitePalletsStock ? [{ key: 'pallet', label: 'Pallets' }] : []),
+              ].map(u => (
+                <button key={u.key} type="button"
+                  onClick={() => onChange('stock_inicial_unidad', u.key)}
+                  style={{ flex: 1, height: '30px', borderRadius: '7px', cursor: 'pointer', fontSize: '11.5px',
+                    background: variante.stock_inicial_unidad === u.key ? C.sidebar : C.bg,
+                    border: `1.5px solid ${variante.stock_inicial_unidad === u.key ? C.gold : C.border}`,
+                    color: variante.stock_inicial_unidad === u.key ? C.gold : C.textSec,
+                    fontWeight: variante.stock_inicial_unidad === u.key ? '500' : '400' }}>
+                  {u.label}
+                </button>
+              ))}
+            </div>
+          )}
           <Input type="number" min="0" step="0.01"
             value={variante.stock_inicial}
             onChange={e => onChange('stock_inicial', e.target.value)}
@@ -496,6 +537,13 @@ function FilaVariante({
             disabled={Boolean(variante.id)}
             style={variante.id ? { background: C.bgSec, color: C.textMuted, cursor: 'not-allowed' } : undefined}
           />
+          {previewStockM2 && (
+            <p style={{ fontSize: '11px', color: C.success, marginTop: '4px' }}>
+              {variante.stock_inicial_unidad === 'pallet'
+                ? `≈ ${previewStockM2} m² (${variante.stock_inicial} pallet${Number(variante.stock_inicial) !== 1 ? 's' : ''} × ${variante.cajas_por_pallet} cajas × ${m2PorCajaEfectivo.toFixed(4)} m²)`
+                : `≈ ${previewStockM2} m² (${variante.stock_inicial} caja${Number(variante.stock_inicial) !== 1 ? 's' : ''} × ${m2PorCajaEfectivo.toFixed(4)} m²)`}
+            </p>
+          )}
         </Field>
         <Field label="Stock mínimo">
           <Input type="number" min="0" step="0.01"

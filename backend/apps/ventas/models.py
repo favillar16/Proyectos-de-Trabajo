@@ -240,46 +240,47 @@ class NotaPedido(models.Model):
             try:
                 stock = Stock.objects.select_for_update().get(variante=item.variante)
 
-                # Liberar la reserva de este ítem
+                # Liberar la reserva de este ítem — siempre vía
+                # registrar_movimiento(), nunca mutando cantidad_reservada
+                # directo, para que quede el MovimientoStock de auditoría.
                 if stock.cantidad_reservada > 0:
                     liberar = min(item.cantidad, stock.cantidad_reservada)
-                    stock.cantidad_reservada = max(stock.cantidad_reservada - liberar, 0)
-                    stock.save(update_fields=['cantidad_reservada'])
+                    if liberar > 0:
+                        stock.registrar_movimiento(
+                            tipo            = MovimientoStock.TIPO_LIBERACION,
+                            cantidad        = liberar,
+                            usuario         = usuario,
+                            referencia_tipo = 'pedido',
+                            referencia_id   = self.id,
+                            observaciones   = f'Liberación al cobrar — pedido {self.numero}',
+                        )
 
-                # Descontar del stock físico
-                if item.cantidad > stock.cantidad:
-                    # Stock insuficiente al momento de pagar (caso raro pero posible)
+                # Descontar del stock físico. Si hay menos disponible de lo
+                # vendido (caso raro: venta concurrente que superó la
+                # reserva), se descuenta lo que haya en vez de bloquear un
+                # pago ya confirmado — la discrepancia queda en errores_stock.
+                cantidad_real = min(item.cantidad, stock.cantidad_disponible)
+                if cantidad_real < item.cantidad:
                     logger.error(
                         f'Stock insuficiente al pagar: {item.variante.sku} '
-                        f'tiene {stock.cantidad}, se necesitan {item.cantidad}'
+                        f'tiene {stock.cantidad_disponible} disponible, se necesitan {item.cantidad}'
                     )
                     errores.append({
                         'sku':       item.variante.sku,
-                        'error':     f'Stock insuficiente: disponible {stock.cantidad}, requerido {item.cantidad}',
+                        'error':     f'Stock insuficiente: disponible {stock.cantidad_disponible}, requerido {item.cantidad}',
                         'resuelto':  False,
                     })
-                    # Descontar lo que haya (no bloquear la venta)
-                    cantidad_real = stock.cantidad
-                else:
-                    cantidad_real = item.cantidad
 
                 if cantidad_real > 0:
-                    MovimientoStock.objects.create(
-                        variante          = item.variante,
-                        tipo              = MovimientoStock.TIPO_SALIDA,
-                        cantidad          = cantidad_real,
-                        cantidad_anterior = stock.cantidad,
-                        cantidad_posterior= stock.cantidad - cantidad_real,
-                        referencia_tipo   = 'venta',
-                        referencia_id     = self.id,
-                        usuario           = usuario,
-                        observaciones     = f'Venta — {numero_ticket} — pedido {self.numero}',
+                    stock.registrar_movimiento(
+                        tipo            = MovimientoStock.TIPO_SALIDA,
+                        cantidad        = cantidad_real,
+                        usuario         = usuario,
+                        referencia_tipo = 'venta',
+                        referencia_id   = self.id,
+                        observaciones   = f'Venta — {numero_ticket} — pedido {self.numero}',
                     )
-                    stock.cantidad = stock.cantidad - cantidad_real
-                    stock.save(update_fields=['cantidad'])
 
-                    # Emitir alerta si quedó en stock crítico
-                    stock.refresh_from_db()
                     if stock.en_stock_critico or stock.sin_stock:
                         _emitir_alerta_stock(stock)
 

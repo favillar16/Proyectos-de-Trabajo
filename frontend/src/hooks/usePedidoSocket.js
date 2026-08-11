@@ -7,6 +7,7 @@
  */
 import { useEffect, useRef, useCallback } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
+import { useAuthStore } from '../store/authStore'
 
 const WS_BASE = (() => {
   // Misma lógica que services/api.js: usa VITE_API_URL si está fijada,
@@ -26,9 +27,13 @@ export function usePedidoSocket({ pedidoId, rol, onMensaje } = {}) {
   const queryClient = useQueryClient()
 
   const conectar = useCallback(() => {
-    const url = pedidoId
+    // El backend autentica el socket con el mismo JWT que la API REST (ver
+    // apps/usuarios/ws_auth.py) — sin esto, la conexión se rechaza.
+    const token = useAuthStore.getState().token
+    const base = pedidoId
       ? `${WS_BASE}/ws/pedidos/${pedidoId}/`
       : `${WS_BASE}/ws/pedidos/rol/${rol}/`
+    const url = token ? `${base}?token=${encodeURIComponent(token)}` : base
 
     ws.current = new WebSocket(url)
 

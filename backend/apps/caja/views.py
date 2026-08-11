@@ -181,10 +181,18 @@ class CerrarCajaView(views.APIView):
         for p in pagos:
             resumen_medios[p.medio_pago] = resumen_medios.get(p.medio_pago, 0) + float(p.monto)
 
+        # La diferencia de arqueo compara el efectivo físico contado contra lo
+        # que debería haber en el cajón (apertura + ventas en efectivo). Ventas
+        # con tarjeta/transferencia nunca entran al cajón, así que no deben
+        # restarse acá o cualquier turno con ventas no-efectivo muestra un
+        # faltante ficticio.
+        total_efectivo = resumen_medios.get(Pago.MEDIO_EFECTIVO, 0)
+
         resumen_completo = {
             'resumen_medios': resumen_medios,
             'total_pagos':    pagos.count(),
             'total_ventas':   float(sesion.total_ventas),
+            'total_efectivo': total_efectivo,
         }
 
         # Imprimir ticket de cierre
@@ -195,7 +203,7 @@ class CerrarCajaView(views.APIView):
         return Response({
             'sesion':           SesionCajaSerializer(sesion).data,
             **resumen_completo,
-            'diferencia':       float(sesion.monto_cierre or 0) - float(sesion.monto_apertura or 0) - float(sesion.total_ventas),
+            'diferencia':       float(sesion.monto_cierre or 0) - float(sesion.monto_apertura or 0) - total_efectivo,
             'impresion_cierre': resultado_impresion,
         })
 
@@ -256,7 +264,11 @@ class RegistrarPagoView(views.APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        monto_recibido   = request.data.get('monto_recibido')
+        monto_recibido_raw = request.data.get('monto_recibido')
+        try:
+            monto_recibido = Decimal(str(monto_recibido_raw)) if monto_recibido_raw not in (None, '') else None
+        except Exception:
+            return Response({'error': 'monto_recibido inválido.'}, status=status.HTTP_400_BAD_REQUEST)
         ref_externa      = request.data.get('referencia_externa', '')
 
         # Tipo de comprobante: 'ticket' (default) o 'factura'
@@ -268,6 +280,15 @@ class RegistrarPagoView(views.APIView):
         cliente_direccion    = request.data.get('cliente_direccion', '')
         condicion_venta      = request.data.get('condicion_venta', 'Contado')
         guardar_cliente      = bool(request.data.get('guardar_cliente', False))
+
+        # La factura es un documento fiscal: RUC y razón social son
+        # obligatorios acá, no solo en el frontend (que puede saltearse con
+        # una llamada directa a la API).
+        if tipo_comprobante == 'factura' and not ((cliente_ruc or '').strip() and (cliente_razon_social or '').strip()):
+            return Response(
+                {'error': 'Para emitir factura debés cargar RUC y razón social del cliente.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         # Si es factura y el cliente tiene RUC + razón social, guardarlo o
         # actualizarlo en el padrón para que en la próxima compra se autocomplete.
@@ -299,7 +320,9 @@ class RegistrarPagoView(views.APIView):
                 pass
 
         # ── Descuento porcentual aplicado en caja ─────────────
-        from decimal import Decimal, ROUND_HALF_UP
+        # (Decimal ya está importado a nivel de módulo — importarlo también acá
+        # rompería con UnboundLocalError el uso más arriba, en monto_recibido.)
+        from decimal import ROUND_HALF_UP
         try:
             desc_pct = Decimal(str(request.data.get('descuento_porcentaje', 0) or 0))
         except Exception:
@@ -313,6 +336,20 @@ class RegistrarPagoView(views.APIView):
         monto_base  = pedido.monto_a_cobrar                       # monto antes del descuento de caja
         monto_final = (monto_base * (Decimal('100') - desc_pct) / Decimal('100')).quantize(
             Decimal('1'), rounding=ROUND_HALF_UP)                  # guaraníes sin decimales
+
+        # ── Validar que el efectivo alcance ────────────────────
+        if medio == Pago.MEDIO_EFECTIVO:
+            if monto_recibido is None:
+                return Response(
+                    {'error': 'Para pagos en efectivo debés indicar el monto recibido.'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            if monto_recibido < monto_final:
+                return Response(
+                    {'error': f'El monto recibido (Gs. {monto_recibido:,.0f}) es menor al total '
+                              f'a cobrar (Gs. {monto_final:,.0f}).'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
 
         # ── Crear pago ────────────────────────────────────────
         pago = Pago(

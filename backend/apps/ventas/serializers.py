@@ -7,12 +7,23 @@ from .models import NotaPedido, ItemPedido, Cliente
 from apps.productos.models import Variante
 
 
+def _oculta_montos(context):
+    # Depósito prepara pedidos pero no maneja caja ni negocia precio — no
+    # debe ver montos (documentado explícitamente en funcionalidades_sistema.md).
+    request = context.get('request')
+    usuario = getattr(request, 'user', None)
+    return bool(usuario and getattr(usuario, 'rol', None) == 'deposito')
+
+
 class ItemPedidoReadSerializer(serializers.ModelSerializer):
     sku             = serializers.CharField(source='variante.sku',             read_only=True)
     producto_nombre = serializers.CharField(source='variante.producto.nombre', read_only=True)
     descripcion     = serializers.SerializerMethodField()
     imagen_url      = serializers.SerializerMethodField()
     stock_disponible = serializers.SerializerMethodField()
+    precio_unitario = serializers.SerializerMethodField()
+    descuento_item  = serializers.SerializerMethodField()
+    subtotal        = serializers.SerializerMethodField()
 
     class Meta:
         model  = ItemPedido
@@ -22,6 +33,15 @@ class ItemPedidoReadSerializer(serializers.ModelSerializer):
             'observaciones', 'preparado', 'cantidad_preparada', 'imagen_url',
             'stock_disponible',
         ]
+
+    def get_precio_unitario(self, obj):
+        return None if _oculta_montos(self.context) else obj.precio_unitario
+
+    def get_descuento_item(self, obj):
+        return None if _oculta_montos(self.context) else obj.descuento_item
+
+    def get_subtotal(self, obj):
+        return None if _oculta_montos(self.context) else obj.subtotal
 
     def get_descripcion(self, obj):
         v = obj.variante
@@ -69,6 +89,11 @@ class NotaPedidoReadSerializer(serializers.ModelSerializer):
     estado_display   = serializers.CharField(source='get_estado_display', read_only=True)
     items_count      = serializers.SerializerMethodField()
     todos_preparados = serializers.SerializerMethodField()
+    subtotal         = serializers.SerializerMethodField()
+    descuento        = serializers.SerializerMethodField()
+    total            = serializers.SerializerMethodField()
+    total_ajustado   = serializers.SerializerMethodField()
+    monto_a_cobrar   = serializers.SerializerMethodField()
 
     class Meta:
         model  = NotaPedido
@@ -95,6 +120,21 @@ class NotaPedidoReadSerializer(serializers.ModelSerializer):
         items = obj.items.all()
         return bool(items) and all(i.preparado for i in items)
 
+    def get_subtotal(self, obj):
+        return None if _oculta_montos(self.context) else obj.subtotal
+
+    def get_descuento(self, obj):
+        return None if _oculta_montos(self.context) else obj.descuento
+
+    def get_total(self, obj):
+        return None if _oculta_montos(self.context) else obj.total
+
+    def get_total_ajustado(self, obj):
+        return None if _oculta_montos(self.context) else obj.total_ajustado
+
+    def get_monto_a_cobrar(self, obj):
+        return None if _oculta_montos(self.context) else obj.monto_a_cobrar
+
 
 class NotaPedidoListSerializer(serializers.ModelSerializer):
     """Versión ligera para listados."""
@@ -102,6 +142,9 @@ class NotaPedidoListSerializer(serializers.ModelSerializer):
     estado_display  = serializers.CharField(source='get_estado_display', read_only=True)
     items_count     = serializers.IntegerField(source='items.count', read_only=True)
     todos_preparados = serializers.SerializerMethodField()
+    total           = serializers.SerializerMethodField()
+    total_ajustado  = serializers.SerializerMethodField()
+    monto_a_cobrar  = serializers.SerializerMethodField()
 
     class Meta:
         model  = NotaPedido
@@ -116,6 +159,15 @@ class NotaPedidoListSerializer(serializers.ModelSerializer):
     def get_todos_preparados(self, obj):
         items = obj.items.all()
         return bool(items) and all(i.preparado for i in items)
+
+    def get_total(self, obj):
+        return None if _oculta_montos(self.context) else obj.total
+
+    def get_total_ajustado(self, obj):
+        return None if _oculta_montos(self.context) else obj.total_ajustado
+
+    def get_monto_a_cobrar(self, obj):
+        return None if _oculta_montos(self.context) else obj.monto_a_cobrar
 
 
 class NotaPedidoCreateSerializer(serializers.Serializer):

@@ -7,6 +7,7 @@ from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
+from django.db import transaction
 from asgiref.sync import async_to_sync
 from channels.layers import get_channel_layer
 
@@ -249,8 +250,14 @@ class CambioEstadoView(views.APIView):
         NotaPedido.ESTADO_CANCELADO:      'pedido_cancelado',
     }
 
+    @transaction.atomic
     def post(self, request, pk):
-        pedido      = get_object_or_404(NotaPedido, pk=pk)
+        # select_for_update() bloquea la fila del pedido durante toda la
+        # transición: dos requests casi simultáneos sobre el mismo pedido
+        # (doble tap, reintento tras timeout) se serializan en vez de que
+        # ambos lean el mismo estado "pre-cambio" y, por ejemplo, ambos
+        # liberen la reserva de stock del pedido.
+        pedido      = get_object_or_404(NotaPedido.objects.select_for_update(), pk=pk)
         nuevo_estado = request.data.get('estado')
 
         # El pago SIEMPRE se registra desde el módulo de Caja (RegistrarPagoView),

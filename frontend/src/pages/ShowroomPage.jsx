@@ -815,15 +815,18 @@ function CarritoShowroom({ items, onCambiarCantidad, onEliminar, onVaciar, onCer
                       display:'flex', alignItems:'center', justifyContent:'center' }}>
                     <Minus size={14} />
                   </button>
-                  <input type="number" min="1" value={item.cantidad}
+                  <input type="number" min="1" max={item.stock_disponible ?? undefined} value={item.cantidad}
                     onChange={e => onCambiarCantidad(idx, Math.max(1, Number(e.target.value) || 1))}
                     style={{ width:'52px', height:'32px', textAlign:'center',
                       border:`1px solid ${C.border}`, borderRadius:'8px',
                       fontSize:'14px', fontWeight:'500', color:C.text, background:C.bg, outline:'none' }} />
-                  <button onClick={() => onCambiarCantidad(idx, Number(item.cantidad) + 1)}
+                  <button
+                    disabled={item.stock_disponible != null && Number(item.cantidad) >= item.stock_disponible}
+                    onClick={() => onCambiarCantidad(idx, Number(item.cantidad) + 1)}
                     style={{ width:'32px', height:'32px', borderRadius:'8px', background:C.bgSec,
                       border:`1px solid ${C.border}`, cursor:'pointer', color:C.textSec,
-                      display:'flex', alignItems:'center', justifyContent:'center' }}>
+                      display:'flex', alignItems:'center', justifyContent:'center',
+                      opacity: (item.stock_disponible != null && Number(item.cantidad) >= item.stock_disponible) ? 0.4 : 1 }}>
                     <Plus size={14} />
                   </button>
                 </div>
@@ -831,6 +834,11 @@ function CarritoShowroom({ items, onCambiarCantidad, onEliminar, onVaciar, onCer
                   {formatGs(Number(item.precio_unitario) * Number(item.cantidad))}
                 </p>
               </div>
+              {item.stock_disponible != null && Number(item.cantidad) >= item.stock_disponible && (
+                <p style={{ fontSize:'10.5px', color:C.warning, marginTop:'4px' }}>
+                  Máximo disponible: {item.stock_disponible}
+                </p>
+              )}
             </div>
           ))}
 
@@ -908,11 +916,16 @@ export default function ShowroomPage() {
   const [carritoAbierto, setCarritoAbierto] = useState(false)
 
   const agregarAlCarrito = useCallback((producto, variante, cantidad) => {
+    // Tope de stock disponible al momento de agregar/mergear — evita que el
+    // carrito acumule más cantidad de la que realmente hay, aunque el ítem
+    // ya esté en el carrito (antes solo se validaba al elegir la variante).
+    const stockDisp = variante.stock?.disponible != null ? Number(variante.stock.disponible) : Infinity
     setCarrito(prev => {
       const idx = prev.findIndex(i => i.variante_id === variante.id)
       if (idx >= 0) {
         return prev.map((i, n) => n === idx
-          ? { ...i, cantidad: Number(i.cantidad) + Number(cantidad) } : i)
+          ? { ...i, cantidad: Math.min(stockDisp, Number(i.cantidad) + Number(cantidad)), stock_disponible: stockDisp }
+          : i)
       }
       const partes = [producto?.nombre || '']
       if (variante.dimension_display) partes.push(variante.dimension_display)
@@ -923,7 +936,8 @@ export default function ShowroomPage() {
         sku:             variante.sku,
         descripcion:     partes.filter(Boolean).join(' — '),
         precio_unitario: variante.precio_venta,
-        cantidad:        Number(cantidad),
+        cantidad:        Math.min(stockDisp, Number(cantidad)),
+        stock_disponible: stockDisp,
       }]
     })
     toast.success('Agregado al pedido', { duration: 1200 })
@@ -931,7 +945,9 @@ export default function ShowroomPage() {
   }, [setProductoSeleccionado])
 
   const cambiarCantidad = useCallback((idx, cant) => {
-    setCarrito(prev => prev.map((i, n) => n === idx ? { ...i, cantidad: cant } : i))
+    setCarrito(prev => prev.map((i, n) => n === idx
+      ? { ...i, cantidad: Math.min(Number(cant), i.stock_disponible ?? Infinity) }
+      : i))
   }, [])
   const eliminarDelCarrito = useCallback((idx) => {
     setCarrito(prev => prev.filter((_, n) => n !== idx))

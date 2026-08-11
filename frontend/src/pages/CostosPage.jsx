@@ -651,7 +651,7 @@ function ModalPedidoProveedor({ pedido, proveedores, onCerrar, onGuardado }) {
   })
   const [errores, setErrores] = useState({})
   const [buscarProducto, setBuscarProducto] = useState('')
-  const [unidadPedido, setUnidadPedido] = useState('venta')       // venta | pallet — para "Cantidad pedida"
+  const [unidadPedido, setUnidadPedido] = useState(pedido?.unidad_pedido || 'venta')     // venta | caja | pallet — para "Cantidad pedida"
   const [unidadRecibido, setUnidadRecibido] = useState('venta')   // venta | caja | pallet — para "Cantidad recibida"
   const [varianteId, setVarianteId] = useState('')
   const [cantidadRecibida, setCantidadRecibida] = useState('')
@@ -677,15 +677,25 @@ function ModalPedidoProveedor({ pedido, proveedores, onCerrar, onGuardado }) {
   const unidadVenta       = productoDetalle?.unidad_venta || ''
   const esM2               = unidadVenta === 'm2'
   const variantesActivas   = (productoDetalle?.variantes || []).filter(v=>v.activa)
-  // Referencia para convertir la estimación de "cantidad pedida" antes de
+  // Referencia para estimar la conversión de "cantidad pedida" antes de
   // saber a qué variante entrará el stock (eso recién se define al
-  // confirmar la recepción) — se usa la primera variante con datos de
-  // caja/pallet cargados.
-  const varianteReferencia = variantesActivas.find(v => v.m2_calculado > 0 && v.cajas_por_pallet > 0)
-  const admitePalletsPedido = esM2 && Boolean(varianteReferencia)
-  const previewPedidoM2 = (admitePalletsPedido && unidadPedido === 'pallet' && form.cantidad_pedida)
-    ? (Number(form.cantidad_pedida) * varianteReferencia.cajas_por_pallet * varianteReferencia.m2_calculado).toFixed(2)
-    : null
+  // confirmar la recepción) — se usa la primera variante activa con datos
+  // de caja/pallet cargados. Cajas solo necesita m²/caja; pallets además
+  // necesita cajas/pallet.
+  const varianteReferenciaCaja   = variantesActivas.find(v => v.m2_calculado > 0)
+  const varianteReferenciaPallet = variantesActivas.find(v => v.m2_calculado > 0 && v.cajas_por_pallet > 0)
+  const admiteCajasPedido   = esM2 && Boolean(varianteReferenciaCaja)
+  const admitePalletsPedido = esM2 && Boolean(varianteReferenciaPallet)
+  const previewPedidoM2 = (() => {
+    if (!form.cantidad_pedida) return null
+    if (unidadPedido === 'caja' && varianteReferenciaCaja) {
+      return (Number(form.cantidad_pedida) * varianteReferenciaCaja.m2_calculado).toFixed(2)
+    }
+    if (unidadPedido === 'pallet' && varianteReferenciaPallet) {
+      return (Number(form.cantidad_pedida) * varianteReferenciaPallet.cajas_por_pallet * varianteReferenciaPallet.m2_calculado).toFixed(2)
+    }
+    return null
+  })()
 
   // ¿Está confirmando la recepción por primera vez? — solo entonces
   // interesa a qué variante entra el stock y cuánto llegó realmente.
@@ -708,21 +718,22 @@ function ModalPedidoProveedor({ pedido, proveedores, onCerrar, onGuardado }) {
       if(!payload.monto_estimado) delete payload.monto_estimado
       if(!payload.producto_id) {
         delete payload.producto_id; delete payload.cantidad_pedida
-      } else if (payload.cantidad_pedida && unidadPedido === 'pallet' && varianteReferencia) {
-        // El backend siempre guarda cantidad_pedida en la unidad de venta;
-        // el toggle de pallets es solo comodidad para cargar el estimado.
-        payload.cantidad_pedida = (
-          Number(payload.cantidad_pedida) * varianteReferencia.cajas_por_pallet * varianteReferencia.m2_calculado
-        ).toFixed(4)
       }
-      if(!payload.cantidad_pedida) delete payload.cantidad_pedida
+      if(!payload.cantidad_pedida) {
+        delete payload.cantidad_pedida
+      } else {
+        // A los proveedores se les compra en pallets o cajas, no en m² — se
+        // manda la cantidad tal como se cargó (sin convertir) junto con su
+        // unidad, para no perder el dato de "cuántos pallets/cajas" real.
+        payload.unidad_pedido = unidadPedido
+      }
       if (confirmandoRecepcion) {
         if (varianteId) payload.variante_id = varianteId
-        // El estimado "cantidad pedida" está en la unidad de venta (m²): solo
-        // sirve de default cuando también se recibe en esa unidad — si se
-        // recibe en cajas/pallets hay que tipear la cantidad en esa unidad,
-        // nunca reusar el número de m² como si fuera cajas o pallets.
-        payload.cantidad_recibida = cantidadRecibida || (unidadRecibido === 'venta' ? form.cantidad_pedida : '')
+        // El estimado "cantidad pedida" está en unidadPedido: solo sirve de
+        // default cuando también se recibe en esa misma unidad — si se
+        // recibe en una unidad distinta hay que tipear la cantidad real,
+        // nunca reusar el número tal cual.
+        payload.cantidad_recibida = cantidadRecibida || (unidadRecibido === unidadPedido ? form.cantidad_pedida : '')
         payload.unidad_recibido = unidadRecibido
       }
       return esEdicion
@@ -744,7 +755,7 @@ function ModalPedidoProveedor({ pedido, proveedores, onCerrar, onGuardado }) {
     if (confirmandoRecepcion && variantesActivas.length > 1 && !varianteId) {
       e.variante_id = 'Elegí a qué variante entra el stock'
     }
-    if (confirmandoRecepcion && !(cantidadRecibida || (unidadRecibido === 'venta' && form.cantidad_pedida))) {
+    if (confirmandoRecepcion && !(cantidadRecibida || (unidadRecibido === unidadPedido && form.cantidad_pedida))) {
       e.cantidad_recibida = 'Indicá la cantidad recibida'
     }
     if(Object.keys(e).length){setErrores(e);return}
@@ -798,9 +809,13 @@ function ModalPedidoProveedor({ pedido, proveedores, onCerrar, onGuardado }) {
     </Campo>
     {form.producto_id && (
       <div style={{ marginBottom:'12px' }}>
-        {admitePalletsPedido && (
+        {admiteCajasPedido && (
           <div style={{ display:'flex', gap:'6px', marginBottom:'6px' }}>
-            {[{k:'venta',l:'Metros² (m²)'},{k:'pallet',l:'Pallets'}].map(u=>(
+            {[
+              {k:'venta',l:'Metros² (m²)'},
+              {k:'caja',l:'Cajas'},
+              ...(admitePalletsPedido ? [{k:'pallet',l:'Pallets'}] : []),
+            ].map(u=>(
               <button key={u.k} type="button" onClick={()=>setUnidadPedido(u.k)}
                 style={{ flex:1, height:'32px', borderRadius:'7px', cursor:'pointer', fontSize:'12px',
                   background: unidadPedido===u.k ? C.sidebar : C.bg,
@@ -814,6 +829,7 @@ function ModalPedidoProveedor({ pedido, proveedores, onCerrar, onGuardado }) {
         )}
         <Campo label={
           unidadPedido === 'pallet' ? 'Cantidad pedida (pallets)'
+            : unidadPedido === 'caja' ? 'Cantidad pedida (cajas)'
             : `Cantidad pedida${unidadVenta ? ` (${unidadVenta})` : ''}`
         }>
           <FInput type="number" min="0" step="0.01" value={form.cantidad_pedida}
@@ -821,8 +837,11 @@ function ModalPedidoProveedor({ pedido, proveedores, onCerrar, onGuardado }) {
             style={{ textAlign:'right' }}/>
           {previewPedidoM2 && (
             <p style={{ fontSize:'11px', color:C.success, marginTop:'4px', textAlign:'right' }}>
-              ≈ {previewPedidoM2} m² ({form.cantidad_pedida} pallet{Number(form.cantidad_pedida)!==1?'s':''} ×{' '}
-              {varianteReferencia.cajas_por_pallet} cajas × {varianteReferencia.m2_calculado} m²)
+              {unidadPedido === 'pallet'
+                ? <>≈ {previewPedidoM2} m² ({form.cantidad_pedida} pallet{Number(form.cantidad_pedida)!==1?'s':''} ×{' '}
+                    {varianteReferenciaPallet.cajas_por_pallet} cajas × {varianteReferenciaPallet.m2_calculado} m²)</>
+                : <>≈ {previewPedidoM2} m² ({form.cantidad_pedida} caja{Number(form.cantidad_pedida)!==1?'s':''} ×{' '}
+                    {varianteReferenciaCaja.m2_calculado} m²)</>}
             </p>
           )}
         </Campo>
@@ -890,10 +909,17 @@ function ModalPedidoProveedor({ pedido, proveedores, onCerrar, onGuardado }) {
             : unidadRecibido === 'caja' ? 'Cantidad recibida (cajas) *' : 'Cantidad recibida (pallets) *'
         } error={errores.cantidad_recibida}>
           <FInput type="number" min="0" step="0.01"
-            value={cantidadRecibida || (unidadRecibido === 'venta' ? form.cantidad_pedida : '')}
+            value={cantidadRecibida || (unidadRecibido === unidadPedido ? form.cantidad_pedida : '')}
             onChange={e=>setCantidadRecibida(e.target.value)}
-            placeholder={unidadRecibido !== 'venta' ? '0' : undefined}
+            placeholder={unidadRecibido !== unidadPedido ? '0' : undefined}
             style={{ textAlign:'right' }}/>
+          {admiteCajasRecepcion && cantidadRecibida && unidadRecibido !== 'venta' && (
+            <p style={{ fontSize:'11px', color:C.success, marginTop:'4px', textAlign:'right' }}>
+              {unidadRecibido === 'pallet'
+                ? `≈ ${(Number(cantidadRecibida) * varianteResuelta.cajas_por_pallet * varianteResuelta.m2_calculado).toFixed(2)} m² (${cantidadRecibida} pallet${Number(cantidadRecibida)!==1?'s':''} × ${varianteResuelta.cajas_por_pallet} cajas × ${varianteResuelta.m2_calculado} m²)`
+                : `≈ ${(Number(cantidadRecibida) * varianteResuelta.m2_calculado).toFixed(2)} m² (${cantidadRecibida} caja${Number(cantidadRecibida)!==1?'s':''} × ${varianteResuelta.m2_calculado} m²)`}
+            </p>
+          )}
         </Campo>
       </div>
     )}

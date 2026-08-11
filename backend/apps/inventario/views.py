@@ -17,6 +17,7 @@ from rest_framework.response import Response
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from apps.usuarios.permissions import EsAdminODeposito, TodosLosRoles
+from django.db import transaction
 from django.db.models import Q
 from django.utils import timezone
 
@@ -282,6 +283,7 @@ class AjusteStockView(views.APIView):
     """
     permission_classes = [EsAdminODeposito]
 
+    @transaction.atomic
     def post(self, request):
         serializer = AjusteStockSerializer(data=request.data)
         if not serializer.is_valid():
@@ -290,7 +292,10 @@ class AjusteStockView(views.APIView):
         data = serializer.validated_data
 
         try:
-            stock = Stock.objects.select_related('variante').get(
+            # select_for_update(): dos ajustes concurrentes sobre el mismo
+            # SKU (o un ajuste corriendo a la par de una venta) se
+            # serializan en vez de pisarse (lost update).
+            stock = Stock.objects.select_for_update().select_related('variante').get(
                 variante_id=data['variante_id']
             )
         except Stock.DoesNotExist:

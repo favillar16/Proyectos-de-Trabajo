@@ -24,6 +24,7 @@ const VARIANTE_VACÍA = {
   tipo_ducha:      '',
   tipo_cisterna:   '',
   stock_inicial:   '',
+  stock_inicial_unidad: 'venta',   // venta | caja | pallet — unidad en la que se cargó stock_inicial
   stock_minimo:    '',
   ubicacion:       '',
   activa:          true,
@@ -198,7 +199,7 @@ export function useProductoForm({ onSuccess } = {}) {
         // El stock (cantidad) de una variante ya creada se ajusta desde
         // Inventario (que sí pasa por el historial de movimientos) — acá
         // solo se editan sus datos y, como mucho, el mínimo/ubicación.
-        if (esVarianteExistente) delete varPayload.stock_inicial
+        if (esVarianteExistente) { delete varPayload.stock_inicial; delete varPayload.stock_inicial_unidad }
 
         let varianteId
         if (esVarianteExistente) {
@@ -283,6 +284,7 @@ export function useProductoForm({ onSuccess } = {}) {
     tipo_ducha:         v.tipo_ducha || '',
     tipo_cisterna:      v.tipo_cisterna || '',
     stock_inicial:      v.stock?.cantidad ?? '',
+    stock_inicial_unidad: 'venta',
     stock_minimo:       v.stock?.stock_minimo ?? '',
     ubicacion:          v.stock?.ubicacion ?? '',
     activa:             v.activa,

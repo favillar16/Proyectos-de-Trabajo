@@ -167,6 +167,17 @@ class UsuarioDetailView(views.APIView):
                     status=status.HTTP_400_BAD_REQUEST,
                 )
 
+        # Mismo resguardo que DELETE: no permitir que se desactive a sí
+        # mismo por acá (el switch "Usuario activo" del modal de edición
+        # llega por PATCH, no por DELETE).
+        if usuario.pk == request.user.pk and 'activo' in request.data:
+            activo_nuevo = request.data['activo']
+            if activo_nuevo in (False, 'false', '0', 0):
+                return Response(
+                    {'error': 'No podés desactivar tu propia cuenta.'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
         serializer = UsuarioUpdateSerializer(usuario, data=request.data, partial=True)
         if not serializer.is_valid():
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)

@@ -171,6 +171,15 @@ class PedidoProveedor(models.Model):
         (ESTADO_CANCELADO, 'Cancelado'),
     ]
 
+    UNIDAD_VENTA  = 'venta'
+    UNIDAD_CAJA   = 'caja'
+    UNIDAD_PALLET = 'pallet'
+    UNIDADES_PEDIDO = [
+        (UNIDAD_VENTA,  'Unidad de venta (m²/unidad)'),
+        (UNIDAD_CAJA,   'Cajas'),
+        (UNIDAD_PALLET, 'Pallets'),
+    ]
+
     proveedor        = models.ForeignKey(Proveedor, on_delete=models.PROTECT, related_name='pedidos')
     descripcion      = models.CharField(max_length=250, help_text='Qué se pidió')
     producto         = models.ForeignKey(
@@ -180,7 +189,13 @@ class PedidoProveedor(models.Model):
     cantidad_pedida  = models.DecimalField(max_digits=10, decimal_places=4,
                           null=True, blank=True,
                           validators=[MinValueValidator(Decimal('0.0001'))],
-                          help_text='Cantidad pedida, en la unidad de venta del producto')
+                          help_text='Cantidad pedida, en la unidad indicada por unidad_pedido')
+    unidad_pedido    = models.CharField(max_length=10, choices=UNIDADES_PEDIDO, default=UNIDAD_VENTA,
+                          help_text=(
+                              'Unidad en la que se cargó cantidad_pedida — a los proveedores se les '
+                              'compra en pallets o cajas, no en m², así que se guarda tal como se '
+                              'pidió en vez de convertir a m² de entrada y perder ese dato.'
+                          ))
     monto_estimado   = models.DecimalField(max_digits=14, decimal_places=2,
                           null=True, blank=True,
                           validators=[MinValueValidator(Decimal('0'))])

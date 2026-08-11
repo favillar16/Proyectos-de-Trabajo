@@ -54,7 +54,7 @@ function RolBadge({ rol }) {
 }
 
 // ─── Modal de creación/edición ────────────────────────────────────────────────
-function ModalUsuario({ usuario, onCerrar }) {
+function ModalUsuario({ usuario, onCerrar, esYo }) {
   const queryClient = useQueryClient()
   const esEdicion = Boolean(usuario)
 
@@ -202,7 +202,7 @@ function ModalUsuario({ usuario, onCerrar }) {
           </>
         )}
 
-        {esEdicion && (
+        {esEdicion && !esYo && (
           <div style={{ marginBottom:'14px' }}>
             <label style={{ display:'flex', alignItems:'center', gap:'8px',
               cursor:'pointer', fontSize:'13px', color:C.textSec }}>
@@ -542,6 +542,7 @@ export default function UsuariosPage() {
       {modalUsuario && (
         <ModalUsuario
           usuario={modalUsuario === 'nuevo' ? null : modalUsuario}
+          esYo={modalUsuario !== 'nuevo' && modalUsuario?.id === yo?.id}
           onCerrar={()=>setModalUsuario(null)}
         />
       )}

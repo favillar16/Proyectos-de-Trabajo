@@ -387,7 +387,7 @@ class TicketCierreBuilder:
         if self.sesion.monto_cierre:
             buf += ALIGN_LEFT
             buf += self._2col('En caja al cierre:', _formatGs(self.sesion.monto_cierre))
-            diferencia = float(self.sesion.monto_cierre) - float(self.sesion.monto_apertura) - float(self.resumen.get('total_ventas', 0))
+            diferencia = float(self.sesion.monto_cierre) - float(self.sesion.monto_apertura) - float(self.resumen.get('total_efectivo', 0))
             dif_str = ('+' if diferencia >= 0 else '') + _formatGs(abs(diferencia))
             buf += self._2col('Diferencia:', dif_str)
 
