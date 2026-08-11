@@ -37,7 +37,31 @@ Hay que decirle a Chrome, una sola vez, que confíe en esa dirección:
 Si la IP de la PC servidor cambia (por ejemplo, se reinicia el router y el
 DHCP asigna otra), hay que repetir este paso con la nueva IP. Para evitarlo,
 lo ideal es reservar esa IP en el router (IP fija por MAC) antes de la
-puesta a prueba.
+puesta a prueba — ver `guia_instalacion_dispositivos.md` §2.
+
+## 🔧 Recuperación rápida si la IP cambió
+
+Síntoma: el ícono "Oga Porã" en la tablet no abre, queda cargando o muestra
+error de conexión, aunque la PC servidor esté prendida y con `iniciar.bat`
+corriendo. No hace falta desinstalar ni reinstalar la app — con esto alcanza:
+
+1. En la PC servidor, conseguir la IP actual: `ipconfig` → "Dirección IPv4".
+   *(Si cambió, considerar reservarla en el router para que no vuelva a
+   pasar — `guia_instalacion_dispositivos.md` §2.)*
+2. En la tablet, repetir el paso de Chrome flags de arriba con la IP nueva:
+   `chrome://flags/#unsafely-treat-insecure-origin-as-secure` → agregar
+   `http://IP-NUEVA:5173` → Enabled → Relaunch.
+   *(No hace falta borrar la entrada vieja, se puede dejar.)*
+3. Abrir Chrome (no el ícono instalado) y entrar a `http://IP-NUEVA:5173`
+   para confirmar que carga.
+4. Volver a la pantalla de inicio y abrir el ícono "Oga Porã" — con el
+   origen ya confiado, debería cargar normalmente. Si sigue sin andar,
+   probar `http://DESKTOP-UAIGET9.local:5173` (ver plan B en
+   `guia_instalacion_dispositivos.md`) o, como último recurso, desinstalar
+   el ícono viejo (mantener presionado → Eliminar) y reinstalar desde cero
+   (§"Instalar la app" arriba) con la IP nueva.
+
+Total: ~2 minutos por tablet.
 
 ## Instalar la app
 

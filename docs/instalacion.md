@@ -34,21 +34,43 @@ Instalar en este orden en el equipo que actuará como servidor:
 
 ## Instalación automática (recomendada)
 
-Con los tres programas instalados, abrir una ventana de **Símbolo del sistema como Administrador** y ejecutar:
+`setup.bat` automatiza casi todo, pero necesita dos cosas hechas **antes**
+de correrlo — si faltan, se detiene con un error claro:
+
+1. **La base de datos y el usuario de PostgreSQL ya creados** (Paso 1 de la
+   sección manual, más abajo) — `setup.bat` no los crea, asume que existen.
+2. **`backend\.env` ya creado**, con esos mismos datos:
+   ```bat
+   cd ceramica_final\backend
+   copy .env.example .env
+   :: Editar .env con el Bloc de notas: DB_PASSWORD debe coincidir con la
+   :: contraseña que se le puso al usuario ceramica_user en el Paso 1.
+   ```
+
+Con eso listo, abrir **Símbolo del sistema como Administrador** en la
+carpeta del proyecto (ej. `ceramica_final`) y ejecutar:
 
 ```bat
-cd ceramica_system
+cd ceramica_final
 setup.bat
 ```
 
 El script realiza automáticamente:
-- Verificación de Python, Node.js y PostgreSQL
-- Creación de la base de datos y usuario
-- Entorno virtual Python e instalación de dependencias
-- Migraciones de Django
-- Carga de datos iniciales (categorías, marcas, acabados)
-- Creación del usuario administrador
-- Generación de scripts de arranque
+- Verificación de Python, Node.js y PostgreSQL en el PATH
+- Verificación de que `backend\.env` existe
+- Entorno virtual Python e instalación de dependencias (`requirements.txt`)
+- Migraciones de Django (`migrate`)
+- Creación de categorías de gasto base (`seed_categorias`)
+- Creación interactiva del usuario administrador (`createsuperuser` — pide
+  usuario y contraseña en el momento, no hay contraseña por defecto)
+- Instalación de dependencias del frontend (`npm install`)
+- Detección de la IP local, para saber con qué dirección entrar desde
+  tablets y otras PCs
+
+No carga catálogo de demostración ni datos de ejemplo — para el sistema
+final se espera que el catálogo real se cargue desde cero (Productos →
+Variantes) o mediante los CSV de `backend/data_carga/` si ya están
+preparados (ver `referencias_productos.csv` y `mapeo_imagenes.csv`).
 
 ---
 
@@ -75,7 +97,7 @@ GRANT ALL PRIVILEGES ON DATABASE ceramica_db TO ceramica_user;
 Abrir Símbolo del sistema en la carpeta del proyecto:
 
 ```bat
-cd ceramica_system\backend
+cd ceramica_final\backend
 
 :: Entorno virtual
 python -m venv venv
@@ -86,22 +108,29 @@ pip install -r requirements.txt
 
 :: Configurar variables de entorno
 copy .env.example .env
-:: Editar .env con el Bloc de notas si es necesario
+:: Editar .env con el Bloc de notas: DB_PASSWORD debe coincidir con la
+:: contraseña puesta en el Paso 1
 
 :: Migraciones
 python manage.py migrate
 
-:: Datos iniciales
-python manage.py loaddata initial_data.json
+:: Categorías de gasto base (obligatorio, lo usa el módulo de Costos)
+python manage.py seed_categorias
 
-:: Crear superusuario
+:: Crear superusuario — pide usuario y contraseña en el momento
 python manage.py createsuperuser
 ```
+
+> `python manage.py loaddata initial_data.json` carga un catálogo de
+> **demostración** (productos, stock y usuarios de prueba) — usarlo solo
+> para probar el sistema, no en la PC servidor del negocio real. Para el
+> sistema final, cargar el catálogo real desde **Productos** dentro del
+> sistema, o mediante los CSV de `backend/data_carga/` si ya están listos.
 
 ### Paso 3 — Frontend React
 
 ```bat
-cd ceramica_system\frontend
+cd ceramica_final\frontend
 npm install
 ```
 
@@ -109,22 +138,35 @@ npm install
 
 ## Iniciar el sistema
 
-### Opción A — Script combinado (abre dos ventanas automáticamente)
+Para el día a día, un solo script abre las dos ventanas necesarias (backend
+con Daphne — HTTP + WebSocket — y frontend con Vite) y el navegador local:
+
 ```bat
-start-all.bat
+iniciar.bat
 ```
 
-### Opción B — Por separado
+No cerrar las dos ventanas negras que abre — son el servidor y la interfaz;
+cerrarlas corta el sistema para todos los dispositivos conectados.
 
-**Ventana 1 — Backend:**
+Si se necesita arrancar cada parte a mano (para ver mejor un error, por
+ejemplo):
+
+**Backend:**
 ```bat
-start-backend.bat
+cd backend
+venv\Scripts\activate
+daphne -b 0.0.0.0 -p 8000 config.asgi:application
 ```
 
-**Ventana 2 — Frontend:**
+**Frontend (en otra ventana):**
 ```bat
-start-frontend.bat
+cd frontend
+npm run dev
 ```
+
+> `python manage.py runserver` también funciona para el backend, pero solo
+> sirve HTTP — sin WebSocket no hay actualizaciones en vivo de pedidos ni
+> alertas de stock (ver `CLAUDE.md`). Usar siempre Daphne para el día a día.
 
 ---
 
@@ -139,16 +181,28 @@ start-frontend.bat
 > **Para tablets y otros equipos en la red WiFi:**
 > Usar la IP del equipo servidor. Obtenerla con `ipconfig` en el servidor y buscar "Dirección IPv4".
 > Ejemplo: `http://192.168.1.100:5173`
+>
+> Esa IP la asigna el router por DHCP y **puede cambiar** (reinicio del
+> router, etc.), lo que rompe el acceso ya configurado en PC Caja, PC
+> Depósito y tablets. Antes de dar por terminado el armado, reservarla de
+> forma fija en el router — pasos concretos en
+> `guia_instalacion_dispositivos.md` §2. Si igual llegara a cambiar,
+> `pwa_tablet.md` tiene un checklist de recuperación de ~2 minutos por
+> dispositivo.
 
 ---
 
 ## Credenciales iniciales
 
-| Usuario | Contraseña | Rol |
-|---|---|---|
-| admin | admin123 | Administrador |
+No hay usuario ni contraseña por defecto: `setup.bat` pide el usuario y la
+contraseña del administrador de forma interactiva durante la instalación
+(paso `createsuperuser`), en el momento en que se arma cada PC servidor.
+Anotar lo que se cargue ahí — es la única cuenta que existe hasta que el
+admin cree las demás desde **Usuarios** dentro del sistema.
 
-**Importante:** Cambiar la contraseña del admin en el primer acceso.
+*(Las credenciales `admin/demo2025` que aparecen en `guia_demo_propietarios.md`
+son solo para la demo con datos de prueba — `cargar_demo.py` — no aplican
+al sistema final con datos reales.)*
 
 ---
 
@@ -164,6 +218,17 @@ start-frontend.bat
 - Conectar por USB o puerto paralelo (con adaptador USB-Paralelo si es necesario)
 - Driver oficial: https://epson.com/Support/Printers/sl/s/SPT_C11C637011
 - Instalar el driver Epson LX-350 para Windows
+
+### Verificar la conexión antes de dar por armada la PC servidor
+```bat
+cd backend
+venv\Scripts\activate
+python diagnostico_impresora.py
+```
+Prueba la conexión con la impresora térmica configurada y avisa si Windows
+no la detecta — más rápido que descubrirlo en medio de una venta real.
+Fuera de Windows (o sin impresora conectada) queda en modo "simulado", sin
+romper el resto del sistema.
 
 ---
 
