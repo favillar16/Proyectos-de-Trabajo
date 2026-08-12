@@ -255,10 +255,14 @@ export function useProductoForm({ onSuccess } = {}) {
         if (Object.keys(data).some(k => ['nombre','categoria_id','categoria','precio_base','unidad_venta','codigo'].includes(k))) {
           setPaso(0)
         }
-        // Mensaje claro indicando qué campo falla
-        const detalle = Object.entries(data)
-          .map(([campo, msgs]) => `${ETIQUETAS[campo] || campo}: ${Array.isArray(msgs) ? msgs.join(' ') : msgs}`)
-          .join(' · ')
+        // 'detail' es la clave genérica de DRF para errores de sesión/permiso
+        // (401 token vencido, 403 sin permiso) — no es un campo del
+        // formulario, mostrarlo tal cual en vez de "detail: ...".
+        const detalle = (typeof data.detail === 'string' && Object.keys(data).length <= 2)
+          ? data.detail
+          : Object.entries(data)
+              .map(([campo, msgs]) => `${ETIQUETAS[campo] || campo}: ${Array.isArray(msgs) ? msgs.join(' ') : msgs}`)
+              .join(' · ')
         toast.error(detalle || 'Revisá los campos marcados')
       } else {
         toast.error('Error al guardar el producto')

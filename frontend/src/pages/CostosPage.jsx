@@ -12,6 +12,7 @@ import {
 } from 'lucide-react'
 import Layout from '../components/layout/Layout'
 import { costosApi, productosApi } from '../services/api'
+import { mensajeErrorApi } from '../utils/apiErrors'
 import toast from 'react-hot-toast'
 
 const C = {
@@ -234,7 +235,7 @@ function ModalGasto({ gasto, anio, mes, categorias, empleados, proveedores, onCe
         : costosApi.crearGasto(payload).then(r=>r.data)
     },
     onSuccess: () => { toast.success(esEdicion?'Gasto actualizado':'Gasto registrado'); onGuardado() },
-    onError: (err) => { setErrores(err.response?.data||{}); toast.error('Revisá los campos marcados') },
+    onError: (err) => { setErrores(err.response?.data||{}); toast.error(mensajeErrorApi(err, 'Revisá los campos marcados')) },
   })
 
   const guardar = () => {
@@ -542,7 +543,7 @@ function ModalProveedor({ proveedor, onCerrar, onGuardado }) {
       ?costosApi.actualizarProveedor(proveedor.id,form).then(r=>r.data)
       :costosApi.crearProveedor(form).then(r=>r.data),
     onSuccess:()=>{ toast.success(esEdicion?'Proveedor actualizado':'Proveedor creado'); onGuardado() },
-    onError:(err)=>{ setErrores(err.response?.data||{}); toast.error('Revisá los campos') }
+    onError:(err)=>{ setErrores(err.response?.data||{}); toast.error(mensajeErrorApi(err, 'Revisá los campos')) }
   })
   const guardar = ()=>{ if(!form.nombre.trim()){setErrores({nombre:'Requerido'});return} mut.mutate() }
 
@@ -744,7 +745,7 @@ function ModalPedidoProveedor({ pedido, proveedores, onCerrar, onGuardado }) {
     onError:(err)=>{
       const data = err.response?.data || {}
       setErrores(data)
-      toast.error(data.error || 'Revisá los campos')
+      toast.error(mensajeErrorApi(err, 'Revisá los campos'))
     }
   })
   const guardar = ()=>{

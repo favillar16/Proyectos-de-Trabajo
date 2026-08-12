@@ -22,6 +22,16 @@ export function mensajeErrorApi(err, fallback = 'Ocurrió un error inesperado.')
   if (typeof data === 'string') return data
   if (Array.isArray(data)) return data.join(' · ') || fallback
 
+  // 'detail' es la clave genérica de DRF para errores de sesión/permiso
+  // (401 token vencido, 403 sin permiso) — no es un campo del formulario,
+  // así que se muestra directo en vez de "detail: ...".
+  if (typeof data.detail === 'string' && Object.keys(data).length === 1) {
+    return data.detail
+  }
+  if (typeof data.detail === 'string' && data.code) {
+    return data.detail
+  }
+
   const partes = []
 
   Object.entries(data).forEach(([campo, valor]) => {
