@@ -4,8 +4,9 @@
  * Incluye búsqueda, filtros, stats y grid de cards.
  */
 import { useState } from 'react'
-import { useQuery } from '@tanstack/react-query'
-import { Plus, Search, Package, Image, Edit2, Eye, X, SlidersHorizontal, Layers, Truck } from 'lucide-react'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { Plus, Search, Package, Image, Edit2, Eye, Trash2, X, SlidersHorizontal, Layers, Truck } from 'lucide-react'
+import toast from 'react-hot-toast'
 import { productosApi } from '../services/api'
 import Layout from '../components/layout/Layout'
 import ProductoForm from '../components/productos/ProductoForm'
@@ -44,10 +45,11 @@ function EstadoStock({ stock }) {
   return <span style={{ fontSize:'11px', fontWeight:'500', color: C.success }}>{val.toFixed(2)} en stock</span>
 }
 
-function ProductoCard({ producto, onEditar, onVerDetalle }) {
+function ProductoCard({ producto, onEditar, onVerDetalle, onEliminar }) {
   const [hovered, setHovered] = useState(false)
   const imagenUrl = producto.imagen_principal?.imagen_url || producto.imagen_principal?.imagen
   const { usuario } = useAuthStore()
+  const esAdmin = usuario?.rol === 'admin'
   const vePrecioCosto = ['admin', 'deposito'].includes(usuario?.rol) && producto.precio_costo != null
 
   return (
@@ -181,6 +183,22 @@ function ProductoCard({ producto, onEditar, onVerDetalle }) {
           >
             <Eye size={12} /> Ver
           </button>
+          {esAdmin && (
+            <button
+              onClick={() => onEliminar(producto)}
+              title="Eliminar producto"
+              style={{
+                display:'flex', alignItems:'center', justifyContent:'center',
+                width:'30px', padding:'7px', fontSize:'12px', cursor:'pointer',
+                background:'transparent', border:`1px solid ${C.border}`, borderRadius:'7px',
+                color: C.textSec, transition:'all 120ms', flexShrink:0,
+              }}
+              onMouseEnter={e => { e.currentTarget.style.borderColor = C.danger; e.currentTarget.style.color = C.danger; e.currentTarget.style.background = C.dangerBg }}
+              onMouseLeave={e => { e.currentTarget.style.borderColor = C.border; e.currentTarget.style.color = C.textSec; e.currentTarget.style.background = 'transparent' }}
+            >
+              <Trash2 size={12} />
+            </button>
+          )}
         </div>
       </div>
     </div>
@@ -257,9 +275,53 @@ export default function ProductosPage() {
   const [productoEdicion,setProductoEdicion]= useState(null)
   const [catalogosAbierto, setCatalogosAbierto] = useState(false)
 
+  const queryClient = useQueryClient()
+
   const hook = useProductoForm({
     onSuccess: () => { setPanelAbierto(false); setProductoEdicion(null) },
   })
+
+  // Desactivar (baja lógica) — fallback cuando el producto ya tiene
+  // movimientos de stock, ventas u otras referencias y no se puede borrar
+  // físicamente sin romper el historial. Un producto inactivo desaparece
+  // del catálogo/showroom (ver ProductoViewSet.get_queryset) pero conserva
+  // todos sus datos y referencias intactas.
+  const desactivarMut = useMutation({
+    mutationFn: (id) => productosApi.actualizar(id, { activo: false }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['productos'] })
+      toast.success('Producto desactivado: ya no aparece en el catálogo ni el showroom')
+    },
+    onError: () => toast.error('No se pudo desactivar el producto'),
+  })
+
+  // Eliminar físicamente — el backend rechaza el borrado (400) si el
+  // producto tiene variantes con movimientos de stock, ítems de pedido u
+  // otras referencias protegidas (ver ProtegeAlBorrarMixin). En ese caso se
+  // ofrece desactivarlo en su lugar, que es siempre seguro.
+  const eliminarMut = useMutation({
+    mutationFn: (id) => productosApi.eliminar(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['productos'] })
+      toast.success('Producto eliminado')
+    },
+    onError: (err, id) => {
+      const enUso = err.response?.status === 400
+      const msg = err.response?.data?.error || 'No se pudo eliminar el producto'
+      if (enUso) {
+        if (confirm(`${msg}\n\n¿Desactivarlo en su lugar? Dejará de aparecer en el catálogo y el showroom, pero se conserva su historial de stock y ventas.`)) {
+          desactivarMut.mutate(id)
+        }
+      } else {
+        toast.error(msg)
+      }
+    },
+  })
+
+  const solicitarEliminar = (producto) => {
+    if (!confirm(`¿Eliminar "${producto.nombre}"?\n\nEsta acción no se puede deshacer.`)) return
+    eliminarMut.mutate(producto.id)
+  }
 
   const { data, isLoading } = useQuery({
     queryKey: ['productos', busqueda, categoriaFiltro, soloConStock, orden],
@@ -473,6 +535,7 @@ export default function ProductosPage() {
               producto={p}
               onEditar={abrirEdicion}
               onVerDetalle={abrirEdicion}
+              onEliminar={solicitarEliminar}
             />
           ))}
         </div>

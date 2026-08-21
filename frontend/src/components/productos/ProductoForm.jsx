@@ -6,7 +6,7 @@
  * Paso 1 — Variantes (color, dimensiones, precio, stock)
  * Paso 2 — Imágenes del producto
  */
-import { useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import {
   X, ChevronRight, ChevronLeft, Plus, Trash2,
@@ -57,7 +57,7 @@ function Field({ label, error, required, children, hint }) {
   )
 }
 
-function Input({ error, ...props }) {
+function Input({ error, onFocus, onBlur, ...props }) {
   return (
     <input
       {...props}
@@ -69,8 +69,8 @@ function Input({ error, ...props }) {
         transition: 'border-color 120ms',
         ...props.style,
       }}
-      onFocus={e => e.target.style.borderColor = error ? C.danger : C.gold}
-      onBlur={e  => e.target.style.borderColor = error ? C.danger : C.border}
+      onFocus={e => { e.target.style.borderColor = error ? C.danger : C.gold; onFocus?.(e) }}
+      onBlur={e  => { e.target.style.borderColor = error ? C.danger : C.border; onBlur?.(e) }}
     />
   )
 }
@@ -288,6 +288,46 @@ function FilaVariante({
         : 0)
   const admiteCajasStock   = unidadVenta === 'm2' && m2PorCajaEfectivo > 0
   const admitePalletsStock = admiteCajasStock && Number(variante.cajas_por_pallet) > 0
+
+  // El campo se carga en m²/pallet (unidad que maneja el depósito) y se
+  // convierte a cajas_por_pallet para guardar — es el dato que ya usan
+  // Inventario y Pedidos a proveedor para las conversiones de stock. Se
+  // mantiene un borrador local mientras se escribe para no "saltar" el
+  // valor tipeado en cada tecla por el redondeo a cajas enteras; la
+  // conversión final se aplica recién al salir del campo (blur).
+  const [m2PorPalletDraft, setM2PorPalletDraft] = useState(null)
+  const m2PorPalletValue = m2PorPalletDraft !== null
+    ? m2PorPalletDraft
+    : (variante.cajas_por_pallet && m2PorCajaEfectivo > 0
+        ? (Number(variante.cajas_por_pallet) * m2PorCajaEfectivo).toFixed(2)
+        : '')
+  const confirmarM2PorPallet = (raw) => {
+    setM2PorPalletDraft(null)
+    if (!raw || m2PorCajaEfectivo <= 0) {
+      onChange('cajas_por_pallet', '')
+      return
+    }
+    const cajas = Math.round(Number(raw) / m2PorCajaEfectivo)
+    onChange('cajas_por_pallet', cajas > 0 ? String(cajas) : '')
+  }
+  // Si desaparecen los datos que habilitan cargar el stock en cajas o pallets
+  // (se borró m²/caja, m²/pallet, o la categoría pasó a venderse por unidad),
+  // el botón elegido se esconde pero stock_inicial_unidad queda en 'caja'/
+  // 'pallet'. El alta entonces falla con el ValueError de
+  // Variante.convertir_a_unidad_venta ("no tiene cajas por pallet definidas"),
+  // un error que no se entiende porque el campo ya no está a la vista.
+  // Se vuelve a la unidad de venta apenas la opción deja de estar disponible.
+  useEffect(() => {
+    const unidad = variante.stock_inicial_unidad
+    if ((unidad === 'caja'   && !admiteCajasStock) ||
+        (unidad === 'pallet' && !admitePalletsStock)) {
+      onChange('stock_inicial_unidad', 'venta')
+    }
+    // onChange se recrea en cada render del padre; incluirlo acá dispararía
+    // el efecto en loop.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [admiteCajasStock, admitePalletsStock, variante.stock_inicial_unidad])
+
   const previewStockM2 = (!variante.stock_inicial) ? null
     : variante.stock_inicial_unidad === 'caja' && admiteCajasStock
       ? (Number(variante.stock_inicial) * m2PorCajaEfectivo).toFixed(2)
@@ -475,11 +515,14 @@ function FilaVariante({
                 placeholder="Auto"
               />
             </Field>
-            <Field label="Cajas/pallet">
-              <Input type="number" min="1" step="1"
-                value={variante.cajas_por_pallet}
-                onChange={e => onChange('cajas_por_pallet', e.target.value)}
-                placeholder="Ej: 40"
+            <Field label="M²/pallet" hint={m2PorCajaEfectivo > 0 ? undefined : 'Completá primero m²/caja'}>
+              <Input type="number" min="0" step="0.01"
+                value={m2PorPalletValue}
+                onChange={e => setM2PorPalletDraft(e.target.value)}
+                onBlur={e => confirmarM2PorPallet(e.target.value)}
+                placeholder="Ej: 100"
+                disabled={m2PorCajaEfectivo <= 0}
+                style={m2PorCajaEfectivo <= 0 ? { background: C.bgSec, color: C.textMuted, cursor: 'not-allowed' } : undefined}
               />
             </Field>
           </div>
