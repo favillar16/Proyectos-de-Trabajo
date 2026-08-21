@@ -33,5 +33,8 @@ docs/*.zip
 # Accesos directos de Windows: dependen de la ruta de cada maquina
 *.lnk
 
-# Contrasena del rol de solo lectura del sync, generada en cada servidor
+
+# Credenciales de PostgreSQL de esta instalacion (superusuario y rol del sync).
+# Nunca deben entrar al repositorio: el historial de git es permanente.
+credenciales_servidor.txt
 sync_notebook/credenciales_sync.txt

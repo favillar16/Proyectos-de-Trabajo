@@ -124,37 +124,41 @@ python manage.py changepassword vendedor
 
 ---
 
-## Paso 4 — Crear el usuario de la notebook (2 minutos)
+## Paso 4 — Configurar PostgreSQL para la notebook (2 minutos)
 
-Solo si hoy se va a configurar la notebook de la propietaria.
+**Doble clic en `configurar_postgres.bat`** → Administrador → Sí.
 
-**Doble clic en `sync_notebook\crear_rol_sync.bat`** → Administrador → Sí.
+Hace dos cosas de una sola pasada:
 
-Crea el rol `notebook_sync`, que puede **leer** toda la base y **no puede
-escribir nada** (el sync nunca debe entrar con el usuario de la app: la
-notebook es un espejo de solo lectura). El script:
+1. Le pone una **contraseña conocida al superusuario `postgres`**. Hasta hoy
+   nadie la tenía, y hace falta para administrar la base (crear roles,
+   restaurar respaldos) tanto acá como en la notebook.
+2. Crea el rol **`notebook_sync`**, que puede leer toda la base y **no puede
+   escribir nada** — el sync nunca debe entrar con el usuario de la app,
+   porque la notebook es un espejo de solo lectura. Verifica las dos cosas
+   antes de terminar.
 
-- genera la contraseña solo, alfanumérica, para que se pueda pegar sin
-  problemas de comillas;
-- verifica que el rol pueda leer y que efectivamente no pueda escribir;
-- deja todo listo para pegar en `sync_notebook\credenciales_sync.txt`, en
-  esa misma carpeta.
+Las dos contraseñas están en **`credenciales_servidor.txt`**, en la raíz del
+proyecto. Ese archivo está **ignorado por git a propósito**: nunca entra en un
+commit, así que borrarlo del disco alcanza para eliminarlo — no queda rastro
+en el historial. Conviene imprimirlo o pasarlo al gestor de contraseñas de la
+propietaria, y guardar una copia fuera de esta PC: si se pierde la clave del
+superusuario no se recupera, solo se reemplaza.
 
-Va a preguntar cómo entrar como superusuario:
+⚠️ El script **reinicia PostgreSQL** un par de veces (unos segundos). Hacerlo
+antes de que haya gente operando el sistema.
 
-- **Opción 1** — tenés la contraseña de `postgres`: la pide `psql` y listo.
-- **Opción 2** — no la tenés: habilita el acceso local sin contraseña unos
-  segundos (solo desde esta misma PC), crea el rol y deja `pg_hba.conf`
-  exactamente como estaba, con copia de seguridad.
-
-Después, en la notebook, pegar ese bloque en `sync_notebook\config.env` y
-completar solo los `LOCAL_DB_*` con los datos del PostgreSQL de la notebook.
-Las fotos no necesitan configuración: se bajan por HTTP (dejar
+**En la notebook**, cuando se instale PostgreSQL, usar el mismo
+`POSTGRES_PASSWORD` para que las dos máquinas queden iguales. Después pegar el
+bloque de ese archivo en `sync_notebook\config.env` y completar solo los
+`LOCAL_DB_*`. Las fotos no necesitan configuración: se bajan por HTTP (dejar
 `SERVIDOR_MEDIA_UNC` y `SERVIDOR_MEDIA_URL` vacíos).
 
-⚠️ En la notebook tienen que estar **los tres** `.ps1` de `sync_notebook/`:
-`sync_notebook.ps1`, `fotos_http.ps1` y (solo si se corre desde ahí)
-`crear_rol_sync.ps1`. Con `git pull` vienen solos.
+⚠️ En la notebook tienen que estar **los dos** `.ps1` de `sync_notebook/`:
+`sync_notebook.ps1` y `fotos_http.ps1`. Con `git pull` vienen solos.
+
+**La PC de Caja y la de Depósito no llevan base de datos**: no necesitan nada
+de esto.
 
 ---
 

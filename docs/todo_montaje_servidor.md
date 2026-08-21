@@ -137,7 +137,8 @@ proyecto, doble clic, pide Administrador): categoría de red privada, puertos
       red lo resuelve, **antes** de necesitarlo en un apuro
 
 ### Notebook — `docs/sync_notebook.md`
-- [ ] Crear el usuario `notebook_sync` en el servidor: `sync_notebook\crear_rol_sync.bat` (§1.2)
+- [ ] Correr `configurar_postgres.bat`: contraseña del superusuario
+      `postgres` + rol `notebook_sync` (§1.2 de `sync_notebook.md`)
 - [x] Fotos de la notebook: resuelto por HTTP el 21/08/2026 (§1.3 de
       `sync_notebook.md`). La carpeta compartida ya no hace falta — no podía
       funcionar con el proyecto dentro de `C:\Users\<usuario>` por los

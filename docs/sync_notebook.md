@@ -58,30 +58,36 @@ No usar el usuario normal de la app (`ceramica_user`) para esto — la
 notebook va a guardar esta contraseña en un archivo local, así que conviene
 que ese usuario **no pueda escribir nada**.
 
-**Doble clic en `sync_notebook\crear_rol_sync.bat`** (pide Administrador).
-Genera una contraseña, crea el rol, verifica que pueda leer y que **no**
-pueda escribir, y deja el bloque listo para pegar en
-`sync_notebook\credenciales_sync.txt` (ese archivo está ignorado por git).
+**Doble clic en `configurar_postgres.bat`** (raíz del proyecto, pide
+Administrador). Toma las dos contraseñas de `credenciales_servidor.txt`,
+le pone contraseña conocida al superusuario `postgres`, crea el rol
+`notebook_sync` con `GRANT pg_read_all_data`, y verifica que el rol pueda
+leer y que **no** pueda escribir.
 
-Para entrar como superusuario ofrece dos caminos:
+`credenciales_servidor.txt` está **ignorado por git**: las contraseñas se
+generan en cada instalación y no viajan en el repositorio. Si el archivo no
+existe (por ejemplo en una instalación nueva), crearlo con estas dos líneas
+y las contraseñas que se elijan:
 
-1. **Con la contraseña de `postgres`** — `psql` la pide en el momento.
-2. **Sin ella** (perdida u olvidada): antepone temporalmente una línea
-   `trust` para `127.0.0.1` en `pg_hba.conf`, reinicia PostgreSQL, crea el
-   rol y **restaura el archivo original** en un `finally`, pase lo que pase.
-   Solo afecta conexiones desde la propia PC servidor y dura unos segundos.
-   Igual deja una copia `.bak_<fecha>` del `pg_hba.conf` original.
+```
+POSTGRES_PASSWORD=...
+NOTEBOOK_SYNC_PASSWORD=...
+```
 
-Si se prefiere hacerlo a mano, es lo mismo que correr con `psql` como
-superusuario:
+> **Cómo entra sin saber la contraseña actual de `postgres`:** antepone una
+> línea `trust` para `127.0.0.1` en `pg_hba.conf`, reinicia el servicio, hace
+> los cambios y restaura el archivo original en un `finally`, pase lo que
+> pase (además deja una copia `.bak_<fecha>`). Es el procedimiento estándar de
+> recuperación de PostgreSQL: solo afecta conexiones desde la propia PC
+> servidor y dura unos segundos. Las reglas de la red del local no se tocan.
+
+Si se prefiere a mano, con `psql` como superusuario es lo mismo que:
 
 ```sql
 CREATE ROLE notebook_sync WITH LOGIN PASSWORD 'elegir-una-contraseña-fuerte';
 GRANT CONNECT ON DATABASE ceramica_db TO notebook_sync;
 GRANT pg_read_all_data TO notebook_sync;
 ```
-
-Anotar esa contraseña — se usa en el paso 2.2, en la notebook.
 
 ### 1.3 Fotos de productos — no hay nada que configurar
 
