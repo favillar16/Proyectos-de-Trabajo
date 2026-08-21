@@ -6,6 +6,11 @@ de la propietaria. Para el detalle fino de cada parte, remite a los
 documentos específicos (`instalacion.md`, `pwa_tablet.md`,
 `sync_notebook.md`) — acá está el resumen y el orden en que hay que hacerlo.
 
+> 📋 **Para el día del montaje**, la lista de tareas concreta con lo que
+> falta y las decisiones abiertas está en
+> **`docs/todo_montaje_servidor.md`**. Este documento explica *cómo*; ese
+> otro lleva el registro de *qué queda pendiente*.
+
 ---
 
 ## 1. Topología — qué hace cada equipo
