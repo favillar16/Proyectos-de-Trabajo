@@ -99,7 +99,10 @@ GRANT pg_read_all_data TO $rol;
 "@
 
 $archivoSql = Join-Path $env:TEMP ('ogapora_pg_{0}.sql' -f (Get-Date -Format 'HHmmss'))
-Set-Content -Path $archivoSql -Value $sql -Encoding UTF8
+# Sin BOM a proposito: Set-Content -Encoding UTF8 en PowerShell 5.1 escribe el
+# BOM al principio del archivo, y psql lo toma como parte de la primera
+# sentencia ("error de sintaxis en o cerca de <BOM>ALTER").
+[System.IO.File]::WriteAllText($archivoSql, $sql, (New-Object System.Text.UTF8Encoding($false)))
 
 # --- Ventana de acceso local sin contrasena --------------------------------
 Info "Habilitando acceso local temporal (se revierte al terminar)"
