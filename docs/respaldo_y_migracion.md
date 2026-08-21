@@ -88,6 +88,10 @@ ese usuario desaparece. Los usuarios buenos son los del equipo de origen.
 
 ### 3.2 Traer los datos
 
+> Esto asume un pendrive. Si no hay uno a mano, saltar a **§3.5**:
+> las fotos se trasladan por el repositorio de git y solo la base
+> (~333 KB) viaja por otro medio.
+
 1. En el **equipo de origen**: `respaldo\respaldo.bat D:\` (a un pendrive).
 2. Llevar el pendrive a la PC nueva y copiar la carpeta
    `respaldo_AAAAMMDD_HHMMSS` completa.
@@ -118,6 +122,63 @@ Una vez que los datos están:
 3. **Configurar la impresora** — `docs/pc_caja.md` §4
 4. Reconfigurar los clientes que apuntaban a la IP vieja: tablets
    (`docs/pwa_tablet.md`) y notebook (`sync_notebook\config.env`).
+
+---
+
+### 3.5 Sin pendrive: las fotos por el repositorio
+
+Si no hay pendrive a mano, la migración se parte en dos, porque las dos
+piezas del respaldo tienen tamaños y sensibilidades muy distintas:
+
+| Pieza | Tamaño | Cómo viaja |
+|---|---|---|
+| Fotos (`backend\media`) | ~35 MB, 338 archivos | **Por el repositorio de git** |
+| Base de datos (`base_datos.sql`) | ~333 KB | Correo, Drive, WhatsApp Web — cualquier cosa |
+
+Las fotos son la parte pesada y molesta de mover; la base entra en un
+adjunto de correo. Por eso el reparto es ese y no al revés.
+
+> **La base de datos no va al repositorio.** El repo del proyecto
+> (`favillar16/Proyectos-de-Trabajo`) es **público**. Las fotos son el
+> catálogo y publicarlas no cambia nada, pero el dump lleva clientes,
+> ventas, precios de costo y los hashes de contraseña de los usuarios. Una
+> vez subido a un repo público queda ahí aunque después se borre el commit.
+
+**En el equipo de armado:**
+
+```bat
+respaldo\respaldo.bat        :: 1) respaldo normal, a respaldos\
+respaldo\subir_fotos.bat     :: 2) commitea y sube backend\media a GitHub
+```
+
+`subir_fotos.bat` solo toca `backend\media` y `respaldo\fotos_manifiesto.json`
+— cualquier otro cambio pendiente en el proyecto queda sin tocar. El
+manifiesto anota cuántas fotos se subieron, para poder verificarlo del otro
+lado.
+
+Después, mandar **solo el `base_datos.sql`** de la carpeta
+`respaldos\respaldo_AAAAMMDD_HHMMSS\` por el medio que sea. Son ~333 KB.
+
+**En la PC servidor:**
+
+1. Traer el proyecto con `git clone <url del repo> ceramica_final` — **el
+   clone ya trae las fotos**, no hace falta nada más. Si el proyecto ya
+   estaba copiado, correr `respaldo\traer_fotos.bat`, que hace el `pull` y
+   verifica contra el manifiesto que estén las 338.
+2. Instalación base normal (§3.1).
+3. Poner el `base_datos.sql` recibido en una carpeta cualquiera, por
+   ejemplo `C:\migracion\`, y restaurar:
+   ```bat
+   respaldo\restaurar.bat C:\migracion
+   ```
+   Va a avisar **"el respaldo no trae carpeta media"**. En este flujo está
+   bien: las fotos ya llegaron por git y el restaurador no las borra.
+4. Verificar como en §3.3 — productos **con foto** y stock.
+
+**Cuando se cargan fotos nuevas después de migrar:** repetir
+`subir_fotos.bat` en el equipo de origen y `traer_fotos.bat` en el
+servidor. Pero ojo: una vez que el servidor definitivo está andando, el que
+manda es él, y esto deja de ser un camino de ida y vuelta.
 
 ---
 

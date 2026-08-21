@@ -39,7 +39,10 @@ fotos en disco = 338 archivos, 34,9 MB
 
 - [ ] Confirmar que la PC servidor tiene: Windows 10/11, disco con espacio
       para la base + fotos + respaldos, y puerto de red o WiFi estable
-- [ ] Llevar un pendrive de al menos 1 GB para el traslado
+- [ ] Llevar un pendrive de al menos 1 GB para el traslado. **Si no hay
+      pendrive:** las fotos van por el repositorio
+      (`respaldo\subir_fotos.bat`) y solo el `base_datos.sql` (~333 KB)
+      por correo/Drive — `docs/respaldo_y_migracion.md` §3.5
 - [ ] Llevar el instalador de Python 3.11, Node 20 LTS y PostgreSQL 15 por
       si la conexión del local es lenta
 - [ ] **Hacer un respaldo fresco del equipo de armado el mismo día**, no uno
@@ -71,6 +74,8 @@ Guía completa: `docs/instalacion.md`
 Guía completa: `docs/respaldo_y_migracion.md`
 
 - [ ] Copiar la carpeta `respaldo_AAAAMMDD_HHMMSS` del pendrive
+      (sin pendrive: `git clone` trae las fotos y se restaura solo el
+      `base_datos.sql` recibido aparte — §3.5 de esa guía)
 - [ ] Con el sistema cerrado: `respaldo\restaurar.bat D:\respaldo_...`
       (pide escribir `SI`)
 - [ ] `iniciar.bat` y entrar con un usuario **del equipo de armado**
