@@ -2,9 +2,10 @@
 URLs principales — Oga Porã
 """
 from django.contrib import admin
-from django.urls import path, include
+from django.urls import path, re_path, include
 from django.conf import settings
 from django.conf.urls.static import static
+from django.views.static import serve as servir_estatico
 from rest_framework_simplejwt.views import (
     TokenObtainPairView,
     TokenRefreshView,
@@ -31,7 +32,14 @@ urlpatterns = [
     path('api/v1/', include(api_v1)),
 ]
 
-# Servir archivos media en desarrollo
+# Fotos de productos: servir siempre, sin depender de DEBUG. Este sistema es
+# un appliance LAN-only sin servidor web separado (ver CLAUDE.md) — si no se
+# sirve acá, no se sirve en ningún lado. No se usa el helper static() de
+# Django porque internamente ignora todo si DEBUG=False, sin excepción.
+urlpatterns += [
+    re_path(r'^media/(?P<path>.*)$', servir_estatico, {'document_root': settings.MEDIA_ROOT}),
+]
+
+# Estáticos de Django (admin, DRF browsable API): solo hace falta en desarrollo
 if settings.DEBUG:
-    urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
     urlpatterns += static(settings.STATIC_URL, document_root=settings.STATIC_ROOT)
