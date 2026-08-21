@@ -173,7 +173,12 @@ proyecto, doble clic, pide Administrador): categoría de red privada, puertos
 
 ## 6. Verificación final
 
-- [ ] **Cambiar las contraseñas de `admin`, `cajero`, `deposito` y `vendedor`**.
+- [ ] ⏸️ **Cambiar las contraseñas de `admin`, `cajero`, `deposito` y
+      `vendedor`** — **diferido a poco antes del lanzamiento real** por
+      decisión del 21/08/2026 (durante el armado hay que loguearse demasiadas
+      veces en cada equipo). Sigue siendo bloqueante para operar: ver el paso
+      3 de `instructivo_entrega_final.md`, que incluye el detalle de cerrar
+      sesión en cada dispositivo después de rotarlas.
       Al 21/08/2026 los cuatro siguen con `demo2025`, la credencial de demo
       heredada del equipo de armado. En el servidor, una por una:
       `cd backend` → `venv\Scripts\activate` →

@@ -91,14 +91,23 @@ seguir igual.
 
 ---
 
-## Paso 3 — Cambiar las contraseñas (10 minutos) ⚠️
+## Paso 3 — Cambiar las contraseñas — DIFERIDO al lanzamiento ⏸️
 
-**Esto es bloqueante para entregar.** Los cuatro usuarios del sistema —
-`admin`, `vendedor`, `cajero` y `deposito` — están todos con la contraseña de
-demostración `demo2025`, heredada del equipo de armado. Cualquiera que haya
-visto la guía de demo entra como administrador.
+**Decisión del 21/08/2026:** se hace **poco antes del lanzamiento real**, no
+durante el armado. El motivo es práctico: mientras se configuran tablets y
+puestos hay que iniciar sesión muchas veces en cada equipo, y rotarlas antes
+obliga a cargar la contraseña nueva una y otra vez.
 
-En el servidor, abrir PowerShell **en la carpeta del proyecto** y correr:
+**Estado actual:** `admin`, `vendedor`, `cajero` y `deposito` están **los
+cuatro con `demo2025`**, la credencial de demo heredada del equipo de armado.
+Está publicada en `docs/guia_demo_propietarios.md`: cualquiera que haya visto
+esa guía entra como administrador.
+
+⚠️ **No arrancar la operación real del negocio sin haber hecho esto.** Mientras
+el sistema esté solo en armado el riesgo es aceptable; deja de serlo el primer
+día que se cargue una venta de verdad.
+
+**Cuando llegue el momento** — en el servidor:
 
 ```powershell
 cd backend
@@ -107,21 +116,21 @@ python manage.py changepassword admin
 ```
 
 Pide la contraseña nueva dos veces (no se ve mientras se escribe, es normal).
-Repetir el último comando cambiando el usuario:
+Repetir con `cajero`, `deposito` y `vendedor`.
 
-```powershell
-python manage.py changepassword cajero
-python manage.py changepassword deposito
-python manage.py changepassword vendedor
-```
+**Después de rotarlas, en cada equipo:**
 
-**Después:**
-
-- Anotar las cuatro contraseñas en papel y dejárselas a la propietaria.
+- **Cerrar sesión y volver a entrar** en las 2 tablets, la PC Caja, la PC
+  Depósito y el Salón Comercial. Cambiar la contraseña **no corta las sesiones
+  abiertas**: el token JWT que ya tiene cada dispositivo sigue siendo válido
+  hasta que venza (8 h el de acceso, 7 días el de refresco). Si no se cierra
+  sesión a mano, un equipo puede seguir andando con la credencial vieja
+  durante días y nadie se entera.
 - La de `admin` es la más sensible: da acceso a costos, precios y a los datos
   de todos los usuarios.
-- Probar entrar con una de ellas en `http://192.168.100.250:5173` antes de
-  seguir.
+- Anotar las cuatro en papel o en el gestor de contraseñas y dejárselas a la
+  propietaria. Pueden ir junto a `credenciales_servidor.txt`, que ya está
+  fuera de git.
 
 ---
 
