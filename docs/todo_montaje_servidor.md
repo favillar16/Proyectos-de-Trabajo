@@ -191,6 +191,44 @@ proyecto, doble clic, pide Administrador): categoría de red privada, puertos
 
 ---
 
+## 6.5 Datos fiscales de la factura — PENDIENTE (22/08/2026)
+
+**Estado al 21/08/2026:** `backend\.env` **no tiene ninguna clave `FISCAL_*`**,
+así que `settings.DATOS_FISCALES` queda con los valores por defecto (vacíos,
+salvo la razón social que cae en "Oga Porã").
+
+**Qué significa en la práctica:** los **tickets** salen bien — no usan esos
+datos. Pero cada **factura** se imprime **sin RUC del negocio, sin número de
+timbrado, sin vencimiento de timbrado, sin dirección y sin teléfono**
+(`apps/caja/printer.py`, `FacturaBuilder`, y `apps/caja/views.py` donde se
+arma `datos` para el comprobante). Una factura así no sirve para nada.
+
+**Lo que hay que pedirle a la propietaria:**
+
+| Dato | Clave en `.env` | Notas |
+|---|---|---|
+| RUC del negocio | `FISCAL_RUC` | con dígito verificador |
+| Razón social | `FISCAL_RAZON_SOCIAL` | hoy usa "Oga Porã" por defecto |
+| Dirección | `FISCAL_DIRECCION` | la que figura en el timbrado |
+| Teléfono | `FISCAL_TELEFONO` | |
+| Nº de timbrado | `FISCAL_TIMBRADO` | el que otorga la SET |
+| Vencimiento del timbrado | `FISCAL_TIMBRADO_VTO` | fecha de vigencia |
+
+**Cómo aplicarlo:** agregar esas seis líneas a `backend\.env` en la PC
+servidor y reiniciar `iniciar.bat` (el `.env` se lee al arrancar). Después
+emitir **una factura de prueba** y revisar el papel: los seis campos tienen
+que salir impresos.
+
+**Sin resolver todavía (preguntar el 22/08):**
+- La numeración de factura sale de `pago.numero_ticket`. Falta confirmar si
+  la propietaria necesita el formato de establecimiento-punto-expedición
+  (`001-001-0000001`) y una numeración propia por talonario, o si le sirve la
+  numeración actual del sistema.
+- Si el timbrado tiene rango de numeración autorizado, hay que ver qué pasa al
+  agotarlo.
+
+---
+
 ## 7. Respaldo automático — DECISIÓN PENDIENTE
 
 Hoy el respaldo existe pero **hay que correrlo a mano**. Esto es lo que

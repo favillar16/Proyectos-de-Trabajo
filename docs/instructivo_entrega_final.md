@@ -261,6 +261,14 @@ Con todos los equipos prendidos al mismo tiempo:
 
 ## Queda pendiente después de la entrega
 
+- **Datos fiscales de la factura** — `backend\.env` no tiene ninguna clave
+  `FISCAL_*`, así que las facturas se imprimen sin RUC, sin timbrado y sin
+  dirección (los tickets salen bien). Hacen falta seis datos de la
+  propietaria: RUC, razón social, dirección, teléfono, número de timbrado y
+  su vencimiento. Detalle completo y tabla de claves en
+  `docs/todo_montaje_servidor.md` §6.5. **Es lo primero del 22/08/2026.**
+
+
 - **Respaldo automático** — hoy hay que correrlo a mano. Está la decisión
   abierta entre 3 opciones en `docs/todo_montaje_servidor.md` §7
   (recomendación: `rclone` a Google Drive, sube solo lo que cambió).
