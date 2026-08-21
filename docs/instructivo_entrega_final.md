@@ -13,11 +13,11 @@ verificar que salió bien antes de pasar al siguiente.
 | Dato | Valor |
 |---|---|
 | Nombre de la PC (hostname) | `OGAPORA` |
-| IP actual | `192.168.100.16` (por DHCP) |
+| IP del servidor | `192.168.100.250` (**fija**, puesta por `fijar_ip.bat`) |
 | MAC del adaptador WiFi | `10-5A-95-76-C9-20` |
 | Router / puerta de enlace | `192.168.100.1` |
-| Dirección del sistema | `http://192.168.100.16:5173` |
-| API / backend | `http://192.168.100.16:8000` |
+| Dirección del sistema | `http://192.168.100.250:5173` |
+| API / backend | `http://192.168.100.250:8000` |
 | Plan B por nombre | `http://OGAPORA.local:5173` |
 
 ---
@@ -49,44 +49,44 @@ Se puede volver a correr las veces que haga falta, no rompe nada.
 
 ---
 
-## Paso 2 — Reservar la IP en el router (10 minutos)
+## Paso 2 — Fijar la IP del servidor con `fijar_ip.bat` (2 minutos)
 
-**Por qué:** hoy la IP `192.168.100.16` la da el router por DHCP y es prestada.
-Si el router se reinicia o se corta la luz, puede darle otra — y ese día las
+**Por qué:** si la IP la reparte el router por DHCP, es prestada. El día que se
+corte la luz o se reinicie el router puede darle otra a esta PC — y ese día las
 2 tablets, la PC de caja, la de depósito y la notebook dejan de encontrar el
-sistema todas juntas, y hay que reconfigurarlas una por una. La reserva ata esa
-IP a esta PC para siempre.
+sistema **todas juntas**, y hay que reconfigurarlas una por una.
 
-1. Desde cualquier PC del local, abrir Chrome y entrar a **`http://192.168.100.1`**
-2. Iniciar sesión. Si nunca se cambió, la contraseña suele estar **en una
-   etiqueta abajo o atrás del router** (`admin`/`admin`, `admin` + la clave
-   impresa, etc.).
-3. Buscar la sección de reservas DHCP. Según la marca se llama distinto:
-   - **TP-Link:** Advanced → Network → DHCP Server → *Address Reservation*
-   - **Huawei:** Más funciones → Configuración LAN → *Asignación estática/DHCP*
-   - **Tenda / Nexxt:** Advanced → DHCP Reservation
-   - **Mikrotik:** IP → DHCP Server → Leases → botón derecho → *Make Static*
-   - Otras: buscar las palabras *"reserva"*, *"static lease"*, *"IP fija"* o
-     *"vinculación IP-MAC"*
-4. Agregar la reserva con estos dos datos exactos:
-   - **MAC:** `10-5A-95-76-C9-20` (algunos routers la piden con `:` en vez de
-     `-` → `10:5A:95:76:C9:20`, y otros sin nada → `105A9576C920`)
-   - **IP:** `192.168.100.16`
-5. Guardar. Si el router pide reiniciarse, dejarlo reiniciar.
+Lo normal sería reservar la IP en el router, pero no hay acceso a su panel
+(es un Nokia del proveedor y la clave no está disponible). Así que se resuelve
+del otro lado: la IP se la ponemos fija a la PC.
 
-**Verificar que quedó:** en el servidor, apagar y prender el WiFi (o reiniciar
-la PC) y correr en PowerShell:
+1. Doble clic en **`fijar_ip.bat`** (raíz del proyecto) → permiso de
+   Administrador → **Sí**.
+2. La red se corta un instante y vuelve. Al final tiene que decir
+   `IP : 192.168.100.250 (Manual)`.
+
+**Por qué `.250` y no la que tenía:** el barrido de la red mostró que el router
+reparte las direcciones **desde abajo** (.3, .4, .7, .9, .13, .15, .16 ocupadas
+el 21/08/2026). Nunca va a llegar hasta `.250`, así que no hay riesgo de que se
+la dé a otro equipo. El script igual comprueba que esté libre **antes** de
+tomarla, y si está ocupada no cambia nada y avisa.
+
+**Verificar que quedó:**
 
 ```powershell
 ipconfig | findstr /i "IPv4"
 ```
 
-Tiene que seguir diciendo `192.168.100.16`.
+Tiene que decir `192.168.100.250`. Reiniciá la PC y volvé a mirar: tiene que
+seguir igual.
 
-> **Si no hay acceso al router** (no aparece la contraseña): avisame y le
-> ponemos IP fija a la PC en vez de reserva. Es plan B, no plan A: si el rango
-> DHCP del router incluye esa IP, algún día se la puede dar a otro equipo y
-> genera un conflicto.
+> **Para volver atrás** (por ejemplo si algún día se cambia de router):
+> `fijar_ip.bat deshacer` → vuelve a DHCP.
+>
+> **Si algún día conseguís la clave del router**, lo prolijo es además
+> reservar `192.168.100.250` para la MAC `10-5A-95-76-C9-20` en
+> **LAN → DHCP Server → "IPv4 address reservations"** (así se llama el menú en
+> este Nokia). No es obligatorio: con la IP fija ya alcanza.
 
 ---
 
@@ -119,7 +119,7 @@ python manage.py changepassword vendedor
 - Anotar las cuatro contraseñas en papel y dejárselas a la propietaria.
 - La de `admin` es la más sensible: da acceso a costos, precios y a los datos
   de todos los usuarios.
-- Probar entrar con una de ellas en `http://192.168.100.16:5173` antes de
+- Probar entrar con una de ellas en `http://192.168.100.250:5173` antes de
   seguir.
 
 ---
@@ -154,8 +154,8 @@ Antes de ponerse a configurar tablets y puestos, comprobar que la red quedó
 abierta. Desde **cualquier otra PC del local**, en PowerShell:
 
 ```powershell
-Test-NetConnection -ComputerName 192.168.100.16 -Port 5173
-Test-NetConnection -ComputerName 192.168.100.16 -Port 8000
+Test-NetConnection -ComputerName 192.168.100.250 -Port 5173
+Test-NetConnection -ComputerName 192.168.100.250 -Port 8000
 ```
 
 Los dos tienen que decir `TcpTestSucceeded : True`.

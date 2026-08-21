@@ -95,18 +95,20 @@ proyecto, doble clic, pide Administrador): categoría de red privada, puertos
 5173/8000 en el firewall, suspensión desactivada, `backend\media` compartida y
 `pg_hba.conf` con la subred del local.
 
-- [x] IP definitiva: `192.168.100.16` (Wi-Fi, red `OGA PORA`, DHCP)
+- [x] IP definitiva: `192.168.100.250` (Wi-Fi, red `OGA PORA`, **fija**)
 - [x] Nombre de red de la PC (`hostname`): `OGAPORA`
 - [x] MAC del adaptador Wi-Fi: `10-5A-95-76-C9-20`
-- [ ] **Reservar esa IP en el router** (DHCP → reserva por MAC).
-      `guia_instalacion_dispositivos.md` §2.1. Es lo que evita tener que
-      reconfigurar todos los dispositivos si el router se reinicia.
+- [ ] **Fijar la IP con `fijar_ip.bat`** (Administrador). El panel del router
+      —un Nokia del proveedor— no es accesible: no hay clave. En vez de la
+      reserva DHCP se le pone IP fija a la PC. `.250` está elegida a
+      propósito: el 21/08/2026 el router repartía desde abajo (.3 a .16), así
+      que nunca va a llegar a esa dirección. Revertir: `fijar_ip.bat deshacer`.
 - [ ] Marcar la red del local como **privada**, no pública (`preparar_red.bat`)
 - [ ] Abrir los puertos 5173 y 8000 en el firewall (`preparar_red.bat`)
 - [ ] **Desactivar la suspensión del servidor** (`preparar_red.bat`). Venía
       configurado para dormirse a los 45 minutos de inactividad: dormido, el
       sistema deja de existir para caja, depósito y tablets.
-- [ ] Verificar desde otro equipo: `Test-NetConnection 192.168.100.16 -Port 8000`
+- [ ] Verificar desde otro equipo: `Test-NetConnection 192.168.100.250 -Port 8000`
 
 > El servidor queda conectado por **Wi-Fi** (2,4 GHz, 802.11n), no por cable.
 > Es el único punto de falla de todo el local: si alguna vez se puede pasar a

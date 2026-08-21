@@ -36,12 +36,13 @@ en `docs/todo_montaje_servidor.md`.
       `backend\media` compartida en solo lectura para la notebook, y
       PostgreSQL aceptando conexiones de `192.168.100.0/24`.
       Es idempotente: se puede volver a correr sin romper nada.
-- [ ] **Reservar la IP de esta PC en el router** (DHCP → reserva por MAC) —
-      `guia_instalacion_dispositivos.md` §2. Evita tener que reconfigurar
-      todos los demás equipos si el router se reinicia.
-      MAC del Wi-Fi: `10-5A-95-76-C9-20`
-- [x] IP definitiva: `192.168.100.16` (Wi-Fi, red `OGA PORA`) — ya reflejada
-      en `backend\.env`. Falta solo la reserva en el router (punto de arriba).
+- [ ] **Doble clic en `fijar_ip.bat`** → IP fija `192.168.100.250`. No hay
+      acceso al panel del router (Nokia del proveedor, sin clave), así que en
+      vez de reservar la IP ahí se la fijamos a la PC. Elegida alta a
+      propósito: el router reparte desde abajo y nunca llega a `.250`.
+      Para revertir: `fijar_ip.bat deshacer`.
+- [x] IP definitiva: `192.168.100.250` (Wi-Fi, red `OGA PORA`) — ya reflejada
+      en `backend\.env`. MAC del Wi-Fi: `10-5A-95-76-C9-20`.
 - [x] Hostname: `OGAPORA` (la PC se renombró; antes era `DESKTOP-Q9T1TPI`)
 - [ ] **Cambiar las contraseñas de los usuarios** — al 21/08/2026 `admin`,
       `vendedor`, `cajero` y `deposito` **siguen todos con `demo2025`**
@@ -58,8 +59,8 @@ en `docs/todo_montaje_servidor.md`.
       ventanas (daphne + Vite)
 - [ ] Desde OTRO equipo en la misma red, probar:
       ```powershell
-      Test-NetConnection -ComputerName 192.168.100.16 -Port 5173
-      Test-NetConnection -ComputerName 192.168.100.16 -Port 8000
+      Test-NetConnection -ComputerName 192.168.100.250 -Port 5173
+      Test-NetConnection -ComputerName 192.168.100.250 -Port 8000
       ```
       Los dos tienen que dar `TcpTestSucceeded : True`. Si falla, ver
       `docs/verificacion_red.md` (capas 1 y 2).
@@ -115,8 +116,8 @@ Instrucciones completas y diagnóstico: `docs/pwa_tablet.md`.
 
 - [ ] **Tablet 1:**
   - [ ] `chrome://flags/#unsafely-treat-insecure-origin-as-secure` →
-        agregar `http://192.168.100.16:5173` → Enabled → Relaunch
-  - [ ] Entrar a `http://192.168.100.16:5173`, confirmar que carga el login
+        agregar `http://192.168.100.250:5173` → Enabled → Relaunch
+  - [ ] Entrar a `http://192.168.100.250:5173`, confirmar que carga el login
   - [ ] Menú (⋮) → **Instalar aplicación** → confirmar
   - [ ] Abrir el ícono "Oga Porã" instalado y confirmar que carga igual
         que en Chrome
@@ -131,8 +132,8 @@ Instrucciones completas y diagnóstico: `docs/pwa_tablet.md`.
 
 Checklist completo con el detalle de la impresora: `docs/pc_caja.md`.
 
-- [ ] Confirmar red: `Test-NetConnection -ComputerName 192.168.100.16 -Port 5173`
-- [ ] Chrome → `http://192.168.100.16:5173` → iniciar sesión con usuario
+- [ ] Confirmar red: `Test-NetConnection -ComputerName 192.168.100.250 -Port 5173`
+- [ ] Chrome → `http://192.168.100.250:5173` → iniciar sesión con usuario
       **`cajero`**
 - [ ] Crear acceso directo "Abrir como ventana" (menú ⋮ → Más
       herramientas → Crear acceso directo)
@@ -158,8 +159,8 @@ Checklist completo con el detalle de la impresora: `docs/pc_caja.md`.
 
 ## 5. PC Depósito — ~2 minutos
 
-- [ ] Confirmar red: `Test-NetConnection -ComputerName 192.168.100.16 -Port 5173`
-- [ ] Chrome → `http://192.168.100.16:5173` → iniciar sesión con usuario
+- [ ] Confirmar red: `Test-NetConnection -ComputerName 192.168.100.250 -Port 5173`
+- [ ] Chrome → `http://192.168.100.250:5173` → iniciar sesión con usuario
       **`deposito`**
 - [ ] Crear acceso directo "Abrir como ventana"
 
