@@ -67,7 +67,31 @@ GRANT pg_read_all_data TO notebook_sync;
 
 Anotar esa contraseña — se usa en el paso 2.2, en la notebook.
 
-### 1.3 Anotar la IP del servidor
+### 1.3 Compartir la carpeta de fotos (para que las imágenes no salgan rotas)
+
+La base de datos guarda de cada foto solo la **ruta** del archivo
+(`MEDIA_ROOT = backend/media`), nunca la imagen en sí. Si se sincroniza solo
+la base, la notebook termina con el catálogo completo y **todos los
+productos con la foto rota**, porque los archivos viven únicamente en la PC
+servidor.
+
+Para evitarlo hay que compartir esa carpeta una sola vez en el servidor:
+
+1. En la PC servidor, ir a la carpeta del proyecto → `backend\media`.
+2. Clic derecho → **Propiedades** → pestaña **Uso compartido** → **Uso
+   compartido avanzado…**
+3. Tildar **"Compartir esta carpeta"**, dejar el nombre del recurso como
+   `media`.
+4. **Permisos** → dejar solo **Leer** para el usuario que vaya a usar la
+   notebook (o para `Todos`, si la red del local es cerrada). La notebook
+   nunca necesita escribir acá.
+5. Anotar la ruta de red resultante, por ejemplo `\\DESKTOP-UAIGET9\media`
+   — se usa en el paso 2.2.
+
+Es opcional: si se deja sin configurar, el sync de datos funciona igual y
+solo se pierden las imágenes.
+
+### 1.4 Anotar la IP del servidor
 
 La misma IP que ya se usa para las tablets (`docs/pwa_tablet.md`). Conviene
 reservarla como IP fija en el router (por MAC) para no tener que
@@ -90,10 +114,14 @@ En la carpeta `sync_notebook/` del proyecto (esta misma que está en el
 repo):
 
 1. Copiar `config.env.example` como `config.env`.
-2. Completar `SERVIDOR_HOST` con la IP del servidor (paso 1.3),
+2. Completar `SERVIDOR_HOST` con la IP del servidor (paso 1.4),
    `SERVIDOR_DB_PASSWORD` con la contraseña de `notebook_sync` (paso 1.2), y
    `LOCAL_DB_PASSWORD` con la contraseña del Postgres local de la notebook.
-3. Doble clic en `instalar_tarea_programada.bat`. Esto registra la tarea de
+3. Completar `SERVIDOR_MEDIA_UNC` con la ruta de red de las fotos
+   (paso 1.3), por ejemplo `\\DESKTOP-UAIGET9\media`. Dejarlo vacío si se
+   decidió no compartir esa carpeta — la notebook va a mostrar los
+   productos sin imagen.
+4. Doble clic en `instalar_tarea_programada.bat`. Esto registra la tarea de
    Windows que corre el sync cada 5 minutos.
 
 `config.env` no se sube al repositorio (tiene contraseñas) — queda solo en

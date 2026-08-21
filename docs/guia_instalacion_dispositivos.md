@@ -88,8 +88,15 @@ usar la IP como siempre.
 
 ## 3. PC Caja y PC Depósito (clientes — 2 minutos cada una)
 
+> Para la **PC de Caja** hay un checklist propio con el detalle de la
+> impresora térmica (que imprime desde el servidor, no desde la caja):
+> **`docs/pc_caja.md`**. Lo de acá abajo es el resumen, y alcanza tal cual
+> para la PC de Depósito.
+
 No necesitan Python, Node ni PostgreSQL — solo Chrome y la IP del servidor
-(§2.2).
+(§2.2). **Tampoco llevan base de datos**: hay una sola base, la del
+servidor, y es lo que evita que el mismo material se venda dos veces
+(el porqué, en `docs/pc_caja.md` §1).
 
 1. Con el servidor ya corriendo, abrir Chrome y entrar a
    `http://IP-DEL-SERVIDOR:5173`
@@ -170,11 +177,30 @@ base de datos local.
 
 ---
 
+## 8. Respaldo (no es opcional)
+
+El sistema no respalda solo. Un respaldo son **la base de datos + las fotos
+de productos juntas** — ver `docs/respaldo_y_migracion.md`.
+
+```bat
+respaldo\respaldo.bat D:\
+```
+
+Mínimo una vez por semana a un pendrive, y siempre antes de tocar algo
+grande. Es también la herramienta para **trasladar el sistema a otra PC**
+(por ejemplo, del equipo de armado a la PC servidor definitiva).
+
+---
+
 ## Problemas comunes
+
+Para problemas de **red o de conexión entre dispositivos** (algo no carga,
+los datos no se actualizan solos, la IP cambió), el documento específico es
+**`docs/verificacion_red.md`**, que va por capas de abajo hacia arriba.
 
 Para errores específicos (PostgreSQL, puertos ocupados, impresora, 403,
 etc.) ver la sección **"Solución de problemas frecuentes"** de
 `instalacion.md` y **"Problemas conocidos y soluciones"** de
-`checklist_entrega.md`. Para problemas de tablets o de la notebook, cada
-documento respectivo (`pwa_tablet.md`, `sync_notebook.md`) tiene su propia
-sección de diagnóstico.
+`checklist_entrega.md`. Para problemas de tablets, de la caja o de la
+notebook, cada documento respectivo (`pwa_tablet.md`, `pc_caja.md`,
+`sync_notebook.md`) tiene su propia sección de diagnóstico.

@@ -157,8 +157,74 @@ try {
         exit 1
     }
 
+    # ─── 4) Fotos de productos ───────────────────────────────────────────────
+    # La base guarda solo la RUTA de cada imagen (MEDIA_ROOT = backend/media),
+    # no el archivo. Sin este paso la notebook restaura el catálogo entero
+    # pero muestra todos los productos con la foto rota, porque los archivos
+    # solo existen en la PC servidor.
+    #
+    # Es opcional a propósito: requiere compartir backend\media en la red
+    # (ver docs/sync_notebook.md). Si no está configurado, o si la carpeta
+    # compartida no responde, el sync de datos igual se da por bueno — las
+    # fotos son secundarias frente al stock y los pedidos.
+    #
+    # Todo el bloque va dentro de un try propio: llegado acá la base YA quedó
+    # sincronizada, así que ningún problema con la carpeta de red (permisos,
+    # share caído, disco lleno) debe hacer fracasar un sync que en lo
+    # importante salió bien.
+    $mediaUnc = $cfg['SERVIDOR_MEDIA_UNC']
+    $detalleMedia = 'sin fotos'
+
+    try {
+        if (-not $mediaUnc) {
+            Log "SERVIDOR_MEDIA_UNC vacío — se omite la copia de fotos (los productos se van a ver sin imagen)."
+        }
+        elseif (-not (Test-Path $mediaUnc -ErrorAction SilentlyContinue)) {
+            Log "ADVERTENCIA: no se pudo acceder a $mediaUnc — se omite la copia de fotos y se conservan las que ya estaban."
+        }
+        else {
+            # Guarda contra un /MIR destructivo: si la carpeta compartida está
+            # accesible pero vacía (share mal configurado, disco recién
+            # cambiado), espejarla borraría todas las fotos que ya tenía.
+            $primerArchivo = Get-ChildItem $mediaUnc -Recurse -File -ErrorAction SilentlyContinue |
+                             Select-Object -First 1
+            if (-not $primerArchivo) {
+                Log "ADVERTENCIA: $mediaUnc está accesible pero vacía — se omite la copia para no borrar las fotos locales."
+            }
+            else {
+                $mediaLocal = Join-Path (Split-Path -Parent $carpeta) 'backend\media'
+                if (-not (Test-Path $mediaLocal)) {
+                    New-Item -ItemType Directory -Path $mediaLocal -Force | Out-Null
+                }
+
+                # /MIR (espejo real) y no /E: acá sí corresponde borrar lo que
+                # ya no está en el servidor, porque la notebook es un espejo
+                # que se refresca cada 5 minutos y si no las fotos viejas se
+                # acumularían para siempre. Mismo criterio que recrear la base.
+                & robocopy $mediaUnc $mediaLocal /MIR /NFL /NDL /NJH /NJS /R:1 /W:1 | Out-Null
+
+                # robocopy devuelve 0-7 para resultados normales (0 = sin
+                # cambios, 1 = copió, 3 = copió y borró); 8 o más es error.
+                if ($LASTEXITCODE -ge 8) {
+                    Log "ADVERTENCIA: robocopy falló al copiar las fotos (código $LASTEXITCODE) — la base igual quedó actualizada."
+                    $detalleMedia = 'fotos con error'
+                }
+                else {
+                    $cantFotos = (Get-ChildItem $mediaLocal -Recurse -File -ErrorAction SilentlyContinue).Count
+                    Log "Fotos sincronizadas: $cantFotos archivos en backend\media."
+                    $detalleMedia = "$cantFotos fotos"
+                }
+                $global:LASTEXITCODE = 0
+            }
+        }
+    }
+    catch {
+        Log "ADVERTENCIA: falló la copia de fotos ($($_.Exception.Message)) — la base igual quedó actualizada."
+        $detalleMedia = 'fotos con error'
+    }
+
     Log "Sync completo — base local actualizada con los datos del servidor."
-    Escribir-Estado 'ok' 'Sincronizado correctamente'
+    Escribir-Estado 'ok' "Sincronizado correctamente ($detalleMedia)"
 
     # Conservar solo el último dump para no llenar el disco
     Get-ChildItem $tmpDir -Filter 'dump_*.sql' |
