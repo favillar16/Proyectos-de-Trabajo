@@ -163,6 +163,9 @@ proyecto, doble clic, pide Administrador): categoría de red privada, puertos
 - [ ] Prueba de tiempo real entre dispositivos: abrir un pedido en la
       tablet, confirmar el pago en la caja, ver que la tablet cambia sola
       sin recargar (`docs/verificacion_red.md` §2, capa 5)
+- [x] Arranque automático: acceso directo a `iniciar_auto.bat` en la carpeta
+      de Inicio de Windows (21/08/2026). Espera a PostgreSQL con `pg_isready`
+      antes de levantar el sistema
 - [ ] Prueba de arranque diario completo
       (`guia_instalacion_dispositivos.md` §7)
 

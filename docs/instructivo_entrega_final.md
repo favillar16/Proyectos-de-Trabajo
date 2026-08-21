@@ -211,6 +211,34 @@ y reiniciar `iniciar.bat`. Detalle en `docs/pc_caja.md`.
 
 ---
 
+## Paso 6.5 — Arranque automático del servidor (ya hecho)
+
+Configurado el 21/08/2026. Hay un acceso directo a `iniciar_auto.bat` en la
+carpeta de Inicio de Windows del usuario `Usuario`:
+
+```
+C:\Users\Usuario\AppData\Roaming\Microsoft\Windows\Start Menu\Programs\Startup
+```
+
+`iniciar_auto.bat` espera a que PostgreSQL acepte conexiones (hasta 1 minuto,
+con `pg_isready`) y recién ahí llama a `iniciar.bat`. Al prender la PC, el
+servicio de PostgreSQL y el sistema arrancan casi al mismo tiempo: sin esa
+espera, la primera pantalla puede salir con error de base de datos.
+
+**Por qué importa:** sin esto, después de un corte de luz alguien tiene que
+acordarse de abrir `iniciar.bat` en el servidor, o **no funciona nada en todo
+el local** — ni caja, ni depósito, ni tablets.
+
+⚠️ **La carpeta de Inicio corre al iniciar sesión, no al prender la PC.** Hoy
+la cuenta `Usuario` de Windows no tiene contraseña, así que arranca sola. Si
+en algún momento se le pone contraseña, alguien va a tener que iniciar sesión
+para que el sistema levante (o habilitar el inicio de sesión automático de
+Windows, hoy desactivado).
+
+**Para desactivarlo:** borrar ese acceso directo. Nada más.
+
+---
+
 ## Paso 7 — Verificación final y respaldo
 
 Con todos los equipos prendidos al mismo tiempo:
