@@ -34,7 +34,8 @@ Es lo primero de todo: sin esto ningún otro equipo puede ver el sistema.
 Deja hecho, de una sola pasada:
 
 - Red del local marcada como **Privada** (en Pública, Windows bloquea todo)
-- Puertos **5173** y **8000** abiertos en el firewall
+- Puertos **5173**, **8000** y **5432** abiertos en el firewall (el 5432 solo
+  para el espejo de la notebook, con rol de solo lectura y contraseña)
 - **Suspensión desactivada** — venía configurado para dormirse a los 45 minutos
   de inactividad, y un servidor dormido deja sin sistema a caja, depósito y
   tablets

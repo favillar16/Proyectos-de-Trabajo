@@ -30,7 +30,7 @@ en `docs/todo_montaje_servidor.md`.
 
 - [ ] **Doble clic en `preparar_red.bat`** (en la raíz del proyecto) y aceptar
       el aviso de Administrador. Deja hecho de una sola vez:
-      red del local marcada como **Privada**, puertos **5173** y **8000**
+      red del local marcada como **Privada**, puertos **5173**, **8000** y **5432**
       abiertos en el firewall, **suspensión desactivada** (un servidor
       dormido deja sin sistema a caja, depósito y tablets), carpeta
       `backend\media` compartida en solo lectura para la notebook, y

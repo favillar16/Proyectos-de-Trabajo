@@ -104,7 +104,8 @@ proyecto, doble clic, pide Administrador): categoría de red privada, puertos
       propósito: el 21/08/2026 el router repartía desde abajo (.3 a .16), así
       que nunca va a llegar a esa dirección. Revertir: `fijar_ip.bat deshacer`.
 - [ ] Marcar la red del local como **privada**, no pública (`preparar_red.bat`)
-- [ ] Abrir los puertos 5173 y 8000 en el firewall (`preparar_red.bat`)
+- [ ] Abrir los puertos 5173, 8000 y 5432 en el firewall (`preparar_red.bat`).
+      El 5432 lo necesita el espejo de la notebook
 - [ ] **Desactivar la suspensión del servidor** (`preparar_red.bat`). Venía
       configurado para dormirse a los 45 minutos de inactividad: dormido, el
       sistema deja de existir para caja, depósito y tablets.

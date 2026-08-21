@@ -41,9 +41,15 @@ foreach ($p in $perfiles) {
 
 # --- 2. Abrir los puertos del sistema en el firewall ------------------------
 Info "2. Reglas de firewall"
+# El 5432 es solo para el espejo de la notebook, que se conecta a PostgreSQL
+# por la red con el rol de SOLO LECTURA notebook_sync. Queda limitado al perfil
+# Private (la red del local) y sigue exigiendo contrasena: pg_hba.conf usa
+# scram-sha-256 para la subred. Sin esta regla el sync de la notebook falla con
+# "responde ping pero no el puerto Postgres 5432".
 $reglas = @(
     @{ Nombre = 'Oga Pora - Frontend (5173)'; Puerto = 5173 },
-    @{ Nombre = 'Oga Pora - Backend (8000)';  Puerto = 8000 }
+    @{ Nombre = 'Oga Pora - Backend (8000)';  Puerto = 8000 },
+    @{ Nombre = 'Oga Pora - PostgreSQL (5432)'; Puerto = 5432 }
 )
 foreach ($r in $reglas) {
     $existente = Get-NetFirewallRule -DisplayName $r.Nombre -ErrorAction SilentlyContinue
