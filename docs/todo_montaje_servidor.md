@@ -130,6 +130,18 @@ proyecto, doble clic, pide Administrador): categoría de red privada, puertos
 ### PC Depósito
 - [ ] Chrome + acceso directo, usuario `deposito`
 
+### PC 2 (Salón Comercial) — terminal simple, armada el 21/08/2026
+- [x] Chrome ya estaba instalado, no requirió instalación
+- [x] Conectividad al servidor verificada desde esta PC: `ping 192.168.100.250`
+      OK, `Test-NetConnection -Port 5173` y `-Port 8000` con
+      `TcpTestSucceeded : True`, frontend responde 200 en
+      `http://192.168.100.250:5173`
+- [x] Acceso directo de escritorio creado (Chrome en modo app,
+      `--app=http://192.168.100.250:5173`), sin instalación local de Git/Node
+- [ ] ⚠️ **Pendiente en el servidor:** `http://192.168.100.250:8000/admin/`
+      devolvió **error 500** al probarlo desde esta PC el 21/08/2026 — revisar
+      logs de Django en el servidor antes de dar el puesto por cerrado
+
 ### Tablets (2) — `docs/pwa_tablet.md`
 - [ ] `chrome://flags/#unsafely-treat-insecure-origin-as-secure` con la IP
       nueva → Enabled → Relaunch
