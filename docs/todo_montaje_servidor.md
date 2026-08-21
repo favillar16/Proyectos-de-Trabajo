@@ -138,9 +138,17 @@ proyecto, doble clic, pide Administrador): categoría de red privada, puertos
       `http://192.168.100.250:5173`
 - [x] Acceso directo de escritorio creado (Chrome en modo app,
       `--app=http://192.168.100.250:5173`), sin instalación local de Git/Node
-- [ ] ⚠️ **Pendiente en el servidor:** `http://192.168.100.250:8000/admin/`
-      devolvió **error 500** al probarlo desde esta PC el 21/08/2026 — revisar
-      logs de Django en el servidor antes de dar el puesto por cerrado
+- [x] ✅ **Resuelto el 21/08/2026:** el error 500 de
+      `http://192.168.100.250:8000/admin/` era que nunca se había corrido
+      `collectstatic` en este servidor. `STATICFILES_STORAGE` es el de
+      WhiteNoise (`CompressedManifestStaticFilesStorage`), que necesita el
+      manifiesto `staticfiles.json`; sin él, `{% static %}` en las plantillas
+      del admin levanta `ValueError: Missing staticfiles manifest entry for
+      'admin/css/base.css'` → 500. Se corrió `collectstatic` (161 archivos,
+      463 post-procesados) y se reinició el sistema. Verificado:
+      `/admin/login/` responde 200 y los CSS del admin también.
+      `setup.bat` ahora lo corre solo, así no vuelve a pasar en otra máquina.
+      El puesto del Salón Comercial queda cerrado.
 
 ### Tablets (2) — `docs/pwa_tablet.md`
 - [ ] `chrome://flags/#unsafely-treat-insecure-origin-as-secure` con la IP
@@ -262,7 +270,14 @@ alto:
    el `if` propio: ahora `config/urls.py` sirve `/media/` con una ruta
    explícita a `django.views.static.serve`, sin depender de `DEBUG`. Si
    alguna vez las fotos vuelven a dar 404 con `DEBUG=False`, mirar ahí.
-6. **La impresora tiene que estar instalada para el mismo usuario de Windows
+6. **Sin `collectstatic`, el `/admin/` de Django tira 500 con `DEBUG=False`.**
+   No es un problema de permisos ni de red: `STATICFILES_STORAGE` es el
+   Manifest de WhiteNoise y necesita `staticfiles.json`. El síntoma engaña,
+   porque el resto del sistema (API, frontend, fotos) funciona perfecto. Lo
+   resuelve `python manage.py collectstatic --noinput` + reiniciar
+   `iniciar.bat` (WhiteNoise indexa los estáticos al arrancar). `setup.bat` ya
+   lo hace en instalaciones nuevas.
+7. **La impresora tiene que estar instalada para el mismo usuario de Windows
    que corre `iniciar.bat`.** Si se agrega desde otra cuenta, Django no la
    encuentra.
 

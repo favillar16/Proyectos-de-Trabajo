@@ -52,6 +52,12 @@ echo   Aplicando migraciones...
 python manage.py migrate
 echo   Creando categorias de gasto base...
 python manage.py seed_categorias
+echo   Recolectando archivos estaticos (admin de Django)...
+rem Sin esto, con DEBUG=False el /admin/ responde 500: el storage de
+rem WhiteNoise es de tipo Manifest y necesita staticfiles.json, que lo genera
+rem este comando. Paso al que le faltaba: se descubrio el 21/08/2026 armando
+rem la PC del Salon Comercial.
+python manage.py collectstatic --noinput
 echo.
 echo   Ahora se creara el usuario administrador del sistema.
 echo   Ingrese nombre de usuario y contrasena cuando se solicite:

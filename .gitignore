@@ -38,3 +38,6 @@ docs/*.zip
 # Nunca deben entrar al repositorio: el historial de git es permanente.
 credenciales_servidor.txt
 sync_notebook/credenciales_sync.txt
+
+# Estaticos recolectados por collectstatic: se regeneran, no son fuente
+backend/staticfiles/
