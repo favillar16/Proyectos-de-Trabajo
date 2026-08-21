@@ -4,9 +4,11 @@ Checklist de trabajo pendiente para el día que se arme la PC servidor
 definitiva del local, con las decisiones que quedaron abiertas y el contexto
 necesario para retomarlo sin volver a investigar.
 
-**Última actualización:** 20/08/2026
-**Estado general:** sistema funcionando en el equipo de armado; falta
-trasladarlo al servidor definitivo y armar los puestos.
+**Última actualización:** 21/08/2026
+**Estado general:** servidor definitivo (`OGAPORA`) instalado y con los datos
+migrados y verificados; falta la configuración de red del local, rotar las
+contraseñas y armar los 5 puestos restantes. El checklist por equipo está en
+`docs/plan_manana_local.md`.
 
 ---
 
@@ -21,7 +23,7 @@ Lo que ya está hecho y probado:
 | Herramientas de respaldo | ✅ `respaldo\respaldo.bat` / `restaurar.bat`, probadas de punta a punta |
 | Sync de la notebook | ✅ incluye fotos desde el 20/08/2026 |
 | Documentación de despliegue | ✅ ver "Referencias" al final |
-| **PC servidor definitiva** | ❌ **pendiente — todo este documento** |
+| **PC servidor definitiva** | ✅ instalada y migrada el 20–21/08/2026 (`OGAPORA`, ex `DESKTOP-Q9T1TPI`) |
 | **Respaldo automático** | ❌ **pendiente + decisión abierta (§7)** |
 
 Datos de la base al momento de escribir esto (sirven para verificar que la
@@ -35,32 +37,32 @@ fotos en disco = 338 archivos, 34,9 MB
 
 ---
 
-## 1. Antes de ir al local
+## 1. Antes de ir al local ✅ (hecho el 20/08/2026)
 
-- [ ] Confirmar que la PC servidor tiene: Windows 10/11, disco con espacio
+- [x] Confirmar que la PC servidor tiene: Windows 10/11, disco con espacio
       para la base + fotos + respaldos, y puerto de red o WiFi estable
-- [ ] Llevar un pendrive de al menos 1 GB para el traslado. **Si no hay
+- [x] Llevar un pendrive de al menos 1 GB para el traslado. **Si no hay
       pendrive:** las fotos van por el repositorio
       (`respaldo\subir_fotos.bat`) y solo el `base_datos.sql` (~333 KB)
       por correo/Drive — `docs/respaldo_y_migracion.md` §3.5
-- [ ] Llevar el instalador de Python 3.11, Node 20 LTS y PostgreSQL 15 por
+- [x] Llevar el instalador de Python 3.11, Node 20 LTS y PostgreSQL 15 por
       si la conexión del local es lenta
-- [ ] **Hacer un respaldo fresco del equipo de armado el mismo día**, no uno
+- [x] **Hacer un respaldo fresco del equipo de armado el mismo día**, no uno
       viejo: `respaldo\respaldo.bat D:\`
 
 ---
 
-## 2. Instalación base en la PC servidor
+## 2. Instalación base en la PC servidor ✅ (hecho el 20/08/2026)
 
 Guía completa: `docs/instalacion.md`
 
-- [ ] Instalar Python 3.11, Node 20 LTS, PostgreSQL 15
-- [ ] Agregar `C:\Program Files\PostgreSQL\15\bin` al PATH
-- [ ] Copiar la carpeta del proyecto
-- [ ] Crear base y usuario en PostgreSQL
-- [ ] Armar `backend\.env` desde `backend\.env.example`
-- [ ] Correr `setup.bat`
-- [ ] Dar permiso de crear bases al usuario de la app (lo necesita el
+- [x] Instalar Python 3.11, Node 20 LTS, PostgreSQL 15
+- [x] Agregar `C:\Program Files\PostgreSQL\15\bin` al PATH
+- [x] Copiar la carpeta del proyecto
+- [x] Crear base y usuario en PostgreSQL
+- [x] Armar `backend\.env` desde `backend\.env.example`
+- [x] Correr `setup.bat`
+- [x] Dar permiso de crear bases al usuario de la app (lo necesita el
       restaurador): `ALTER ROLE ceramica_user CREATEDB;`
 
 > El usuario admin que pide `setup.bat` se crea y después desaparece: el
@@ -69,17 +71,17 @@ Guía completa: `docs/instalacion.md`
 
 ---
 
-## 3. Migrar los datos
+## 3. Migrar los datos ✅ (hecho el 21/08/2026, conteos verificados exactos)
 
 Guía completa: `docs/respaldo_y_migracion.md`
 
-- [ ] Copiar la carpeta `respaldo_AAAAMMDD_HHMMSS` del pendrive
+- [x] Copiar la carpeta `respaldo_AAAAMMDD_HHMMSS` del pendrive
       (sin pendrive: `git clone` trae las fotos y se restaura solo el
       `base_datos.sql` recibido aparte — §3.5 de esa guía)
-- [ ] Con el sistema cerrado: `respaldo\restaurar.bat D:\respaldo_...`
+- [x] Con el sistema cerrado: `respaldo\restaurar.bat D:\respaldo_...`
       (pide escribir `SI`)
-- [ ] `iniciar.bat` y entrar con un usuario **del equipo de armado**
-- [ ] Verificar contra la tabla de arriba: 393 productos, y que las fotos
+- [x] `iniciar.bat` y entrar con un usuario **del equipo de armado**
+- [x] Verificar contra la tabla de arriba: 393 productos, y que las fotos
       se vean (no alcanza con que estén los productos)
 
 ---
@@ -88,14 +90,27 @@ Guía completa: `docs/respaldo_y_migracion.md`
 
 Guía completa: `docs/verificacion_red.md`
 
-- [ ] **Reservar la IP en el router** (DHCP → reserva por MAC).
+Casi todo esto lo hace de una sola pasada `preparar_red.bat` (raíz del
+proyecto, doble clic, pide Administrador): categoría de red privada, puertos
+5173/8000 en el firewall, suspensión desactivada, `backend\media` compartida y
+`pg_hba.conf` con la subred del local.
+
+- [x] IP definitiva: `192.168.100.16` (Wi-Fi, red `OGA PORA`, DHCP)
+- [x] Nombre de red de la PC (`hostname`): `OGAPORA`
+- [x] MAC del adaptador Wi-Fi: `10-5A-95-76-C9-20`
+- [ ] **Reservar esa IP en el router** (DHCP → reserva por MAC).
       `guia_instalacion_dispositivos.md` §2.1. Es lo que evita tener que
       reconfigurar todos los dispositivos si el router se reinicia.
-- [ ] Anotar acá la IP definitiva: `____________________`
-- [ ] Anotar el nombre de red de la PC (`hostname`): `____________________`
-- [ ] Marcar la red del local como **privada**, no pública
-- [ ] Abrir los puertos 5173 y 8000 en el firewall (§3 de esa guía)
-- [ ] Verificar desde otro equipo: `Test-NetConnection <IP> -Port 8000`
+- [ ] Marcar la red del local como **privada**, no pública (`preparar_red.bat`)
+- [ ] Abrir los puertos 5173 y 8000 en el firewall (`preparar_red.bat`)
+- [ ] **Desactivar la suspensión del servidor** (`preparar_red.bat`). Venía
+      configurado para dormirse a los 45 minutos de inactividad: dormido, el
+      sistema deja de existir para caja, depósito y tablets.
+- [ ] Verificar desde otro equipo: `Test-NetConnection 192.168.100.16 -Port 8000`
+
+> El servidor queda conectado por **Wi-Fi** (2,4 GHz, 802.11n), no por cable.
+> Es el único punto de falla de todo el local: si alguna vez se puede pasar a
+> Ethernet, conviene.
 
 ---
 
@@ -132,6 +147,12 @@ Guía completa: `docs/verificacion_red.md`
 
 ## 6. Verificación final
 
+- [ ] **Cambiar las contraseñas de `admin`, `cajero`, `deposito` y `vendedor`**.
+      Al 21/08/2026 los cuatro siguen con `demo2025`, la credencial de demo
+      heredada del equipo de armado. En el servidor, una por una:
+      `cd backend` → `venv\Scripts\activate` →
+      `python manage.py changepassword admin`. Dejarle las nuevas a la
+      propietaria por escrito.
 - [ ] Correr el `docs/checklist_entrega.md` (59 casos funcionales)
 - [ ] Prueba de tiempo real entre dispositivos: abrir un pedido en la
       tablet, confirmar el pago en la caja, ver que la tablet cambia sola
@@ -214,8 +235,12 @@ alto:
 4. **Arrancar con `daphne`, no con `runserver`.** `runserver` sirve la API
    pero no soporta WebSocket: el síntoma es que los datos solo se actualizan
    al recargar. Usar siempre `iniciar.bat`.
-5. **`DEBUG=False` deja de servir `/media/`.** Los datos cargan pero las
-   fotos no. Django solo sirve media en modo debug (`config/urls.py`).
+5. **`DEBUG=False` deja de servir `/media/`** — ✅ **resuelto** el 21/08/2026
+   (commit `fec3ded`). El helper `django.conf.urls.static.static()` tiene un
+   `if not settings.DEBUG: return []` adentro, así que no alcanzaba con sacar
+   el `if` propio: ahora `config/urls.py` sirve `/media/` con una ruta
+   explícita a `django.views.static.serve`, sin depender de `DEBUG`. Si
+   alguna vez las fotos vuelven a dar 404 con `DEBUG=False`, mirar ahí.
 6. **La impresora tiene que estar instalada para el mismo usuario de Windows
    que corre `iniciar.bat`.** Si se agrega desde otra cuenta, Django no la
    encuentra.
@@ -239,6 +264,7 @@ alto:
 
 | Documento | Para qué |
 |---|---|
+| `instructivo_entrega_final.md` | Acciones manuales paso a paso para cerrar la entrega |
 | `guia_instalacion_dispositivos.md` | Topología de los 6 equipos y orden de instalación |
 | `instalacion.md` | Instalación completa del servidor |
 | `respaldo_y_migracion.md` | Respaldo y traslado a otra PC |

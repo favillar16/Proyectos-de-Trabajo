@@ -27,3 +27,5 @@ sync_notebook/estado/
 # Respaldos del sistema (base de datos + fotos de productos). Son datos del
 # negocio, no código — ver docs/respaldo_y_migracion.md
 respaldos/
+# Respaldo de la base enviado fuera del repo para el traslado (datos del negocio)
+docs/*.zip

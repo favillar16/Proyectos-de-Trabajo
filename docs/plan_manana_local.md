@@ -18,7 +18,7 @@ verificación final en el local.
 
 ## Ya hecho (no repetir)
 
-Completado el 20–21/08/2026 en la PC servidor (`DESKTOP-Q9T1TPI`):
+Completado el 20–21/08/2026 en la PC servidor (`OGAPORA`, antes `DESKTOP-Q9T1TPI`):
 instalación base, migración de datos (393 productos, 425 variantes, 338
 fotos, 5 usuarios, 414 movimientos — verificado exacto), fix del bug de
 fotos con `DEBUG=False` (commit `fec3ded`, ya en `main`). Detalle completo
@@ -28,30 +28,38 @@ en `docs/todo_montaje_servidor.md`.
 
 ## 1. PC Servidor (esto primero, todo depende de esto)
 
-- [ ] Marcar la red WiFi como **Privada**, no Pública (PowerShell como
-      Administrador):
-      ```powershell
-      Set-NetConnectionProfile -InterfaceAlias "Wi-Fi" -NetworkCategory Private
-      ```
-- [ ] Abrir los puertos del firewall (misma ventana de Administrador):
-      ```powershell
-      New-NetFirewallRule -DisplayName "Oga Pora - Frontend (5173)" -Direction Inbound -Protocol TCP -LocalPort 5173 -Action Allow -Profile Private
-      New-NetFirewallRule -DisplayName "Oga Pora - Backend (8000)" -Direction Inbound -Protocol TCP -LocalPort 8000 -Action Allow -Profile Private
-      ```
+- [ ] **Doble clic en `preparar_red.bat`** (en la raíz del proyecto) y aceptar
+      el aviso de Administrador. Deja hecho de una sola vez:
+      red del local marcada como **Privada**, puertos **5173** y **8000**
+      abiertos en el firewall, **suspensión desactivada** (un servidor
+      dormido deja sin sistema a caja, depósito y tablets), carpeta
+      `backend\media` compartida en solo lectura para la notebook, y
+      PostgreSQL aceptando conexiones de `192.168.100.0/24`.
+      Es idempotente: se puede volver a correr sin romper nada.
 - [ ] **Reservar la IP de esta PC en el router** (DHCP → reserva por MAC) —
       `guia_instalacion_dispositivos.md` §2. Evita tener que reconfigurar
       todos los demás equipos si el router se reinicia.
-- [ ] Anotar acá la IP definitiva: `____________________`
-- [ ] Anotar el hostname (`hostname` en PowerShell): `____________________`
-- [ ] **Cambiar la contraseña del usuario `admin`** — hoy es `demo2025`
+      MAC del Wi-Fi: `10-5A-95-76-C9-20`
+- [x] IP definitiva: `192.168.100.16` (Wi-Fi, red `OGA PORA`) — ya reflejada
+      en `backend\.env`. Falta solo la reserva en el router (punto de arriba).
+- [x] Hostname: `OGAPORA` (la PC se renombró; antes era `DESKTOP-Q9T1TPI`)
+- [ ] **Cambiar las contraseñas de los usuarios** — al 21/08/2026 `admin`,
+      `vendedor`, `cajero` y `deposito` **siguen todos con `demo2025`**
       (la credencial de demo, heredada sin rotar del equipo de armado). No
-      operar el negocio real con esa contraseña puesta.
+      se puede entregar el negocio así. Una por una, en el servidor:
+      ```
+      cd backend
+      venv\Scripts\activate
+      python manage.py changepassword admin
+      ```
+      (repetir con `cajero`, `deposito` y `vendedor`). Anotar las nuevas en
+      un lugar seguro y dejárselas a la propietaria.
 - [ ] Correr `iniciar.bat` y confirmar que abre sin errores en las dos
       ventanas (daphne + Vite)
 - [ ] Desde OTRO equipo en la misma red, probar:
       ```powershell
-      Test-NetConnection -ComputerName <IP-SERVIDOR> -Port 5173
-      Test-NetConnection -ComputerName <IP-SERVIDOR> -Port 8000
+      Test-NetConnection -ComputerName 192.168.100.16 -Port 5173
+      Test-NetConnection -ComputerName 192.168.100.16 -Port 8000
       ```
       Los dos tienen que dar `TcpTestSucceeded : True`. Si falla, ver
       `docs/verificacion_red.md` (capas 1 y 2).
@@ -66,9 +74,9 @@ PostgreSQL, backend, frontend — igual que `docs/instalacion.md`), porque
 tiene que poder mostrar datos aunque salga del local sin conexión.
 
 **En el servidor (una sola vez):**
-- [ ] Habilitar conexiones remotas de PostgreSQL: `listen_addresses = '*'`
-      en `postgresql.conf` + línea para la subred del local en
-      `pg_hba.conf` (`sync_notebook.md` §1.1). Reiniciar el servicio.
+- [x] Conexiones remotas de PostgreSQL: `listen_addresses = '*'` ya estaba
+      puesto y la línea de `192.168.100.0/24` en `pg_hba.conf` la agrega
+      `preparar_red.bat` (punto 1). Verificar que quedó antes de seguir.
 - [ ] Crear el rol de solo lectura para el sync:
       ```sql
       CREATE ROLE notebook_sync WITH LOGIN PASSWORD 'elegir-una-contraseña-fuerte';
@@ -76,9 +84,8 @@ tiene que poder mostrar datos aunque salga del local sin conexión.
       GRANT pg_read_all_data TO notebook_sync;
       ```
       Anotar la contraseña elegida — se usa abajo.
-- [ ] Compartir `backend\media` en red (solo lectura) para que las fotos no
-      salgan rotas en la notebook (`sync_notebook.md` §1.3). Anotar la ruta
-      resultante, ej. `\\DESKTOP-Q9T1TPI\media`.
+- [x] `backend\media` compartida en solo lectura por `preparar_red.bat`
+      (`sync_notebook.md` §1.3). Ruta a usar en la notebook: `\\OGAPORA\media`.
 
 **En la notebook:**
 - [ ] Instalación completa (Python 3.11, Node 20 LTS, PostgreSQL 15,
@@ -108,12 +115,12 @@ Instrucciones completas y diagnóstico: `docs/pwa_tablet.md`.
 
 - [ ] **Tablet 1:**
   - [ ] `chrome://flags/#unsafely-treat-insecure-origin-as-secure` →
-        agregar `http://<IP-SERVIDOR>:5173` → Enabled → Relaunch
-  - [ ] Entrar a `http://<IP-SERVIDOR>:5173`, confirmar que carga el login
+        agregar `http://192.168.100.16:5173` → Enabled → Relaunch
+  - [ ] Entrar a `http://192.168.100.16:5173`, confirmar que carga el login
   - [ ] Menú (⋮) → **Instalar aplicación** → confirmar
   - [ ] Abrir el ícono "Oga Porã" instalado y confirmar que carga igual
         que en Chrome
-  - [ ] Probar una vez `http://<HOSTNAME-SERVIDOR>.local:5173` (plan B) —
+  - [ ] Probar una vez `http://OGAPORA.local:5173` (plan B) —
         anotar si esta red lo resuelve o no, para no perder tiempo con
         esto el día que haga falta de apuro
 - [ ] **Tablet 2:** repetir los mismos 5 pasos
@@ -124,8 +131,8 @@ Instrucciones completas y diagnóstico: `docs/pwa_tablet.md`.
 
 Checklist completo con el detalle de la impresora: `docs/pc_caja.md`.
 
-- [ ] Confirmar red: `Test-NetConnection -ComputerName <IP-SERVIDOR> -Port 5173`
-- [ ] Chrome → `http://<IP-SERVIDOR>:5173` → iniciar sesión con usuario
+- [ ] Confirmar red: `Test-NetConnection -ComputerName 192.168.100.16 -Port 5173`
+- [ ] Chrome → `http://192.168.100.16:5173` → iniciar sesión con usuario
       **`cajero`**
 - [ ] Crear acceso directo "Abrir como ventana" (menú ⋮ → Más
       herramientas → Crear acceso directo)
@@ -151,8 +158,8 @@ Checklist completo con el detalle de la impresora: `docs/pc_caja.md`.
 
 ## 5. PC Depósito — ~2 minutos
 
-- [ ] Confirmar red: `Test-NetConnection -ComputerName <IP-SERVIDOR> -Port 5173`
-- [ ] Chrome → `http://<IP-SERVIDOR>:5173` → iniciar sesión con usuario
+- [ ] Confirmar red: `Test-NetConnection -ComputerName 192.168.100.16 -Port 5173`
+- [ ] Chrome → `http://192.168.100.16:5173` → iniciar sesión con usuario
       **`deposito`**
 - [ ] Crear acceso directo "Abrir como ventana"
 
@@ -189,6 +196,7 @@ Checklist completo con el detalle de la impresora: `docs/pc_caja.md`.
 
 | Documento | Para qué |
 |---|---|
+| `instructivo_entrega_final.md` | Acciones manuales paso a paso para cerrar la entrega |
 | `guia_instalacion_dispositivos.md` | Topología de los 6 equipos y orden completo |
 | `sync_notebook.md` | Detalle completo del espejo de la notebook |
 | `pwa_tablet.md` | Instalación y diagnóstico de tablets |
