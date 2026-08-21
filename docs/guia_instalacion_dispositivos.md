@@ -10,6 +10,10 @@ documentos específicos (`instalacion.md`, `pwa_tablet.md`,
 > falta y las decisiones abiertas está en
 > **`docs/todo_montaje_servidor.md`**. Este documento explica *cómo*; ese
 > otro lleva el registro de *qué queda pendiente*.
+>
+> 📅 **Para el día de armar el resto del local** (con el servidor ya
+> migrado), el checklist puntual dividido por equipo está en
+> **`docs/plan_manana_local.md`**.
 
 ---
 
