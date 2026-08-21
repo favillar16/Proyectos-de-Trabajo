@@ -27,17 +27,16 @@ Hay que decirle a Chrome, una sola vez, que confíe en esa dirección:
 1. En la tablet, abrir Chrome y escribir en la barra de direcciones:
    `chrome://flags/#unsafely-treat-insecure-origin-as-secure`
 2. En el campo de texto, escribir la dirección exacta del servidor, por ejemplo:
-   `http://192.168.0.10:5173`
-   *(la IP real se obtiene en la PC servidor con `ipconfig`, buscando
-   "Dirección IPv4" — es la misma que ya se usa hoy para abrir el sistema
-   desde la tablet)*
+   `http://192.168.100.250:5173`
+   *(esa es la IP fija del servidor del local desde el 21/08/2026. Escribirla
+   exacta: con `http://` adelante y con el `:5173` al final.)*
 3. Cambiar el desplegable de "Disabled" a **"Enabled"**
 4. Tocar **"Relaunch"** (Chrome se reinicia)
 
-Si la IP de la PC servidor cambia (por ejemplo, se reinicia el router y el
-DHCP asigna otra), hay que repetir este paso con la nueva IP. Para evitarlo,
-lo ideal es reservar esa IP en el router (IP fija por MAC) antes de la
-puesta a prueba — ver `guia_instalacion_dispositivos.md` §2.
+Si la IP de la PC servidor cambia hay que repetir este paso con la nueva.
+En el local eso ya está resuelto: el servidor tiene **IP fija**
+`192.168.100.250`, puesta con `fijar_ip.bat` en la propia PC (el panel del
+router no es accesible). Ver `docs/instructivo_entrega_final.md` §2.
 
 ## 🔧 Recuperación rápida si la IP cambió
 
@@ -46,8 +45,8 @@ error de conexión, aunque la PC servidor esté prendida y con `iniciar.bat`
 corriendo. No hace falta desinstalar ni reinstalar la app — con esto alcanza:
 
 1. En la PC servidor, conseguir la IP actual: `ipconfig` → "Dirección IPv4".
-   *(Si cambió, considerar reservarla en el router para que no vuelva a
-   pasar — `guia_instalacion_dispositivos.md` §2.)*
+   Debería seguir siendo `192.168.100.250`: es fija. Si cambió, correr de
+   nuevo `fijar_ip.bat` en el servidor.
 2. En la tablet, repetir el paso de Chrome flags de arriba con la IP nueva:
    `chrome://flags/#unsafely-treat-insecure-origin-as-secure` → agregar
    `http://IP-NUEVA:5173` → Enabled → Relaunch.
@@ -56,7 +55,7 @@ corriendo. No hace falta desinstalar ni reinstalar la app — con esto alcanza:
    para confirmar que carga.
 4. Volver a la pantalla de inicio y abrir el ícono "Oga Porã" — con el
    origen ya confiado, debería cargar normalmente. Si sigue sin andar,
-   probar `http://DESKTOP-UAIGET9.local:5173` (ver plan B en
+   probar `http://OGAPORA.local:5173` (ver plan B en
    `guia_instalacion_dispositivos.md`) o, como último recurso, desinstalar
    el ícono viejo (mantener presionado → Eliminar) y reinstalar desde cero
    (§"Instalar la app" arriba) con la IP nueva.
@@ -65,8 +64,8 @@ Total: ~2 minutos por tablet.
 
 ## Instalar la app
 
-1. En la tablet, abrir Chrome y entrar a `http://IP-DE-LA-PC:5173` (la misma
-   dirección configurada arriba)
+1. En la tablet, abrir Chrome y entrar a `http://192.168.100.250:5173` (la
+   misma dirección configurada arriba)
 2. Tocar el menú (⋮) → **"Instalar aplicación"** (o el banner que aparece solo)
 3. Confirmar. Queda un ícono "Oga Porã" en la pantalla de inicio, que abre la
    app en pantalla completa, sin navegador visible
