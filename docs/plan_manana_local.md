@@ -78,13 +78,11 @@ tiene que poder mostrar datos aunque salga del local sin conexión.
 - [x] Conexiones remotas de PostgreSQL: `listen_addresses = '*'` ya estaba
       puesto y la línea de `192.168.100.0/24` en `pg_hba.conf` la agrega
       `preparar_red.bat` (punto 1). Verificar que quedó antes de seguir.
-- [ ] Crear el rol de solo lectura para el sync:
-      ```sql
-      CREATE ROLE notebook_sync WITH LOGIN PASSWORD 'elegir-una-contraseña-fuerte';
-      GRANT CONNECT ON DATABASE ceramica_db TO notebook_sync;
-      GRANT pg_read_all_data TO notebook_sync;
-      ```
-      Anotar la contraseña elegida — se usa abajo.
+- [ ] Crear el rol de solo lectura para el sync: doble clic en
+      `sync_notebook\crear_rol_sync.bat` (Administrador). Genera la
+      contraseña, verifica que el rol lea y no escriba, y la deja lista para
+      pegar en `sync_notebook\credenciales_sync.txt`. Funciona incluso sin
+      la contraseña de `postgres` (opción 2 del script).
 - [x] Fotos: **nada que configurar**. Desde el 21/08/2026 el sync las baja
       por HTTP de `http://192.168.100.250:8000/media/` (`sync_notebook.md`
       §1.3). Dejar `SERVIDOR_MEDIA_UNC` y `SERVIDOR_MEDIA_URL` vacíos en

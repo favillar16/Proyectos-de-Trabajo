@@ -56,8 +56,24 @@ habilitar la conexión desde la red local:
 
 No usar el usuario normal de la app (`ceramica_user`) para esto — la
 notebook va a guardar esta contraseña en un archivo local, así que conviene
-que ese usuario **no pueda escribir nada**. Ejecutar una vez, con `psql`
-como superusuario:
+que ese usuario **no pueda escribir nada**.
+
+**Doble clic en `sync_notebook\crear_rol_sync.bat`** (pide Administrador).
+Genera una contraseña, crea el rol, verifica que pueda leer y que **no**
+pueda escribir, y deja el bloque listo para pegar en
+`sync_notebook\credenciales_sync.txt` (ese archivo está ignorado por git).
+
+Para entrar como superusuario ofrece dos caminos:
+
+1. **Con la contraseña de `postgres`** — `psql` la pide en el momento.
+2. **Sin ella** (perdida u olvidada): antepone temporalmente una línea
+   `trust` para `127.0.0.1` en `pg_hba.conf`, reinicia PostgreSQL, crea el
+   rol y **restaura el archivo original** en un `finally`, pase lo que pase.
+   Solo afecta conexiones desde la propia PC servidor y dura unos segundos.
+   Igual deja una copia `.bak_<fecha>` del `pg_hba.conf` original.
+
+Si se prefiere hacerlo a mano, es lo mismo que correr con `psql` como
+superusuario:
 
 ```sql
 CREATE ROLE notebook_sync WITH LOGIN PASSWORD 'elegir-una-contraseña-fuerte';

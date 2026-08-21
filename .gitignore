@@ -32,3 +32,6 @@ docs/*.zip
 
 # Accesos directos de Windows: dependen de la ruta de cada maquina
 *.lnk
+
+# Contrasena del rol de solo lectura del sync, generada en cada servidor
+sync_notebook/credenciales_sync.txt

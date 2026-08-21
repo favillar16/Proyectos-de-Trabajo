@@ -124,33 +124,37 @@ python manage.py changepassword vendedor
 
 ---
 
-## Paso 4 — Crear el usuario de la notebook (5 minutos)
+## Paso 4 — Crear el usuario de la notebook (2 minutos)
 
-Solo si hoy se va a configurar la notebook de la propietaria. Necesitás la
-contraseña del usuario `postgres` (la que se puso al instalar PostgreSQL).
+Solo si hoy se va a configurar la notebook de la propietaria.
 
-```powershell
-& "C:\Program Files\PostgreSQL\15\bin\psql.exe" -U postgres -d ceramica_db
-```
+**Doble clic en `sync_notebook\crear_rol_sync.bat`** → Administrador → Sí.
 
-Y dentro de `psql`, pegar (cambiando la contraseña):
+Crea el rol `notebook_sync`, que puede **leer** toda la base y **no puede
+escribir nada** (el sync nunca debe entrar con el usuario de la app: la
+notebook es un espejo de solo lectura). El script:
 
-```sql
-CREATE ROLE notebook_sync WITH LOGIN PASSWORD 'elegir-una-contrasena-fuerte';
-GRANT CONNECT ON DATABASE ceramica_db TO notebook_sync;
-GRANT pg_read_all_data TO notebook_sync;
-\q
-```
+- genera la contraseña solo, alfanumérica, para que se pueda pegar sin
+  problemas de comillas;
+- verifica que el rol pueda leer y que efectivamente no pueda escribir;
+- deja todo listo para pegar en `sync_notebook\credenciales_sync.txt`, en
+  esa misma carpeta.
 
-Anotar esa contraseña: se usa en `sync_notebook/config.env` de la notebook,
-junto con `SERVIDOR_HOST=192.168.100.250`. Las fotos **no** necesitan
-configuración: el sync las baja por HTTP del servidor (dejar
-`SERVIDOR_MEDIA_UNC` y `SERVIDOR_MEDIA_URL` vacíos). El detalle completo está
-en `docs/sync_notebook.md`.
+Va a preguntar cómo entrar como superusuario:
 
-⚠️ En la notebook tienen que estar **los dos** archivos `.ps1` de
-`sync_notebook/`: `sync_notebook.ps1` y `fotos_http.ps1`. Si se traen con
-`git pull` vienen solos.
+- **Opción 1** — tenés la contraseña de `postgres`: la pide `psql` y listo.
+- **Opción 2** — no la tenés: habilita el acceso local sin contraseña unos
+  segundos (solo desde esta misma PC), crea el rol y deja `pg_hba.conf`
+  exactamente como estaba, con copia de seguridad.
+
+Después, en la notebook, pegar ese bloque en `sync_notebook\config.env` y
+completar solo los `LOCAL_DB_*` con los datos del PostgreSQL de la notebook.
+Las fotos no necesitan configuración: se bajan por HTTP (dejar
+`SERVIDOR_MEDIA_UNC` y `SERVIDOR_MEDIA_URL` vacíos).
+
+⚠️ En la notebook tienen que estar **los tres** `.ps1` de `sync_notebook/`:
+`sync_notebook.ps1`, `fotos_http.ps1` y (solo si se corre desde ahí)
+`crear_rol_sync.ps1`. Con `git pull` vienen solos.
 
 ---
 
