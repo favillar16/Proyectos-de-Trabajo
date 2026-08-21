@@ -85,8 +85,10 @@ tiene que poder mostrar datos aunque salga del local sin conexión.
       GRANT pg_read_all_data TO notebook_sync;
       ```
       Anotar la contraseña elegida — se usa abajo.
-- [x] `backend\media` compartida en solo lectura por `preparar_red.bat`
-      (`sync_notebook.md` §1.3). Ruta a usar en la notebook: `\\OGAPORA\media`.
+- [x] Fotos: **nada que configurar**. Desde el 21/08/2026 el sync las baja
+      por HTTP de `http://192.168.100.250:8000/media/` (`sync_notebook.md`
+      §1.3). Dejar `SERVIDOR_MEDIA_UNC` y `SERVIDOR_MEDIA_URL` vacíos en
+      `config.env`.
 
 **En la notebook:**
 - [ ] Instalación completa (Python 3.11, Node 20 LTS, PostgreSQL 15,

@@ -67,35 +67,41 @@ GRANT pg_read_all_data TO notebook_sync;
 
 Anotar esa contraseña — se usa en el paso 2.2, en la notebook.
 
-### 1.3 Compartir la carpeta de fotos (para que las imágenes no salgan rotas)
+### 1.3 Fotos de productos — no hay nada que configurar
 
 La base de datos guarda de cada foto solo la **ruta** del archivo
 (`MEDIA_ROOT = backend/media`), nunca la imagen en sí. Si se sincroniza solo
 la base, la notebook termina con el catálogo completo y **todos los
-productos con la foto rota**, porque los archivos viven únicamente en la PC
-servidor.
+productos con la foto rota**.
 
-Para evitarlo hay que compartir esa carpeta una sola vez en el servidor:
+Desde el 21/08/2026 el sync **baja las fotos por HTTP** del mismo servidor
+que ya sirve `/media/` para las tablets. No hay que compartir carpetas, ni
+crear usuarios de Windows, ni tocar permisos: si `SERVIDOR_HOST` está bien,
+las fotos llegan solas.
 
-1. En la PC servidor, ir a la carpeta del proyecto → `backend\media`.
-2. Clic derecho → **Propiedades** → pestaña **Uso compartido** → **Uso
-   compartido avanzado…**
-3. Tildar **"Compartir esta carpeta"**, dejar el nombre del recurso como
-   `media`.
-4. **Permisos** → dejar solo **Leer** para el usuario que vaya a usar la
-   notebook (o para `Todos`, si la red del local es cerrada). La notebook
-   nunca necesita escribir acá.
-5. Anotar la ruta de red resultante, por ejemplo `\\DESKTOP-UAIGET9\media`
-   — se usa en el paso 2.2.
+> **Por qué se dejó de usar la carpeta compartida.** El proyecto vive dentro
+> de `C:\Users\<usuario>` en la PC servidor, y el ACL NTFS de esa carpeta
+> solo incluye a `SYSTEM`, `Administradores` y al dueño del perfil.
+> Compartir `backend\media` con permiso "Todos: Leer" **no alcanza**: NTFS
+> manda sobre el permiso del recurso compartido, y además Windows 11 bloquea
+> el acceso invitado por SMB. Desde la notebook, que entra con otra cuenta de
+> Windows, la carpeta contesta "acceso denegado" — y como las fotos son
+> opcionales a propósito, el sync lo registraba como una advertencia y
+> seguía: catálogo completo, 338 fotos rotas, y nadie se entera hasta que
+> alguien abre el catálogo en la notebook. Bajarlas por HTTP saca del medio
+> toda esa capa.
 
-Es opcional: si se deja sin configurar, el sync de datos funciona igual y
-solo se pierden las imágenes.
+La carpeta compartida se sigue aceptando (`SERVIDOR_MEDIA_UNC` en
+`config.env`): si está configurada **y** accesible, el sync la prefiere
+porque la primera copia es más rápida. Si no responde, cae solo al HTTP. Lo
+normal es dejar ese campo vacío.
 
 ### 1.4 Anotar la IP del servidor
 
-La misma IP que ya se usa para las tablets (`docs/pwa_tablet.md`). Conviene
-reservarla como IP fija en el router (por MAC) para no tener que
-reconfigurar nada si el DHCP la cambia.
+La misma IP que ya se usa para las tablets (`docs/pwa_tablet.md`): en el
+local es **`192.168.100.250`**, fijada en la propia PC servidor con
+`fijar_ip.bat` porque el panel del router no es accesible (ver
+`docs/instructivo_entrega_final.md`).
 
 ---
 
@@ -117,10 +123,10 @@ repo):
 2. Completar `SERVIDOR_HOST` con la IP del servidor (paso 1.4),
    `SERVIDOR_DB_PASSWORD` con la contraseña de `notebook_sync` (paso 1.2), y
    `LOCAL_DB_PASSWORD` con la contraseña del Postgres local de la notebook.
-3. Completar `SERVIDOR_MEDIA_UNC` con la ruta de red de las fotos
-   (paso 1.3), por ejemplo `\\DESKTOP-UAIGET9\media`. Dejarlo vacío si se
-   decidió no compartir esa carpeta — la notebook va a mostrar los
-   productos sin imagen.
+3. Dejar `SERVIDOR_MEDIA_URL` y `SERVIDOR_MEDIA_UNC` **vacíos** — las
+   fotos se bajan solas por HTTP desde `SERVIDOR_HOST` (paso 1.3). Solo
+   completar `SERVIDOR_MEDIA_URL` si el backend del servidor se movió a
+   otro puerto o dirección.
 4. Doble clic en `instalar_tarea_programada.bat`. Esto registra la tarea de
    Windows que corre el sync cada 5 minutos.
 
@@ -180,6 +186,41 @@ evitar la copia manual del script, alcanza con usar
 actualización — es independiente y no requiere pisar ningún archivo en la
 notebook.
 
+### 21/08/2026 — las fotos se bajan por HTTP, no por carpeta compartida
+
+Armando el servidor definitivo en el local salió a la luz que la vía vieja
+(robocopy contra `\\SERVIDOR\media`) **no podía funcionar** en esta
+instalación: el proyecto está dentro de `C:\Users\<usuario>`, cuyo ACL NTFS solo
+incluye a `SYSTEM`, `Administradores` y al dueño del perfil. El permiso
+"Todos: Leer" del recurso compartido no alcanza porque NTFS es el más
+restrictivo de los dos, y Windows 11 además bloquea el acceso invitado por
+SMB. La notebook habría sincronizado los 393 productos con las 338 fotos
+rotas, y el sync lo habría reportado como `ok` con una advertencia perdida en
+el log — las fotos son opcionales a propósito y no hacen fracasar la corrida.
+
+Ahora las fotos se bajan por HTTP del mismo `/media/` que ya consumen las
+tablets (`sync_notebook/fotos_http.ps1`): la lista sale de la base recién
+restaurada, se descarga solo lo que falta y se borra lo que ya no está en el
+servidor. Sin cuentas de Windows, sin permisos NTFS, sin SMB.
+
+Probado de punta a punta contra el servidor del local con una notebook
+simulada: primera corrida 13,8 s con las 338 fotos y los conteos exactos
+(393 productos, 425 variantes, 338 imágenes, 425 stock, 414 movimientos);
+segunda corrida sin volver a bajar nada; y con un `SERVIDOR_MEDIA_UNC`
+inaccesible cae solo al HTTP.
+
+De paso se corrigió un problema que apareció en esa prueba: si la base local
+de la notebook todavía no existe, `psql` escribe el aviso "no existe la base
+de datos, omitiendo" por stderr y, con `$ErrorActionPreference = 'Stop'`,
+PowerShell lo convertía en un error terminante que cortaba el sync entero
+aunque el comando hubiera terminado bien. Los comandos externos ahora corren
+a través de `Invoke-Nativo`, que sigue controlando el resultado real por
+`$LASTEXITCODE`.
+
+**Una sola vez, en la notebook:** copiar los `.ps1` actualizados de
+`sync_notebook/` (ahora son dos: `sync_notebook.ps1` y `fotos_http.ps1`). Si
+falta el segundo, el sync avisa en el log y sigue sin fotos.
+
 ### 09/08/2026 — la base local ahora se recrea de cero en cada sync
 
 Antes, cada sync **restauraba encima** de la base ya existente en la
@@ -234,6 +275,13 @@ sync se resuelve solo (recrea la base de cero).
   base recreándose de cero en cada corrida, ya no debería deberse a
   esquemas desincronizados — más probable un problema real de datos en el
   dump.
+- **El catálogo se ve completo pero sin fotos** → mirar la última línea de
+  "Fotos sincronizadas" en `sync_notebook/logs/sync.log`. Si dice "fallaron",
+  probar desde la notebook en el navegador
+  `http://192.168.100.250:8000/media/` — si eso no abre, el problema es la
+  red o que `iniciar.bat` no está corriendo en el servidor, no el sync.
+  Si el log dice que falta `fotos_http.ps1`, copiar ese archivo a
+  `sync_notebook/` en la notebook.
 - **`actualizar_notebook.bat` termina con "ERROR"** → el mensaje en
   pantalla indica en qué paso falló; el detalle completo queda en
   `sync_notebook/tmp/ultimo_dump.log`, `ultimo_recreate.log` o

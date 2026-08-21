@@ -65,7 +65,9 @@ powercfg /change disk-timeout-ac 0      | Out-Null
 Ok "Suspension, hibernacion y apagado de disco desactivados con corriente alterna"
 Ok "La pantalla se sigue apagando sola (eso no afecta al sistema)"
 
-# --- 4. Compartir backend\media en solo lectura (para la notebook) ---------
+# --- 4. Compartir backend\media en solo lectura (opcional) -----------------
+# Desde el 21/08/2026 la notebook baja las fotos por HTTP y no necesita esto.
+# Se deja igual: es una via alternativa y la primera copia es mas rapida.
 Info "4. Carpeta de fotos compartida"
 if (-not (Test-Path $media)) {
     Warn "No se encontro $media - se saltea"

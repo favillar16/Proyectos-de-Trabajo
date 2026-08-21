@@ -143,8 +143,14 @@ GRANT pg_read_all_data TO notebook_sync;
 ```
 
 Anotar esa contraseña: se usa en `sync_notebook/config.env` de la notebook,
-junto con la ruta de las fotos `\\OGAPORA\media` (esa carpeta ya la compartió
-el paso 1). El detalle completo está en `docs/sync_notebook.md`.
+junto con `SERVIDOR_HOST=192.168.100.250`. Las fotos **no** necesitan
+configuración: el sync las baja por HTTP del servidor (dejar
+`SERVIDOR_MEDIA_UNC` y `SERVIDOR_MEDIA_URL` vacíos). El detalle completo está
+en `docs/sync_notebook.md`.
+
+⚠️ En la notebook tienen que estar **los dos** archivos `.ps1` de
+`sync_notebook/`: `sync_notebook.ps1` y `fotos_http.ps1`. Si se traen con
+`git pull` vienen solos.
 
 ---
 

@@ -41,6 +41,29 @@ function Escribir-Estado($status, $detalle) {
     $estado | ConvertTo-Json | Set-Content -Path (Join-Path $estadoDir 'last_sync.json')
 }
 
+# Los comandos externos (pg_dump, psql, robocopy) escriben avisos por stderr
+# aunque terminen bien: psql, por ejemplo, avisa "no existe la base de datos,
+# omitiendo" en un DROP ... IF EXISTS. Con $ErrorActionPreference = 'Stop',
+# PowerShell 5.1 convierte cada linea de stderr de un ejecutable en un error
+# terminante (NativeCommandError) y corta el sync a la mitad, aunque el
+# comando haya devuelto codigo 0. Este helper baja la preferencia solo
+# mientras corre el comando externo; el control de errores real lo sigue
+# haciendo el chequeo de $LASTEXITCODE que va despues de cada llamada.
+function Invoke-Nativo([scriptblock] $bloque) {
+    $previo = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try { & $bloque } finally { $ErrorActionPreference = $previo }
+}
+
+# Funciones de copia de fotos por HTTP (ver fotos_http.ps1)
+$fotosLib = Join-Path $carpeta 'fotos_http.ps1'
+if (Test-Path $fotosLib) {
+    . $fotosLib
+    $hayFotosHttp = $true
+} else {
+    $hayFotosHttp = $false
+}
+
 # ─── Evitar sincronizaciones superpuestas ────────────────────────────────────
 if (Test-Path $lockFile) {
     $edadMin = ((Get-Date) - (Get-Item $lockFile).LastWriteTime).TotalMinutes
@@ -97,13 +120,13 @@ try {
     $archivoDump = Join-Path $tmpDir "dump_$(Get-Date -Format 'yyyyMMdd_HHmmss').sql"
     $env:PGPASSWORD = $cfg['SERVIDOR_DB_PASSWORD']
 
-    & $pgDump `
+    Invoke-Nativo { & $pgDump `
         --host=$host_ `
         --port=$puertoDb `
         --username=$($cfg['SERVIDOR_DB_USUARIO']) `
         --dbname=$($cfg['SERVIDOR_DB_NOMBRE']) `
         --clean --if-exists --no-owner --no-privileges `
-        --file=$archivoDump
+        --file=$archivoDump }
 
     if ($LASTEXITCODE -ne 0 -or -not (Test-Path $archivoDump) -or (Get-Item $archivoDump).Length -eq 0) {
         Log "ERROR: pg_dump falló (código $LASTEXITCODE) o generó un archivo vacío."
@@ -127,12 +150,12 @@ try {
     $env:PGPASSWORD = $cfg['LOCAL_DB_PASSWORD']
     $dbNombre = $cfg['LOCAL_DB_NOMBRE']
 
-    & $psql `
+    Invoke-Nativo { & $psql `
         --host=localhost --port=$($cfg['LOCAL_DB_PUERTO']) --username=$($cfg['LOCAL_DB_USUARIO']) `
         --dbname=postgres --set=ON_ERROR_STOP=1 --quiet `
         --command="DROP DATABASE IF EXISTS $dbNombre WITH (FORCE);" `
         --command="CREATE DATABASE $dbNombre OWNER $($cfg['LOCAL_DB_USUARIO']);" `
-        *> (Join-Path $tmpDir 'ultimo_recreate.log')
+        *> (Join-Path $tmpDir 'ultimo_recreate.log') }
 
     if ($LASTEXITCODE -ne 0) {
         Log "ERROR: no se pudo recrear la base local (código $LASTEXITCODE). Ver tmp/ultimo_recreate.log — probablemente el usuario $($cfg['LOCAL_DB_USUARIO']) no tiene el atributo CREATEDB (ver docs/sync_notebook.md)."
@@ -141,7 +164,7 @@ try {
     }
 
     # ─── 3) Restaurar el dump en la base recién creada ───────────────────────
-    & $psql `
+    Invoke-Nativo { & $psql `
         --host=localhost `
         --port=$($cfg['LOCAL_DB_PUERTO']) `
         --username=$($cfg['LOCAL_DB_USUARIO']) `
@@ -149,7 +172,7 @@ try {
         --set=ON_ERROR_STOP=1 `
         --quiet `
         --file=$archivoDump `
-        *> (Join-Path $tmpDir 'ultimo_restore.log')
+        *> (Join-Path $tmpDir 'ultimo_restore.log') }
 
     if ($LASTEXITCODE -ne 0) {
         Log "ERROR: la restauración local falló (código $LASTEXITCODE). Ver tmp/ultimo_restore.log"
@@ -163,58 +186,83 @@ try {
     # pero muestra todos los productos con la foto rota, porque los archivos
     # solo existen en la PC servidor.
     #
-    # Es opcional a propósito: requiere compartir backend\media en la red
-    # (ver docs/sync_notebook.md). Si no está configurado, o si la carpeta
-    # compartida no responde, el sync de datos igual se da por bueno — las
-    # fotos son secundarias frente al stock y los pedidos.
+    # Se bajan por HTTP desde el mismo servidor que ya sirve /media/. Antes
+    # esto se hacía con robocopy contra \SERVIDOR\media, pero esa vía depende
+    # de permisos NTFS que no se cumplen cuando el proyecto vive dentro de
+    # C:\Users\<usuario> en el servidor — ver el encabezado de fotos_http.ps1.
+    # La carpeta compartida se sigue aceptando si está configurada y accesible
+    # (es más rápida en la primera corrida), pero ya no es necesaria.
     #
     # Todo el bloque va dentro de un try propio: llegado acá la base YA quedó
-    # sincronizada, así que ningún problema con la carpeta de red (permisos,
-    # share caído, disco lleno) debe hacer fracasar un sync que en lo
-    # importante salió bien.
-    $mediaUnc = $cfg['SERVIDOR_MEDIA_UNC']
+    # sincronizada, así que ningún problema con las fotos debe hacer fracasar
+    # un sync que en lo importante salió bien.
+    $mediaLocal   = Join-Path (Split-Path -Parent $carpeta) 'backend\media'
+    $mediaUnc     = $cfg['SERVIDOR_MEDIA_UNC']
+    $mediaUrl     = $cfg['SERVIDOR_MEDIA_URL']
+    if (-not $mediaUrl) { $mediaUrl = "http://${host_}:8000/media/" }
     $detalleMedia = 'sin fotos'
 
     try {
-        if (-not $mediaUnc) {
-            Log "SERVIDOR_MEDIA_UNC vacío — se omite la copia de fotos (los productos se van a ver sin imagen)."
-        }
-        elseif (-not (Test-Path $mediaUnc -ErrorAction SilentlyContinue)) {
-            Log "ADVERTENCIA: no se pudo acceder a $mediaUnc — se omite la copia de fotos y se conservan las que ya estaban."
-        }
-        else {
+        $uncUsable = $false
+        if ($mediaUnc -and (Test-Path $mediaUnc -ErrorAction SilentlyContinue)) {
             # Guarda contra un /MIR destructivo: si la carpeta compartida está
             # accesible pero vacía (share mal configurado, disco recién
             # cambiado), espejarla borraría todas las fotos que ya tenía.
             $primerArchivo = Get-ChildItem $mediaUnc -Recurse -File -ErrorAction SilentlyContinue |
                              Select-Object -First 1
-            if (-not $primerArchivo) {
-                Log "ADVERTENCIA: $mediaUnc está accesible pero vacía — se omite la copia para no borrar las fotos locales."
+            if ($primerArchivo) { $uncUsable = $true }
+            else { Log "ADVERTENCIA: $mediaUnc está accesible pero vacía — se ignora y se usan las fotos por HTTP." }
+        }
+        elseif ($mediaUnc) {
+            Log "SERVIDOR_MEDIA_UNC ($mediaUnc) no accesible — se usan las fotos por HTTP."
+        }
+
+        if ($uncUsable) {
+            if (-not (Test-Path $mediaLocal)) {
+                New-Item -ItemType Directory -Path $mediaLocal -Force | Out-Null
+            }
+            # /MIR (espejo real) y no /E: acá sí corresponde borrar lo que
+            # ya no está en el servidor, porque la notebook es un espejo
+            # que se refresca cada 5 minutos y si no las fotos viejas se
+            # acumularían para siempre. Mismo criterio que recrear la base.
+            Invoke-Nativo { & robocopy $mediaUnc $mediaLocal /MIR /NFL /NDL /NJH /NJS /R:1 /W:1 | Out-Null }
+
+            # robocopy devuelve 0-7 para resultados normales (0 = sin
+            # cambios, 1 = copió, 3 = copió y borró); 8 o más es error.
+            if ($LASTEXITCODE -ge 8) {
+                Log "ADVERTENCIA: robocopy falló al copiar las fotos (código $LASTEXITCODE) — la base igual quedó actualizada."
+                $detalleMedia = 'fotos con error'
             }
             else {
-                $mediaLocal = Join-Path (Split-Path -Parent $carpeta) 'backend\media'
-                if (-not (Test-Path $mediaLocal)) {
-                    New-Item -ItemType Directory -Path $mediaLocal -Force | Out-Null
-                }
+                $cantFotos = (Get-ChildItem $mediaLocal -Recurse -File -ErrorAction SilentlyContinue).Count
+                Log "Fotos sincronizadas por carpeta compartida: $cantFotos archivos en backend\media."
+                $detalleMedia = "$cantFotos fotos"
+            }
+            $global:LASTEXITCODE = 0
+        }
+        elseif (-not $hayFotosHttp) {
+            Log "ADVERTENCIA: falta sync_notebook\fotos_http.ps1 — se omiten las fotos. Actualizar la copia del script en la notebook (ver docs/sync_notebook.md)."
+            $detalleMedia = 'fotos con error'
+        }
+        else {
+            # $env:PGPASSWORD quedó apuntando a la base LOCAL en el paso 2,
+            # que es justamente la que ya tiene la lista de fotos restaurada.
+            $rutas = Obtener-RutasFotos -Psql $psql -DbNombre $dbNombre `
+                        -DbUsuario $cfg['LOCAL_DB_USUARIO'] -DbPuerto $cfg['LOCAL_DB_PUERTO']
 
-                # /MIR (espejo real) y no /E: acá sí corresponde borrar lo que
-                # ya no está en el servidor, porque la notebook es un espejo
-                # que se refresca cada 5 minutos y si no las fotos viejas se
-                # acumularían para siempre. Mismo criterio que recrear la base.
-                & robocopy $mediaUnc $mediaLocal /MIR /NFL /NDL /NJH /NJS /R:1 /W:1 | Out-Null
+            $r = Sincronizar-FotosHttp -MediaUrl $mediaUrl -MediaLocal $mediaLocal -Rutas $rutas
 
-                # robocopy devuelve 0-7 para resultados normales (0 = sin
-                # cambios, 1 = copió, 3 = copió y borró); 8 o más es error.
-                if ($LASTEXITCODE -ge 8) {
-                    Log "ADVERTENCIA: robocopy falló al copiar las fotos (código $LASTEXITCODE) — la base igual quedó actualizada."
-                    $detalleMedia = 'fotos con error'
-                }
-                else {
-                    $cantFotos = (Get-ChildItem $mediaLocal -Recurse -File -ErrorAction SilentlyContinue).Count
-                    Log "Fotos sincronizadas: $cantFotos archivos en backend\media."
-                    $detalleMedia = "$cantFotos fotos"
-                }
-                $global:LASTEXITCODE = 0
+            if ($r.Total -eq 0) {
+                Log "ADVERTENCIA: la base no devolvió ninguna foto — se omite la copia para no borrar las que ya estaban."
+                $detalleMedia = 'sin fotos'
+            }
+            elseif ($r.Fallidas -gt 0) {
+                Log "ADVERTENCIA: $($r.Fallidas) de $($r.Total) fotos no se pudieron bajar desde $mediaUrl (descargadas $($r.Descargadas)). La base igual quedó actualizada."
+                $detalleMedia = "$($r.Total - $r.Fallidas) fotos, $($r.Fallidas) con error"
+            }
+            else {
+                Log "Fotos sincronizadas por HTTP: $($r.Total) archivos (nuevas $($r.Descargadas), ya estaban $($r.YaEstaban), borradas $($r.Borradas))."
+                $detalleMedia = "$($r.Total) fotos"
             }
         }
     }

@@ -29,3 +29,6 @@ sync_notebook/estado/
 respaldos/
 # Respaldo de la base enviado fuera del repo para el traslado (datos del negocio)
 docs/*.zip
+
+# Accesos directos de Windows: dependen de la ruta de cada maquina
+*.lnk

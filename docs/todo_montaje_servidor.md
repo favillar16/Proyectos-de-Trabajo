@@ -138,10 +138,12 @@ proyecto, doble clic, pide Administrador): categoría de red privada, puertos
 
 ### Notebook — `docs/sync_notebook.md`
 - [ ] Crear el usuario `notebook_sync` en el servidor (§1.2)
-- [ ] **Compartir `backend\media` en red** (§1.3) — es nuevo, sin esto la
-      notebook muestra los productos sin foto
-- [ ] Actualizar `sync_notebook\config.env`: `SERVIDOR_HOST` con la IP
-      nueva y `SERVIDOR_MEDIA_UNC` con la carpeta compartida
+- [x] Fotos de la notebook: resuelto por HTTP el 21/08/2026 (§1.3 de
+      `sync_notebook.md`). La carpeta compartida ya no hace falta — no podía
+      funcionar con el proyecto dentro de `C:\Users\<usuario>` por los
+      permisos NTFS
+- [ ] Actualizar `sync_notebook\config.env`: `SERVIDOR_HOST=192.168.100.250`
+      (`SERVIDOR_MEDIA_UNC` y `SERVIDOR_MEDIA_URL` van vacíos)
 - [ ] Verificar `sync_notebook\estado\last_sync.json` — el detalle ahora
       dice cuántas fotos sincronizó
 
