@@ -198,6 +198,12 @@ proyecto, doble clic, pide Administrador): categoría de red privada, puertos
 
 ## 6.5 Datos fiscales de la factura — PENDIENTE (22/08/2026)
 
+> **Actualizado el 23/08/2026 — ver `docs/facturacion_electronica.md`.**
+> Ese documento reemplaza esta sección: agrega la evaluación de e-Kuatia'i
+> vs e-Kuatia, la librería elegida, lo que ya quedó implementado y la lista
+> completa de datos que faltan. Para ver qué falta cargar, correr
+> `python manage.py verificar_fiscal`.
+
 **Estado al 21/08/2026:** `backend\.env` **no tiene ninguna clave `FISCAL_*`**,
 así que `settings.DATOS_FISCALES` queda con los valores por defecto (vacíos,
 salvo la razón social que cae en "Oga Porã").

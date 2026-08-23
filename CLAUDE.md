@@ -15,21 +15,26 @@ All user-facing text, model fields, and comments are in Spanish — keep new cod
 venv\Scripts\activate
 python manage.py runserver              # HTTP only — no WebSocket support
 daphne -b 0.0.0.0 -p 8000 config.asgi:application   # full app (HTTP+WS), what production/demo actually uses
-python manage.py makemigrations apps.usuarios apps.productos apps.inventario apps.ventas apps.caja apps.costos
+python manage.py makemigrations usuarios productos inventario ventas caja costos facturacion
 python manage.py migrate
 python manage.py loaddata initial_data.json   # demo fixture
 python manage.py seed_categorias              # seeds CategoriaGasto for apps.costos
 python manage.py createsuperuser
 python cargar_demo.py                         # loads demo catalog/stock data
 python diagnostico_impresora.py               # standalone thermal-printer connectivity check
+python manage.py test apps.facturacion        # 117 tests
+python manage.py verificar_fiscal             # diagnóstico de la configuración fiscal
 ```
-There is no automated test suite (no `tests.py` content, no frontend test runner configured) — verify changes manually against `docs/checklist_entrega.md` (59 functional test cases) when relevant.
+
+Test coverage is **partial**: `apps/facturacion/` has a full suite (117 backend tests) and the contextual help has 22 frontend tests (`cd frontend && npm test`, vitest + jsdom). Everything else has no automated tests — verify those changes manually against `docs/checklist_entrega.md` (59 functional test cases).
 
 ### Frontend (from `frontend/`)
 ```
 npm run dev       # Vite dev server, binds 0.0.0.0:5173 so tablets can reach it over WiFi
 npm run build
 npm run preview
+npm test          # vitest run — tests de la ayuda contextual
+npm run test:watch
 ```
 No lint script is configured in `package.json`.
 
