@@ -20,6 +20,7 @@ import {
 import { useAuthStore } from '../../store/authStore'
 import { useDevice } from '../../hooks/useDevice'
 import logoOgaPora from '../../assets/logo_oga_pora.png'
+import AyudaContextual from '../ayuda/AyudaContextual'
 
 // ─── Paleta inline (espejo de design-system.css) ─────────────────────────────
 // Se definen aquí para poder usarlos en lógica JS (estados hover)
@@ -719,6 +720,9 @@ export default function Layout({
           </div>
         </main>
       </div>
+
+      {/* ── Ayuda contextual — F1 o botón «?» ── */}
+      <AyudaContextual />
 
       {/* ── Barra de navegación inferior — tablet ── */}
       {mostrarTabletNav && (
