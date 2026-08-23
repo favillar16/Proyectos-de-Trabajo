@@ -171,6 +171,30 @@ class Producto(models.Model):
     )
     unidad_venta = models.CharField(max_length=10, choices=UNIDADES, default=UNIDAD_M2)
 
+    # ── IVA ───────────────────────────────────────────────────
+    # El SIFEN exige la afectación y la tasa de IVA por ítem, no un IVA
+    # global del comprobante. Hasta ahora la factura calculaba el IVA como
+    # total/11 asumiendo 10% para todo (apps/caja/views.py), lo cual era
+    # correcto en la práctica porque el rubro entero va al 10%, pero no
+    # sirve para emitir un DE ni para vender algo exento.
+    #
+    # Los precios que carga la encargada son SIEMPRE con IVA incluido, que
+    # es como se muestran en el mostrador; el desglose se hace al facturar
+    # (apps/facturacion/codigos.py, desglosar_iva).
+    IVA_10 = 10
+    IVA_5 = 5
+    IVA_EXENTO = 0
+    TASAS_IVA = [
+        (IVA_10,     'Gravado 10%'),
+        (IVA_5,      'Gravado 5%'),
+        (IVA_EXENTO, 'Exento'),
+    ]
+    tasa_iva = models.PositiveSmallIntegerField(
+        choices=TASAS_IVA, default=IVA_10,
+        help_text='Tasa de IVA incluida en el precio. El rubro (pisos, '
+                  'cerámicos, sanitarios) va al 10%.'
+    )
+
     # ── Showroom ──────────────────────────────────────────────
     destacado        = models.BooleanField(
         default=False, db_index=True,

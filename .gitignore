@@ -41,3 +41,9 @@ sync_notebook/credenciales_sync.txt
 
 # Estaticos recolectados por collectstatic: se regeneran, no son fuente
 backend/staticfiles/
+
+# Certificado cualificado de firma electronica del DNIT. Es la identidad
+# fiscal del negocio: quien lo tenga puede emitir facturas a su nombre.
+# Nunca al repositorio — el historial de git es permanente.
+*.p12
+*.pfx

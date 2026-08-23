@@ -322,8 +322,35 @@ class FacturaBuilder:
 
         # ── Pie legal ────────────────────────────────────────
         buf += ALIGN_CENTER
-        buf += self._l('Documento no válido como')
-        buf += self._l('comprobante fiscal sin timbrado')
+
+        # Con documento electrónico el comprobante es un KuDE: la
+        # representación gráfica del DE. Lleva el CDC impreso, que es lo que
+        # permite consultarlo en el portal del DNIT. Sin DE se mantiene la
+        # leyenda de siempre.
+        cdc = str(d.get('cdc', '') or '')
+        if cdc:
+            buf += self._l('Consulte este documento en:')
+            buf += self._l('ekuatia.set.gov.py')
+            buf += LF
+            buf += self._l('CDC:')
+            # Se imprime agrupado de a 4 y partido en dos lineas: son 44
+            # digitos y no entran de una en papel de 80mm.
+            legible = str(d.get('cdc_legible', '') or cdc)
+            mitad = len(legible) // 2
+            corte = legible.rfind(' ', 0, mitad + 3)
+            if corte == -1:
+                buf += self._l(legible)
+            else:
+                buf += self._l(legible[:corte])
+                buf += self._l(legible[corte + 1:])
+            buf += LF
+            # TODO: el QR del KuDE necesita la firma del DE y sale del
+            # sidecar Node (facturacionelectronicapy-qrgen). Ver
+            # docs/facturacion_electronica.md §5.4.
+        else:
+            buf += self._l('Documento no válido como')
+            buf += self._l('comprobante fiscal sin timbrado')
+
         buf += self._l('Oga Porã — Acabados de Construcción')
         buf += FEED_LINES(4)
         buf += CUT_PARTIAL

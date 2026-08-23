@@ -47,6 +47,7 @@ LOCAL_APPS = [
     'apps.ventas',
     'apps.caja',
     'apps.costos',
+    'apps.facturacion',
 ]
 
 INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
@@ -228,4 +229,65 @@ DATOS_FISCALES = {
     'telefono':     config('FISCAL_TELEFONO', default=''),
     'timbrado':     config('FISCAL_TIMBRADO', default=''),
     'timbrado_vto': config('FISCAL_TIMBRADO_VTO', default=''),
+
+    # ── Agregados para facturación electrónica ───────────────────────────
+    # Los tres de abajo componen el CDC y el número de comprobante, así que
+    # tienen que coincidir EXACTAMENTE con lo que la DNIT habilitó en el RUC.
+    # e-Kuatia'i además exige un único establecimiento y un único punto de
+    # expedición: si el negocio necesita más de uno, no califica para
+    # e-Kuatia'i y hay que ir a e-Kuatia completo.
+    'establecimiento':    config('FISCAL_ESTABLECIMIENTO', default='001'),
+    'punto_expedicion':   config('FISCAL_PUNTO_EXPEDICION', default='001'),
+    # 1 = persona física, 2 = persona jurídica. Va en el dígito 25 del CDC.
+    'tipo_contribuyente': config('FISCAL_TIPO_CONTRIBUYENTE', default=2, cast=int),
+
+    # Domicilio fiscal desglosado: el SIFEN no acepta la dirección como un
+    # texto libre, la pide por campos con códigos de departamento/distrito.
+    'departamento':        config('FISCAL_DEPARTAMENTO', default=''),
+    'departamento_desc':   config('FISCAL_DEPARTAMENTO_DESC', default=''),
+    'distrito':            config('FISCAL_DISTRITO', default=''),
+    'distrito_desc':       config('FISCAL_DISTRITO_DESC', default=''),
+    'ciudad':              config('FISCAL_CIUDAD', default=''),
+    'ciudad_desc':         config('FISCAL_CIUDAD_DESC', default=''),
+    'actividad_economica': config('FISCAL_ACTIVIDAD_CODIGO', default=''),
+    'actividad_desc':      config('FISCAL_ACTIVIDAD_DESC', default=''),
+}
+
+# ─── SIFEN / e-Kuatia ─────────────────────────────────────────────────────────
+# Transmisión de documentos electrónicos a la DNIT.
+#
+# Ojo con el contexto: este sistema es un appliance de red local pensado para
+# funcionar sin internet (ver CLAUDE.md), y el SIFEN necesita internet. Por eso
+# la emisión NO es sincrónica — el DE se encola y se transmite aparte. El cobro
+# en caja nunca espera a la red. Ver apps/facturacion/models.py.
+#
+# Mientras SIFEN_HABILITADO sea False el sistema sigue funcionando exactamente
+# como hoy: no genera DEs, no numera comprobantes electrónicos y no intenta
+# salir a internet. Se prende recién cuando estén el certificado y la
+# habilitación de la DNIT.
+SIFEN = {
+    'habilitado':  config('SIFEN_HABILITADO', default=False, cast=bool),
+    # 'test' mientras se hacen las pruebas de habilitación, 'produccion' después.
+    'ambiente':    config('SIFEN_AMBIENTE', default='test'),
+
+    # Certificado cualificado de firma electrónica (.p12 / .pfx). Lo entrega la
+    # DNIT sin costo. NUNCA versionar este archivo ni su clave.
+    'certificado_path':     config('SIFEN_CERT_PATH', default=''),
+    'certificado_password': config('SIFEN_CERT_PASSWORD', default=''),
+
+    # Sidecar Node con la suite facturacionelectronicapy-* (xmlgen, xmlsign,
+    # qrgen, setapi, kude), que es la librería que la DNIT publica como
+    # referencia. Se eligió Node porque la PC servidor ya lo tiene instalado
+    # para el frontend — ver docs/facturacion_electronica.md.
+    'sidecar_url': config('SIFEN_SIDECAR_URL', default='http://127.0.0.1:8100'),
+    'timeout_seg': config('SIFEN_TIMEOUT', default=30, cast=int),
+
+    # Reintentos de la cola. La DNIT da una ventana para transmitir un DE ya
+    # emitido, así que un corte de internet de unas horas no invalida la venta.
+    'max_intentos':        config('SIFEN_MAX_INTENTOS', default=10, cast=int),
+    'minutos_entre_envios': config('SIFEN_MINUTOS_REINTENTO', default=5, cast=int),
+
+    'url_consulta_qr': config(
+        'SIFEN_URL_CONSULTA_QR',
+        default='https://ekuatia.set.gov.py/consultas/qr'),
 }

@@ -7,7 +7,9 @@ Al confirmar un pago:
   2. Cambia el estado del pedido a 'pagado'
   3. Descuenta el stock de cada variante (MovimientoStock tipo 'salida')
   4. Emite evento WebSocket a vendedor y admin
-  5. Retorna datos para imprimir el ticket
+  5. Si es factura, genera el documento electrónico (queda encolado para el
+     SIFEN; no espera a la red — ver apps/facturacion/)
+  6. Retorna datos para imprimir el ticket
 """
 from rest_framework import views, status
 from rest_framework.response import Response
@@ -25,6 +27,7 @@ logger = logging.getLogger(__name__)
 from .models import SesionCaja, Pago
 from .printer import imprimir_ticket, imprimir_factura, imprimir_cierre, ticket_a_texto
 from apps.ventas.models import NotaPedido
+from apps.facturacion import emisor as fe_emisor
 
 # Tope de descuento que puede aplicar un cajero al cobrar. Un 100% equivaldría
 # a regalar la mercadería sin ninguna aprobación adicional; 70% ya cubre
@@ -379,6 +382,33 @@ class RegistrarPagoView(views.APIView):
         # ── Notificar via WebSocket ───────────────────────────
         _emitir_pago_ws(pedido, pago)
 
+        # ── Documento electrónico (SIFEN) ─────────────────────
+        # Solo para facturas: un ticket interno no es un comprobante fiscal.
+        #
+        # emitir_para_pago() no lanza nunca y devuelve None si el SIFEN está
+        # apagado (que es el estado actual, SIFEN_HABILITADO=False) o si algo
+        # falla. Es deliberado: acá la venta ya ocurrió, el stock ya se
+        # descontó y el cliente está esperando el comprobante — un problema
+        # de facturación electrónica no puede tumbar un cobro consumado.
+        #
+        # crear_documento() tiene su propio transaction.atomic, así que
+        # dentro de esta vista (que también es atómica) funciona como
+        # savepoint: si el DE falla se revierte solo, incluido el número de
+        # comprobante, y el cobro sigue su curso sin dejar un salto en el
+        # correlativo.
+        documento_electronico = None
+        if tipo_comprobante == 'factura':
+            documento_electronico = fe_emisor.emitir_para_pago(
+                pago,
+                receptor={
+                    'ruc':          cliente_ruc,
+                    'razon_social': cliente_razon_social,
+                    'telefono':     cliente_telefono,
+                    'direccion':    cliente_direccion,
+                },
+                condicion_venta=condicion_venta,
+            )
+
         # ── Generar datos del comprobante ─────────────────────
         datos_ticket = _datos_ticket(pedido, pago, sesion,
                                      tipo_comprobante=tipo_comprobante,
@@ -386,7 +416,8 @@ class RegistrarPagoView(views.APIView):
                                      cliente_razon_social=cliente_razon_social,
                                      cliente_telefono=cliente_telefono,
                                      cliente_direccion=cliente_direccion,
-                                     condicion_venta=condicion_venta)
+                                     condicion_venta=condicion_venta,
+                                     documento=documento_electronico)
         texto_ticket = ticket_a_texto(datos_ticket)
 
         # ── Imprimir automáticamente según tipo ───────────────
@@ -409,6 +440,15 @@ class RegistrarPagoView(views.APIView):
             'ticket_texto':    texto_ticket,
             'impresion':       resultado_impresion,
             'errores_stock':   errores_stock,
+            # null cuando no se emitió DE (ticket, o SIFEN apagado). El
+            # frontend lo usa para mostrar el número legal y el estado
+            # frente al SIFEN; no debe asumir que siempre viene.
+            'documento_electronico': ({
+                'cdc':             documento_electronico.cdc,
+                'numero':          documento_electronico.numero_completo,
+                'estado':          documento_electronico.estado,
+                'estado_display':  documento_electronico.get_estado_display(),
+            } if documento_electronico is not None else None),
         }, status=status.HTTP_201_CREATED)
 
 
@@ -439,27 +479,50 @@ class ListaPagosView(views.APIView):
 class ReimprimirTicketView(views.APIView):
     """
     POST /caja/pagos/<id>/reimprimir/
-    Reimprime el ticket de un pago ya procesado.
+    Reimprime el comprobante de un pago ya procesado.
     Útil cuando el papel se atasca o el cliente pide otra copia.
+
+    Si el pago tenía documento electrónico, se reimprime la FACTURA con su
+    CDC y su timbrado originales — no un ticket. Reimprimir un ticket en
+    lugar de la factura le daría al cliente un papel sin valor fiscal, y
+    reconstruir los datos desde settings sacaría el timbrado de hoy en vez
+    del que estaba vigente cuando se emitió.
     """
     permission_classes = [EsAdminOCajero]
 
     def post(self, request, pk):
         pago = get_object_or_404(
-            Pago.objects.select_related('pedido', 'cajero', 'sesion_caja')
+            Pago.objects.select_related('pedido', 'cajero', 'sesion_caja',
+                                        'documento_electronico')
                         .prefetch_related('pedido__items__variante__producto'),
             pk=pk
         )
 
-        datos_ticket = _datos_ticket(pago.pedido, pago, pago.sesion_caja)
-        resultado    = imprimir_ticket(datos_ticket)
-        texto        = ticket_a_texto(datos_ticket)
+        documento = getattr(pago, 'documento_electronico', None)
+        if documento is not None:
+            datos_ticket = _datos_ticket(
+                pago.pedido, pago, pago.sesion_caja,
+                tipo_comprobante='factura',
+                cliente_ruc=documento.receptor_ruc,
+                cliente_razon_social=documento.receptor_razon_social,
+                cliente_telefono=documento.receptor_telefono,
+                cliente_direccion=documento.receptor_direccion,
+                documento=documento,
+            )
+            resultado = imprimir_factura(datos_ticket)
+        else:
+            datos_ticket = _datos_ticket(pago.pedido, pago, pago.sesion_caja)
+            resultado    = imprimir_ticket(datos_ticket)
+        texto = ticket_a_texto(datos_ticket)
 
         return Response({
             'ok':           resultado['ok'],
             'impresion':    resultado,
             'ticket_texto': texto,
             'ticket':       datos_ticket,
+            # Qué se imprimió realmente. Sin esto el frontend no puede saber
+            # si salió un ticket o una factura, y avisaría cualquier cosa.
+            'tipo_comprobante': 'factura' if documento is not None else 'ticket',
         })
 
 
@@ -514,8 +577,15 @@ class EstadoImpresora(views.APIView):
 
 def _datos_ticket(pedido, pago, sesion, tipo_comprobante='ticket',
                   cliente_ruc='', cliente_razon_social='', cliente_telefono='',
-                  cliente_direccion='', condicion_venta='Contado'):
-    """Estructura los datos necesarios para imprimir el ticket o la factura."""
+                  cliente_direccion='', condicion_venta='Contado', documento=None):
+    """
+    Estructura los datos necesarios para imprimir el ticket o la factura.
+
+    `documento` es el DocumentoElectronico si se emitió uno. Cuando existe,
+    los datos fiscales salen de ÉL y no de settings: el DE guarda el snapshot
+    del timbrado vigente al emitir, así que una reimpresión vieja sale con el
+    timbrado que tenía entonces y no con el de hoy.
+    """
     from django.conf import settings as dj_settings
 
     items = []
@@ -580,6 +650,30 @@ def _datos_ticket(pedido, pago, sesion, tipo_comprobante='ticket',
             'iva_5':           0,
             'exento':          0,
         })
+
+        # Con documento electrónico, todo lo fiscal se pisa con el snapshot
+        # del DE. Dos motivos: el número pasa a ser el correlativo legal
+        # (EEE-PPP-NNNNNNN) en vez del ticket interno, y el timbrado es el
+        # que estaba vigente al emitir, no el que haya en settings hoy.
+        if documento is not None:
+            from apps.facturacion import cdc as cdc_mod
+            datos.update({
+                'factura_numero':  documento.numero_completo,
+                'ruc_negocio':     documento.emisor_ruc,
+                'direccion':       documento.emisor_direccion,
+                'telefono':        documento.emisor_telefono,
+                'timbrado':        documento.emisor_timbrado,
+                'timbrado_vto':    documento.emisor_timbrado_vto,
+                'cdc':             documento.cdc,
+                'cdc_legible':     cdc_mod.formatear_legible(documento.cdc),
+                'url_consulta_qr': documento.url_consulta_qr,
+                # El desglose por tasa ya viene calculado y cuadrado desde
+                # apps/facturacion/emisor.py; el iva_10 de arriba era una
+                # aproximación global (total/11) que no sirve para un DE.
+                'iva_10':          float(documento.iva_10),
+                'iva_5':           float(documento.iva_5),
+                'exento':          float(documento.total_exento),
+            })
 
     return datos
 
