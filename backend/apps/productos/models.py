@@ -462,6 +462,22 @@ class Variante(models.Model):
 
     # ── Identificación ────────────────────────────────────────
     sku    = models.CharField(max_length=100, unique=True, blank=True, db_index=True)
+    # Código de barras que se lee con el lector (FTX LC123BH5). Es el de la caja
+    # del fabricante (EAN-13 y similares) o, para la mercadería que viene sin
+    # código, una etiqueta impresa por el negocio.
+    #
+    # Va en la variante y no en el producto porque la variante es la que tiene
+    # caja física: el Roma Beige 60×60 y el Roma Gris 60×60 son dos cajas
+    # distintas, con dos códigos distintos y dos stocks distintos.
+    #
+    # unique=True con null: dos variantes sin código no chocan entre sí (para la
+    # base, cada vacío es distinto de los demás), pero un código cargado no se
+    # puede repetir. Por eso el campo guarda NULL y no cadena vacía cuando no
+    # hay código — ver save().
+    codigo_barras = models.CharField(
+        max_length=64, unique=True, null=True, blank=True, db_index=True,
+        help_text='Código de barras de la caja. Se completa con el lector.'
+    )
     activa = models.BooleanField(default=True, db_index=True)
 
     class Meta:
@@ -494,6 +510,13 @@ class Variante(models.Model):
 
     def save(self, *args, **kwargs):
         from django.db import IntegrityError, transaction
+
+        # Sin código de barras se guarda NULL, nunca cadena vacía: si se
+        # guardaran vacíos, la segunda variante sin código chocaría contra la
+        # restricción de unicidad. La mayoría de los porcelanatos no traen
+        # código de fábrica, así que ese es el caso normal, no el raro.
+        if self.codigo_barras is not None:
+            self.codigo_barras = self.codigo_barras.strip() or None
 
         if not self.sku:
             # Reintentar ante colisión por concurrencia (dos altas simultáneas

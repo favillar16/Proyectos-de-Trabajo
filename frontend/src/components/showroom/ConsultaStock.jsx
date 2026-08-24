@@ -19,6 +19,7 @@ import {
   ScanLine, Info,
 } from 'lucide-react'
 import { inventarioApi } from '../../services/api'
+import { useLectorCodigoBarras } from '../../hooks/useLectorCodigoBarras'
 import { useDevice } from '../../hooks/useDevice'
 
 const C = {
@@ -381,6 +382,17 @@ export default function ConsultaStock({
     inputRef.current?.focus()
   }, [])
 
+  // Lector de código de barras (FTX LC123BH5).
+  // Escucha en toda la pantalla, no solo en el campo: el vendedor apunta a la
+  // caja y dispara sin tener que hacer clic antes en el buscador.
+  useLectorCodigoBarras({
+    activo: abierto,
+    onLectura: (codigo) => {
+      setQuery(codigo)
+      setItemSeleccionado(null)
+    },
+  })
+
   if (!abierto && modo === 'modal') return null
 
   const contenido = (
@@ -409,7 +421,7 @@ export default function ConsultaStock({
                 Consulta de stock
               </p>
               <p style={{ fontSize: '11px', color: C.textMuted }}>
-                Buscá por código, SKU o nombre
+                Escaneá con el lector, o buscá por código, SKU o nombre
               </p>
             </div>
           </div>
@@ -434,7 +446,7 @@ export default function ConsultaStock({
             ref={inputRef}
             value={query}
             onChange={e => { setQuery(e.target.value); setItemSeleccionado(null) }}
-            placeholder="Ej: POR-001 · 60x60 · gris..."
+            placeholder="Escaneá o escribí: POR-001 · 60x60 · gris..."
             autoComplete="off"
             autoCorrect="off"
             spellCheck={false}
