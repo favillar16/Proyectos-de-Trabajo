@@ -48,6 +48,6 @@ class ProductoAdmin(admin.ModelAdmin):
 
 @admin.register(Variante)
 class VarianteAdmin(admin.ModelAdmin):
-    list_display = ['sku', 'producto', 'color', 'calidad', 'acabado', 'largo_cm', 'ancho_cm', 'precio_venta', 'activa']
+    list_display = ['sku', 'codigo_barras', 'producto', 'color', 'calidad', 'acabado', 'largo_cm', 'ancho_cm', 'precio_venta', 'activa']
     list_filter = ['activa', 'acabado']
-    search_fields = ['sku', 'producto__nombre', 'color']
+    search_fields = ['sku', 'codigo_barras', 'producto__nombre', 'color']

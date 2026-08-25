@@ -60,6 +60,13 @@ export const AYUDA_POR_RUTA = {
         ],
       },
       {
+        titulo: 'Consultar un producto con el lector',
+        items: [
+          'Pasar el lector por el código de la caja abre la ficha de esa variante con su stock, sin buscar nada.',
+          'Si el código corresponde a un producto con varias variantes, el sistema muestra la lista para elegir cuál.',
+        ],
+      },
+      {
         titulo: 'Qué significa el stock que veo',
         items: [
           'El número que aparece es el stock DISPONIBLE, que ya descuenta lo reservado por otros pedidos todavía sin pagar.',
@@ -98,6 +105,14 @@ export const AYUDA_POR_RUTA = {
         ],
       },
       {
+        titulo: 'El código de barras de la variante',
+        items: [
+          'Si la caja del producto trae código impreso, poner el cursor en el campo «Código de barras» y pasar el lector: se completa solo.',
+          'Si el producto no trae código, dejarlo vacío. El sistema le genera uno interno y desde Inventario se imprime la etiqueta para pegarle.',
+          'Un mismo código no puede estar en dos variantes: si ya está usado, el sistema avisa a cuál pertenece.',
+        ],
+      },
+      {
         titulo: 'Cargar el stock inicial',
         items: [
           'Se puede cargar en metros, en cajas o en pallets. Los botones de caja y pallet aparecen solo si están cargados los m²/caja y m²/pallet.',
@@ -126,6 +141,13 @@ export const AYUDA_POR_RUTA = {
           'LISTO — preparado, esperando que el cliente pase por caja.',
           'PAGADO — se cobró. Recién en este momento el stock se descuenta de verdad.',
           'CANCELADO — se liberó la reserva y el material volvió a estar disponible.',
+        ],
+      },
+      {
+        titulo: 'Armar el pedido con el lector',
+        items: [
+          'Escanear un producto lo agrega directo a la nota de pedido. Si ya estaba, le suma uno más.',
+          'Nunca agrega más de lo que hay disponible: si el producto está sin stock, avisa y no lo carga.',
         ],
       },
       {
@@ -208,6 +230,23 @@ export const AYUDA_POR_RUTA = {
         items: [
           'Se carga como movimiento de entrada sobre la variante correspondiente.',
           'Si viene en cajas o pallets, conviene cargarlo en esa unidad y dejar que el sistema convierta: se cometen menos errores que multiplicando a mano.',
+          'Con el lector: pasar el código de la caja abre directamente el panel de ajuste de esa variante, sin buscarla.',
+        ],
+      },
+      {
+        titulo: 'El lector de código de barras',
+        items: [
+          'El lector funciona como un teclado: no hay nada que instalar ni configurar. Pasa el código y el sistema reacciona solo.',
+          'Se puede escanear con el cursor en el buscador o sin tocar nada: el sistema distingue un escaneo del tipeo por la velocidad.',
+          'Si dice "el código no está asignado a ningún producto", es mercadería que todavía no tiene código cargado. Se le carga desde la ficha del producto, en Productos.',
+        ],
+      },
+      {
+        titulo: 'Imprimir etiquetas de código de barras',
+        items: [
+          'El botón «Etiquetas» arma una planilla A4 con lo que se está viendo en la lista: los filtros de arriba son los que eligen qué etiquetar.',
+          'Sale por la Epson L1250. Imprimir SIEMPRE a escala 100%: si se elige "ajustar a la página", el código se achica y el lector deja de leerlo.',
+          'Las variantes sin código de barras no aparecen en la planilla. El administrador les genera uno interno de una sola vez.',
         ],
       },
     ],

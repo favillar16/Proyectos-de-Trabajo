@@ -11,6 +11,7 @@ import toast from 'react-hot-toast'
 const VARIANTE_VACÍA = {
   id:              null,     // presente solo si la variante ya existe en el backend (edición)
   color:           '',
+  codigo_barras:   '',       // EAN de la caja; se puede cargar escaneándolo
   acabado_id:      null,
   largo_cm:        '',
   ancho_cm:        '',
@@ -200,6 +201,10 @@ export function useProductoForm({ onSuccess } = {}) {
         // Inventario (que sí pasa por el historial de movimientos) — acá
         // solo se editan sus datos y, como mucho, el mínimo/ubicación.
         if (esVarianteExistente) { delete varPayload.stock_inicial; delete varPayload.stock_inicial_unidad }
+        // El filtro de arriba saca las cadenas vacías, y para el código de
+        // barras el vacío es un valor con significado: "sacale el código".
+        // Sin esto, borrarlo desde la ficha no tendría efecto.
+        if (esVarianteExistente) varPayload.codigo_barras = datosVariante.codigo_barras || ''
 
         let varianteId
         if (esVarianteExistente) {
@@ -274,6 +279,7 @@ export function useProductoForm({ onSuccess } = {}) {
   const mapearVarianteExistente = (v) => ({
     id:                 v.id,
     color:              v.color || '',
+    codigo_barras:      v.codigo_barras || '',
     calidad:            v.calidad || '',
     acabado_id:         v.acabado?.id || null,
     largo_cm:           v.largo_cm ?? '',

@@ -898,6 +898,7 @@ function Ticket({ datos, onNuevo, onImprimir }) {
           </button>
         </div>
 
+
         {/* Alerta si la impresión falló */}
         {datos.impresion?.ok === false && (
           <div style={{ marginTop:'10px', padding:'10px 14px',

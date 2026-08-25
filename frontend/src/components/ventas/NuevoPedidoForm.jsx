@@ -14,9 +14,10 @@ import {
   User, FileText, Loader2, CheckCircle, Package,
   X, ShoppingCart, PackagePlus,
 } from 'lucide-react'
-import { ventasApi, productosApi } from '../../services/api'
+import { ventasApi, productosApi, inventarioApi } from '../../services/api'
 import { useDevice } from '../../hooks/useDevice'
 import { useAuthStore } from '../../store/authStore'
+import { useEscaner, alEnterDeEscaneo } from '../../hooks/useEscaner'
 import { mensajeErrorApi } from '../../utils/apiErrors'
 import toast from 'react-hot-toast'
 
@@ -215,7 +216,7 @@ function BuscadorCliente({ clienteSel, onSeleccionar, onLimpiar }) {
 }
 
 // ─── Buscador de variantes (grande, persistente) ──────────────────────────────
-function BuscadorVariante({ onAgregar, idsEnCarrito }) {
+function BuscadorVariante({ onAgregar, idsEnCarrito, onEscanear }) {
   const [q, setQ] = useState('')
   const dq = useDebounce(q, 300)
   const ref = useRef()
@@ -237,7 +238,8 @@ function BuscadorVariante({ onAgregar, idsEnCarrito }) {
           ref={ref}
           value={q}
           onChange={e => setQ(e.target.value)}
-          placeholder="Buscar producto por nombre o código..."
+          onKeyDown={alEnterDeEscaneo((codigo) => { setQ(''); onEscanear?.(codigo) })}
+          placeholder="Escaneá el código o buscá por nombre..."
           autoFocus
           style={{
             width:'100%', height:'48px', padding:'0 40px 0 42px',
@@ -542,6 +544,54 @@ export default function NuevoPedidoForm({ onPedidoCreado, onCancelar }) {
     toast.success('Agregado al pedido', { duration: 1000 })
   }, [])
 
+  // ── Lector de código de barras FTX-LC123BH5 ─────────────────────────────
+  // Escanear agrega el producto al pedido de una: sin buscar, sin elegir
+  // variante. Es el flujo del mostrador — el cliente trae la caja, la
+  // vendedora la pasa por el lector.
+  const alEscanear = useCallback(async (codigo) => {
+    try {
+      const { data } = await inventarioApi.escanear(codigo)
+
+      if (data.ambiguo) {
+        // Un código de producto con varias variantes no se puede agregar
+        // solo: no se sabe cuál color quiere el cliente.
+        toast(`El código ${codigo} tiene ${data.total} variantes. `
+              + 'Buscalo y elegí cuál.', { icon: '🔎', duration: 3000 })
+        return
+      }
+
+      const r = data.resultado
+      if (Number(r.disponible) <= 0) {
+        toast.error(`${r.descripcion} está sin stock.`)
+        return
+      }
+
+      // El escaneo devuelve el dict de stock, que tiene otra forma que la
+      // variante del buscador. Se traduce acá para reusar agregarVariante(),
+      // que es quien conoce el tope de stock y el agrupado de repetidos.
+      agregarVariante(
+        {
+          id:                r.variante_id,
+          sku:               r.sku,
+          precio_venta:      r.precio_venta,
+          dimension_display: r.dimension,
+          color:             r.color,
+          acabado:           r.acabado ? { nombre: r.acabado } : null,
+          stock:             { disponible: r.disponible, cantidad: r.cantidad },
+        },
+        { nombre: r.producto_nombre, unidad_venta: r.unidad_venta },
+      )
+    } catch (err) {
+      if (err?.response?.status === 404) {
+        toast.error(`El código ${codigo} no está en el catálogo.`)
+      } else {
+        toast.error(mensajeErrorApi(err, 'No se pudo leer el código escaneado.'))
+      }
+    }
+  }, [agregarVariante])
+
+  useEscaner(alEscanear)
+
   const actualizarItem = useCallback((idx, campo, valor) => {
     setItems(prev => prev.map((i, n) => n === idx ? { ...i, [campo]: valor } : i))
   }, [])
@@ -608,7 +658,8 @@ export default function NuevoPedidoForm({ onPedidoCreado, onCancelar }) {
       {/* Buscador SIEMPRE visible y prominente */}
       <div style={{ padding:'14px 20px', borderBottom:`1px solid ${C.border}`,
         background:C.bgSec, flexShrink:0 }}>
-        <BuscadorVariante onAgregar={agregarVariante} idsEnCarrito={idsEnCarrito} />
+        <BuscadorVariante onAgregar={agregarVariante} idsEnCarrito={idsEnCarrito}
+          onEscanear={alEscanear} />
       </div>
 
       {/* Contenido scrollable: carrito + cliente */}

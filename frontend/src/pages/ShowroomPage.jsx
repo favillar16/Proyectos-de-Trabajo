@@ -25,6 +25,7 @@ import GaleriaImagenes from '../components/showroom/GaleriaImagenes'
 import ConsultaStock from '../components/showroom/ConsultaStock'
 import { useShowroom, VISTA, ORDEN } from '../hooks/useShowroom'
 import { useDevice } from '../hooks/useDevice'
+import { useEscaner } from '../hooks/useEscaner'
 import { useAuthStore } from '../store/authStore'
 import { ventasApi } from '../services/api'
 import { mensajeErrorApi } from '../utils/apiErrors'
@@ -912,6 +913,15 @@ export default function ShowroomPage() {
     setProductoSeleccionado } = showroom
 
   const [consultaAbierta, setConsultaAbierta] = useState(false)
+  // Código leído con el lector estando el panel de consulta cerrado. Se abre
+  // el panel y se le pasa: escanear tiene que funcionar sin que nadie toque
+  // nada primero, que es todo el punto del lector en el showroom.
+  const [codigoEscaneado, setCodigoEscaneado] = useState('')
+
+  useEscaner((codigo) => {
+    setCodigoEscaneado(codigo)
+    setConsultaAbierta(true)
+  }, { activo: !consultaAbierta })
   const [carrito, setCarrito] = useState([])
   const [carritoAbierto, setCarritoAbierto] = useState(false)
 
@@ -1023,7 +1033,8 @@ export default function ShowroomPage() {
       <ConsultaStock
         modo="modal"
         abierto={consultaAbierta}
-        onCerrar={() => setConsultaAbierta(false)}
+        codigoInicial={codigoEscaneado}
+        onCerrar={() => { setConsultaAbierta(false); setCodigoEscaneado('') }}
         onAgregarPedido={(item) => {
           // item viene de la consulta rápida: { variante, producto, ... }
           setConsultaAbierta(false)

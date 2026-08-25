@@ -14,6 +14,7 @@ import {
   CheckCircle,
 } from 'lucide-react'
 import { productosApi } from '../../services/api'
+import { alEnterDeEscaneo } from '../../hooks/useEscaner'
 import { tieneDimensiones, comboExtra } from './camposPorTipo'
 
 const C = {
@@ -394,6 +395,24 @@ function FilaVariante({
           </Select>
         </Field>
       </div>
+
+      {/* Código de barras — se carga escaneando la caja con el lector */}
+      <Field
+        label="Código de barras"
+        hint="Poné el cursor acá y pasá el lector por la caja. Si el producto no
+              trae código, dejalo vacío: el sistema le genera uno interno y se
+              imprime la etiqueta desde Inventario."
+      >
+        <Input
+          value={variante.codigo_barras || ''}
+          onChange={e => onChange('codigo_barras', e.target.value)}
+          onKeyDown={alEnterDeEscaneo((codigo) => onChange('codigo_barras', codigo))}
+          placeholder="Ej: 7791234567890"
+          autoComplete="off"
+          spellCheck={false}
+          style={{ fontFamily: 'monospace' }}
+        />
+      </Field>
 
       {/* Dimensiones — solo para categorías donde aplica (pisos, bachas, piletas, grifería, duchas, espejos...) */}
       {tieneDimensiones(categoriaTipo) && (

@@ -106,6 +106,14 @@ export const inventarioApi = {
   stockGeneral:   (params) => api.get('/inventario/stock/', { params }),
   movimientos:    (params) => api.get('/inventario/movimientos/', { params }),
   ajustar:        (data)   => api.post('/inventario/ajustes/', data),
+
+  // Lector de código de barras FTX-LC123BH5.
+  // escanear() resuelve exacto: devuelve una variante o 404. Es distinto de
+  // consultaRapida(), que busca "parecido" y devuelve una lista para elegir.
+  escanear:            (codigo)              => api.get('/inventario/escanear/', { params: { codigo } }),
+  asignarCodigoBarras: (varianteId, codigo)  => api.post('/inventario/codigo-barras/', {
+    variante_id: varianteId, codigo,
+  }),
 }
 
 // ─── Ventas ───────────────────────────────────────────────────
@@ -137,6 +145,19 @@ export const cajaApi = {
   listaPagos:      (params)    => api.get('/caja/pagos/lista/', { params }),
   reimprimir:      (id)        => api.post(`/caja/pagos/${id}/reimprimir/`),
   estadoImpresora: ()          => api.get('/caja/impresora/estado/'),
+
+  // ── Epson EcoTank L1250 (hoja A4) ──────────────────────────
+  // La L1250 no imprime comprobantes: la factura sale por su propio equipo.
+  // Lo único que sale por acá es la planilla de etiquetas de código de barras
+  // para pegar en la mercadería, que es lo que le da algo que leer al lector.
+  //
+  // Se baja como blob y NO como una URL para abrir en otra pestaña: el
+  // endpoint pide JWT en el header Authorization y una pestaña nueva no lo
+  // lleva. Mandar el token por query lo dejaría en el historial del navegador
+  // y en los logs. Ver utils/imprimirPdf.js.
+  etiquetas:       (variantes, desde = 0) => api.post('/caja/etiquetas/', {
+    variantes, desde,
+  }, { responseType: 'blob' }),
 
   // Reportes — descargan un archivo (PDF o Excel)
   descargarReporte: (tipo, formato, params = {}) =>

@@ -245,6 +245,42 @@ Reiniciar el backend.
 | 64 | Desde la tablet: crear un pedido | En la PC del depósito aparece sin recargar | ☐ |
 | 65 | Dos usuarios navegando simultáneamente | El sistema responde sin lentitud | ☐ |
 
+### 3.3 Periféricos — lector de código de barras e impresoras
+
+Detalle de instalación y problemas comunes en **`docs/perifericos.md`**.
+
+Antes de empezar, correr el diagnóstico: `python diagnostico_impresora.py`.
+Lista las impresoras instaladas y avisa si el nombre del `.env` no coincide.
+
+**Lector FTX-LC123BH5** — se enchufa el receptor USB y listo, no hay driver.
+
+| # | Prueba | Esperado | OK |
+|---|--------|----------|:--:|
+| 66 | Escanear cualquier código en el Bloc de notas | Escribe el código y baja un renglón (si no baja el renglón, al lector le falta el sufijo Enter) | ☐ |
+| 67 | Asignar códigos internos: `python manage.py asignar_codigos_barras --simular` | Lista las variantes sin código, sin escribir nada | ☐ |
+| 68 | Correrlo de verdad, sin `--simular`, **en la PC servidor** | Asigna un EAN-13 con prefijo 200 a cada una | ☐ |
+| 69 | Escanear una caja con EAN de fábrica en Productos → ficha → «Código de barras» | El campo se completa solo | ☐ |
+| 70 | Guardar y escanear ese mismo código en el showroom | Abre la ficha de esa variante con su stock | ☐ |
+| 71 | Escanear el mismo código en una nota de pedido nueva | Lo agrega al pedido; escanearlo otra vez le suma 1 | ☐ |
+| 72 | Escanear un producto sin stock | Avisa "está sin stock" y NO lo agrega | ☐ |
+| 73 | Escanear en Inventario | Abre directo el panel de ajuste de esa variante | ☐ |
+| 74 | Escanear un código que no existe | Mensaje "el código no está en el catálogo" | ☐ |
+| 75 | Intentar asignar a otra variante un código ya usado | Lo rechaza y dice a qué producto pertenece | ☐ |
+| 76 | Escribir a mano en el buscador, a velocidad normal | NO dispara un escaneo: busca como texto | ☐ |
+
+**Epson EcoTank L1250** — etiquetas de código de barras. *No imprime facturas:
+el comprobante fiscal sale por su propio equipo, todavía sin conectar.*
+
+| # | Prueba | Esperado | OK |
+|---|--------|----------|:--:|
+| 77 | Instalarla en Panel de control y copiar su nombre exacto a `IMPRESORA_A4_NOMBRE` | `diagnostico_impresora.py` la marca como disponible | ☐ |
+| 78 | En el diagnóstico, aceptar la hoja de etiquetas de prueba | Salen 6 etiquetas: 3 EAN-13 y 3 Code128 | ☐ |
+| 79 | Pasar el lector por las 6 etiquetas impresas | Las 6 se leen | ☐ |
+| 80 | Inventario → botón «Etiquetas» | Abre el PDF con las etiquetas de lo que está filtrado | ☐ |
+| 81 | Imprimir con "ajustar a la página" y escanear | **No se lee** — confirma por qué hay que imprimir al 100% | ☐ |
+| 82 | Reimprimir al 100% sobre la planilla autoadhesiva | Las etiquetas caen dentro del troquel y se leen | ☐ |
+| 83 | Etiquetas con `desde` = 7 | Deja en blanco las 7 primeras celdas de la hoja | ☐ |
+
 ---
 
 ## BLOQUE 4 — Ajustes de configuración para producción (15 min)
@@ -326,7 +362,12 @@ Si responde ERROR, iniciar Redis:
 net start Redis
 ```
 
-### "La impresora no imprime"
+### "La impresora no imprime" / "el lector no hace nada"
+
+Ver `docs/perifericos.md` §3, que tiene la tabla de síntomas de los dos
+aparatos. El atajo: `python diagnostico_impresora.py`.
+
+### "La impresora no imprime" (térmica)
 1. Ejecutar `python diagnostico_impresora.py`
 2. El nombre en `.env` debe coincidir **exactamente** con el nombre en Panel de control → Dispositivos e impresoras
 3. Si funciona desde Notepad pero no desde el sistema, es un problema de permisos del puerto: ejecutar el servidor Django como administrador

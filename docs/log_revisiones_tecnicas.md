@@ -204,6 +204,107 @@ proveedor (kits de baño SiderAgro).
 
 ---
 
+## 2026-08-25 — Lector de código de barras FTX-LC123BH5 + Epson L1250 (etiquetas)
+
+Detalle de uso y problemas comunes: **`docs/perifericos.md`**.
+
+### Lector FTX-LC123BH5 — implementado de punta a punta
+
+Es un HID: Windows lo ve como un teclado y "tipea" el código con un Enter al
+final. No hay driver que instalar. El sistema lo distingue del tipeo humano
+por la velocidad entre teclas (60 ms de umbral).
+
+- `apps/productos/codigo_barras.py` — dígito verificador EAN, validación y
+  generación de códigos internos con **prefijo GS1 200**, el rango reservado
+  para uso interno de un comercio (nunca colisiona con un EAN de fábrica).
+  El algoritmo del DV se contrastó contra cuatro EAN-13 reales, no solo
+  contra sí mismo: un test que solo verifica que `generar` y `validar`
+  coinciden pasa igual con el algoritmo invertido, y un código mal calculado
+  no lo lee ningún lector.
+- `Variante.codigo_barras` (migración `0005`) — unicidad por
+  `UniqueConstraint` **condicional**, que ignora los vacíos. Con `unique=True`
+  a secas, la segunda variante sin código no se habría podido guardar.
+  Consecuencia a tener presente: DRF **no** genera validador de unicidad para
+  un constraint condicional, así que cada camino de escritura chequea
+  duplicados por su cuenta (serializer y endpoint de asignación).
+- `GET /inventario/escanear/` — resuelve **exacto**: una variante o 404.
+  Deliberadamente distinto de la consulta rápida, que busca "parecido": un
+  escaneo que devuelve una lista no sirve, el punto del lector es que la
+  vendedora no elija nada. Precedencia: código de barras → SKU → código de
+  producto (este último puede ser ambiguo y devuelve las variantes).
+- `POST /inventario/codigo-barras/` — asignación desde recepción de
+  mercadería (admin/depósito; el showroom no puede, porque asignar mal un
+  código hace que la caja cobre otro producto).
+- Frontend: `hooks/useEscaner.js` + integración en showroom, nota de pedido,
+  inventario y ficha de producto. El hook global solo captura con el foco
+  **fuera** de un campo de texto; dentro de un campo, el escaneo es texto
+  normal y lo cierra el Enter (`alEnterDeEscaneo`). Sin esa separación, un
+  escaneo dispararía la búsqueda *y* dejaría el código pegado en el buscador.
+- `python manage.py asignar_codigos_barras` — con `--simular` (que hace
+  rollback real, no un `if` a mitad del bucle).
+
+### Epson EcoTank L1250 — etiquetas, NO facturas
+
+Se agregó primero la impresión de la factura en A4 y **se retiró en la misma
+sesión**: la L1250 no es la impresora de comprobantes. El comprobante fiscal
+va a salir por su propio equipo, todavía sin conectar. Quedó solo lo que la
+L1250 sí hace falta que imprima: la planilla de etiquetas de código de barras,
+que es la contraparte física del lector.
+
+- `apps/caja/impresora_a4.py` — driver (verbo `printto` de Windows) y armado
+  de la planilla con reportlab. No usa `python-barcode`: reportlab ya trae
+  `graphics.barcode`, así que no se sumó dependencia.
+- `IMPRESORA_A4_MODO`: `manual` (default — se imprime desde el navegador,
+  anda siempre) o `auto` (el servidor la manda a la cola, pero necesita que
+  el `.pdf` tenga registrado el verbo `printto`, que **no** trae el visor de
+  Edge ni el de Chrome; si falta, el trabajo se pierde en silencio).
+
+### Errores encontrados y corregidos
+
+1. **`diagnostico_impresora.py` se cortaba en la primera línea impresa.**
+   `UnicodeEncodeError`: la consola arranca en cp850 (o cp1252 al redirigir)
+   y ahí no existen ni `═` ni `▶`. Fallaba justo al redirigir la salida a un
+   archivo, que es lo que hace alguien para mandar el resultado por chat y
+   pedir ayuda. Fix: `sys.stdout.reconfigure(errors='replace')`, que mantiene
+   la codificación real de la consola. Forzar UTF-8 habría sido peor —
+   escribiría bytes UTF-8 en una consola cp850 y saldría todo con acentos
+   rotos.
+2. **`ConsultaRapidaStockView` declaraba `permission_classes` dos veces**
+   (`apps/inventario/views.py`). Sin efecto funcional, pero deja la duda de
+   cuál manda.
+3. **Un carácter BEL (0x07) dentro de `docs/traspaso_pendientes.md`**, de un
+   `\a` interpretado en una sesión anterior: el comando documentado decía
+   `venv\Scripts` + BEL + `ctivate` y no se podía copiar y pegar.
+4. **`CLAUDE.md` documentaba mal el comando de migraciones** (estaba anotado
+   como pendiente en el traspaso). Las etiquetas de app son cortas.
+5. **Directorios fantasma** de expansiones de llaves fallidas
+   (`{backend,frontend}`, `frontend/src/{components`, `backend/{config,apps`),
+   vacíos y sin trackear. Borrados.
+
+### Tests
+
+De 117 backend + 22 frontend a **165 backend + 44 frontend**, todos en verde:
+
+| Suite | Qué cubre |
+|---|---|
+| `apps/productos/tests/test_codigo_barras.py` (22) | DV del EAN contra códigos reales, rango GS1 interno, normalización del sufijo del lector, unicidad |
+| `apps/inventario/tests/test_escaneo.py` (18) | Precedencia de resolución, escaneo con `\r\n`, ambigüedad, 404, permisos por rol |
+| `apps/caja/tests/test_impresora_a4.py` (8) | Grilla de la planilla, reuso de hojas empezadas, una etiqueta rota no tumba las otras 23 |
+| `frontend/src/hooks/useEscaner.test.jsx` (22) | Ráfaga rápida vs. tipeo humano, sufijo Enter, no capturar dentro de campos de texto |
+
+### ⚠️ Lo que no se pudo verificar acá
+
+- **Nada se probó contra el lector ni la impresora reales**: esta máquina es
+  la notebook de la propietaria, que no los tiene conectados (el diagnóstico
+  encuentra una `EPSON55F4E6 (L3250 Series)`, que es otra impresora). Los
+  casos 66–83 de `docs/checklist_entrega.md` están para correr en el local.
+- **`asignar_codigos_barras` NO se corrió**: en la notebook, que es espejo de
+  solo lectura, lo que se escriba se pisa en la próxima sincronización. Hay
+  que correrlo en la PC servidor. En este equipo hay 130 variantes esperando
+  código.
+
+---
+
 ## Pendientes conocidos (no resueltos aún)
 
 Quedaron identificados pero **sin corregir** — a revisar/decidir en la

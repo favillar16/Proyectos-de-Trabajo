@@ -13,11 +13,13 @@ import {
   AlertCircle, XCircle, CheckCircle, Package,
   Search, SlidersHorizontal, RefreshCw, Plus,
   Minus, RotateCcw, History, X, ChevronDown,
-  Warehouse, TrendingDown, TrendingUp, ArrowUpDown,
+  Warehouse, TrendingDown, TrendingUp, ArrowUpDown, Tag,
 } from 'lucide-react'
 import Layout from '../components/layout/Layout'
-import { inventarioApi, productosApi } from '../services/api'
+import { inventarioApi, productosApi, cajaApi } from '../services/api'
 import { usePedidoSocket } from '../hooks/usePedidoSocket'
+import { useEscaner, alEnterDeEscaneo } from '../hooks/useEscaner'
+import { abrirPdfParaImprimir } from '../utils/imprimirPdf'
 import toast from 'react-hot-toast'
 
 const C = {
@@ -523,6 +525,7 @@ export default function InventarioPage() {
   const [itemAjuste,  setItemAjuste]  = useState(null)
   const [itemHistorial,setItemHistorial]=useState(null)
   const [pagina,      setPagina]      = useState(1)
+  const [etiquetasCargando, setEtiquetasCargando] = useState(false)
   const busquedaDebounced = useDebounce(busqueda, 380)
   const PAGE = 40
 
@@ -544,6 +547,35 @@ export default function InventarioPage() {
       }
     },
   })
+
+  // ── Lector de código de barras FTX-LC123BH5 ─────────────────────────────
+  // En depósito el escaneo abre directo el panel de ajuste de esa variante:
+  // es el flujo de recepción de mercadería, donde se escanea caja por caja y
+  // se carga la cantidad que entró.
+  const alEscanear = useCallback(async (codigo) => {
+    try {
+      const { data } = await inventarioApi.escanear(codigo)
+      if (data.ambiguo) {
+        // Código de producto con varias variantes: no se puede ajustar sin
+        // saber cuál. Se deja la búsqueda hecha para que se elija.
+        setBusqueda(codigo)
+        toast(`${data.total} variantes con ese código — elegí cuál ajustar.`,
+          { icon: '🔎' })
+        return
+      }
+      setItemAjuste(data.resultado)
+    } catch (err) {
+      if (err?.response?.status === 404) {
+        toast.error(`El código ${codigo} no está asignado a ningún producto.`)
+      } else {
+        toast.error('No se pudo leer el código escaneado.')
+      }
+    }
+  }, [])
+
+  // Solo cuando no hay un panel abierto: dentro del ajuste el foco está en
+  // los campos de cantidad y un escaneo ahí sería un accidente.
+  useEscaner(alEscanear, { activo: !itemAjuste && !itemHistorial })
 
   const { data, isLoading, refetch } = useQuery({
     queryKey: ['stock', busquedaDebounced, filtroEstado, filtroCateg, pagina],
@@ -567,6 +599,34 @@ export default function InventarioPage() {
   const items    = data?.results || []
   const total    = data?.count   || 0
   const paginas  = data?.pages   || 1
+
+  // ── Etiquetas de código de barras (Epson L1250) ─────────────────────────
+  // Se imprime lo que está a la vista: los filtros de arriba son los que
+  // eligen qué etiquetar. Las variantes sin código quedan afuera — no hay
+  // nada que imprimirles todavía.
+  const varianteConCodigo = items.filter(i => i.codigo_barras)
+  const conCodigo = varianteConCodigo.length
+
+  const imprimirEtiquetas = async () => {
+    if (conCodigo === 0) return
+    setEtiquetasCargando(true)
+    try {
+      const res = await cajaApi.etiquetas(varianteConCodigo.map(i => i.variante_id))
+      const abrio = abrirPdfParaImprimir(res.data, { imprimir: false })
+      if (abrio) {
+        toast('Imprimí a escala 100%, sin "ajustar a la página": '
+              + 'si no, las etiquetas caen fuera del troquel.',
+          { icon: '🖨️', duration: 7000 })
+      } else {
+        toast('El navegador bloqueó la ventana: la planilla se descargó.',
+          { icon: '📄', duration: 5000 })
+      }
+    } catch {
+      toast.error('No se pudo armar la planilla de etiquetas.')
+    } finally {
+      setEtiquetasCargando(false)
+    }
+  }
 
   // Stats
   const conStock  = items.filter(i => i.estado === 'disponible').length
@@ -672,7 +732,8 @@ export default function InventarioPage() {
           <input
             value={busqueda}
             onChange={e => { setBusqueda(e.target.value); setPagina(1) }}
-            placeholder="Buscar por SKU, nombre, código..."
+            onKeyDown={alEnterDeEscaneo((codigo) => alEscanear(codigo))}
+            placeholder="Escaneá el código, o buscá por SKU o nombre..."
             style={{ width:'100%', height:'38px', padding:'0 34px',
               border:`1px solid ${C.border}`, borderRadius:'9px',
               fontSize:'13.5px', color:C.text, background:C.bg, outline:'none' }}
@@ -721,11 +782,28 @@ export default function InventarioPage() {
           </button>
         )}
 
+        {/* Etiquetas de código de barras — Epson L1250 */}
+        <button onClick={imprimirEtiquetas} disabled={etiquetasCargando || conCodigo === 0}
+          title={conCodigo === 0
+            ? 'Ninguna de las variantes listadas tiene código de barras cargado'
+            : `Planilla A4 con ${conCodigo} etiqueta(s) de lo que se está viendo`}
+          style={{ height:'38px', padding:'0 12px', marginLeft:'auto',
+            display:'flex', alignItems:'center', gap:'6px',
+            background:'transparent',
+            border:`1px solid ${conCodigo === 0 ? C.border : C.gold}`,
+            borderRadius:'9px',
+            color: conCodigo === 0 ? C.textMuted : C.goldDark,
+            fontSize:'13px',
+            cursor: conCodigo === 0 ? 'not-allowed' : (etiquetasCargando ? 'wait' : 'pointer') }}>
+          <Tag size={13}/>
+          {etiquetasCargando ? 'Armando...' : `Etiquetas (${conCodigo})`}
+        </button>
+
         <button onClick={()=>refetch()}
           style={{ width:'38px', height:'38px', borderRadius:'9px',
             background:'transparent', border:`1px solid ${C.border}`,
             cursor:'pointer', color:C.textSec,
-            display:'flex', alignItems:'center', justifyContent:'center', marginLeft:'auto' }}>
+            display:'flex', alignItems:'center', justifyContent:'center' }}>
           <RefreshCw size={15}/>
         </button>
       </div>

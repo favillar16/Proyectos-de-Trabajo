@@ -1,11 +1,12 @@
 # Traspaso — trabajo pendiente y contexto
 
-**Fecha de corte: 23/08/2026.** Documento pensado para que otra persona o
+**Fecha de corte: 25/08/2026.** Documento pensado para que otra persona o
 equipo pueda continuar sin haber participado de las sesiones previas.
 
 Complementa, no reemplaza:
 
 - `docs/facturacion_electronica.md` — detalle técnico de la facturación electrónica
+- `docs/perifericos.md` — lector de código de barras e impresoras
 - `docs/todo_montaje_servidor.md` — checklist del armado del local
 - `docs/log_revisiones_tecnicas.md` — historial de revisiones
 - `CLAUDE.md` — arquitectura del sistema
@@ -41,7 +42,7 @@ antes: no genera documentos electrónicos y no sale a internet.
 
 ```
 cd backend
-venv\Scriptsctivate
+venv\Scripts\activate
 python manage.py test apps.facturacion
 ```
 
@@ -150,6 +151,73 @@ teclas de función, es la única vía.
 
 ---
 
+## 2 bis. Periféricos — lector e impresoras (25/08/2026)
+
+### Lector de código de barras FTX-LC123BH5 — implementado
+
+Es un HID (se comporta como un teclado): no hay driver ni servicio. El sistema
+lo distingue del tipeo humano por la velocidad entre teclas
+(`frontend/src/hooks/useEscaner.js`).
+
+Lo que se agregó:
+
+- `Variante.codigo_barras` — EAN-13 de fábrica o interno con prefijo GS1 200
+  (`apps/productos/codigo_barras.py`). Unicidad por `UniqueConstraint`
+  **condicional**, que ignora los vacíos porque el vacío es el caso normal.
+- `GET /inventario/escanear/` — resuelve exacto: una variante o 404. No es la
+  consulta rápida: un escaneo que devuelve una lista no sirve de nada.
+- `POST /inventario/codigo-barras/` — asigna el código de la caja a la
+  variante (admin/depósito).
+- Escaneo integrado en showroom, nota de pedido, inventario y ficha de
+  producto.
+- `python manage.py asignar_codigos_barras` — genera los internos.
+
+**Cubierto por tests:** 22 del algoritmo del EAN y el modelo, 18 de la
+resolución del escaneo y los permisos, 22 del hook del frontend.
+
+#### ⚠️ Lo que queda por confirmar a mano
+
+1. **El lector tiene que tener Enter (CR) como sufijo.** Viene así de fábrica;
+   si alguien lo reconfiguró, el sistema junta las teclas y nunca busca. Se
+   prueba en el Bloc de notas: tiene que bajar un renglón después del código.
+2. **El umbral de velocidad (60 ms entre teclas).** Está calibrado para
+   distinguir el lector de una persona, pero contra el aparato real no se
+   probó. Si un escaneo no dispara, ese número es lo primero a mirar.
+3. **Correr `asignar_codigos_barras` en la PC servidor, no en la notebook.**
+   La notebook es espejo de solo lectura: lo que se escriba ahí se pisa.
+
+### Epson EcoTank L1250 — etiquetas, NO facturas
+
+**La L1250 no es la impresora de facturas.** El comprobante fiscal va a salir
+por su propio equipo, todavía sin conectar. La L1250 imprime la planilla A4 de
+etiquetas de código de barras, que es lo que le da algo que leer al lector en
+la mercadería que viene sin EAN de fábrica.
+
+- `apps/caja/impresora_a4.py` — driver (envío por el verbo `printto` de
+  Windows) y armado de la planilla con reportlab.
+- `GET/POST /caja/etiquetas/` y `python manage.py imprimir_etiquetas`.
+- Botón «Etiquetas» en Inventario: imprime lo que está filtrado a la vista.
+
+Dos modos, en `IMPRESORA_A4_MODO`: `manual` (default, se imprime desde el
+navegador — anda siempre) y `auto` (el servidor la manda a la cola, pero
+necesita que el `.pdf` tenga registrado el verbo `printto`, que **no** trae el
+visor de Edge). `diagnostico_impresora.py` chequea las dos cosas.
+
+#### ⚠️ Pendiente de la impresora de facturas
+
+Cuando se defina el equipo, el punto de entrada es `apps/caja/printer.py`
+(`FacturaBuilder`), que hoy saca la factura por la térmica. Si el equipo nuevo
+tampoco habla ESC/POS, el patrón a copiar es el de `impresora_a4.py`: armar un
+PDF y mandarlo por la cola de Windows.
+
+#### ⚠️ Al imprimir etiquetas: escala 100%
+
+"Ajustar a la página" achica el código y el lector deja de leerlo. La etiqueta
+se ve perfecta, así que el error cuesta encontrarlo. Está en la ayuda
+contextual y en el checklist (caso 81, que lo hace fallar a propósito).
+
+---
+
 ## 3. Otros pendientes registrados
 
 ### Seguridad — RESUELTO en código, falta un paso manual
@@ -212,10 +280,11 @@ migración. Ver `docs/todo_montaje_servidor.md` §7.
 - **`CLAUDE.md` documenta mal el comando de migraciones.** Dice
   `makemigrations apps.productos ...` pero las etiquetas de app son cortas:
   `makemigrations productos facturacion`.
-- **Los tests del resto del sistema siguen sin existir.** Se agregó la
-  primera suite automatizada del proyecto, pero cubre solo facturación
-  electrónica y la ayuda contextual. El resto se sigue verificando a mano
-  contra `docs/checklist_entrega.md` (59 casos).
+- **Los tests cubren solo una parte del sistema.** Hoy son 165 backend
+  (facturación electrónica, código de barras, resolución del escaneo,
+  planilla de etiquetas) y 44 frontend (ayuda contextual y el hook del
+  lector). Ventas, caja, inventario y costos siguen sin tests y se verifican
+  a mano contra `docs/checklist_entrega.md` (83 casos).
 - **El channel layer es `InMemoryChannelLayer`.** Alcanza porque hay un solo
   proceso daphne. Si algún día se escala a varios, hay que pasar a Redis.
 
