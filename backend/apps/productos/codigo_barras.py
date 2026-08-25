@@ -1,51 +1,28 @@
 """
 apps/productos/codigo_barras.py
 
-Códigos de barras de las variantes, para el lector FTX-LC123BH5.
+Códigos EAN-13 internos, para la mercadería que no trae código de fábrica.
 
-El lector es un HID: se comporta como un teclado y "tipea" el código seguido
-de un Enter. No necesita driver ni configuración en el backend — todo lo que
-hace falta acá es (1) guardar el código contra la variante y (2) poder
-resolverlo a una variante en una sola consulta exacta.
+Este módulo NO decide cómo se guarda ni cómo se busca un código: de eso se
+encarga `Variante.codigo_barras` y el endpoint
+`productos/variantes/por-codigo-barras/`. Acá está solo la aritmética de GS1,
+que hace falta para dos cosas:
 
-Dos orígenes de código conviven:
+1. **Generar** un código propio cuando el producto no trae ninguno. Buena parte
+   del rubro (sanitarios, griferías, accesorios) llega sin EAN impreso, y sin
+   código no hay nada que escanear. Se usa el **prefijo 200**, el rango que
+   GS1 reserva para uso interno de un comercio: nunca colisiona con un código
+   real, porque ningún fabricante puede registrarse ahí.
+   → `python manage.py asignar_codigos_barras`
 
-1. **De fábrica.** La caja del porcelanato ya trae un EAN-13 impreso. Es el
-   caso ideal: se escanea al recibir la mercadería y se guarda tal cual.
-2. **Interno.** La mayoría de los sanitarios y accesorios del rubro vienen sin
-   código. Para esos el sistema genera un EAN-13 propio con prefijo 200-299,
-   que es el rango que GS1 reserva para uso interno de un comercio: nunca
-   colisiona con un código real de fábrica porque ningún fabricante puede
-   registrarse en ese rango. Se imprime en etiqueta con la Epson L1250
-   (ver apps/caja/etiquetas.py).
-
-Se aceptan además códigos que no son EAN-13 (Code128, CODE39, QR), porque
-el FTX-LC123BH5 los lee y algún proveedor los usa. La validación solo exige
-que el dígito verificador cierre cuando el código *parece* un EAN-13 o un
-UPC-A: un EAN-13 mal tipeado a mano es el error que de verdad ocurre, y
-dejarlo pasar significa que el escaneo nunca encuentra el producto.
+2. **Reconocer** si un código es un EAN-13 válido, para saber con qué
+   simbología imprimir la etiqueta: EAN-13 si el dígito verificador cierra,
+   Code128 en cualquier otro caso. El lector FTX-LC123BH5 lee las dos.
+   → `apps/caja/impresora_a4.py`
 """
-import re
-
-from django.core.exceptions import ValidationError
 
 # Rango GS1 de uso interno del comercio. No se asigna a ningún fabricante.
 PREFIJO_INTERNO = '200'
-
-# Lo que el lector puede entregar: dígitos, letras, guiones y puntos.
-# Se rechazan espacios y caracteres de control porque son casi siempre basura
-# de un escaneo cortado a la mitad.
-_PATRON_VALIDO = re.compile(r'^[A-Za-z0-9\-\.\/\+]{4,32}$')
-
-
-def normalizar(codigo) -> str:
-    """
-    Deja el código como se guarda: sin espacios alrededor y en mayúsculas.
-
-    El lector puede mandar un CR/LF al final según cómo esté configurado el
-    sufijo; se limpia acá para que no llegue nunca a la base.
-    """
-    return (codigo or '').strip().strip('\r\n').upper()
 
 
 def digito_verificador_ean(cuerpo: str) -> str:
@@ -69,21 +46,12 @@ def digito_verificador_ean(cuerpo: str) -> str:
     return str((10 - suma % 10) % 10)
 
 
-def es_ean_valido(codigo: str) -> bool:
+def es_ean_valido(codigo) -> bool:
     """True si el código es un EAN-13, EAN-8 o UPC-A con el DV correcto."""
-    codigo = normalizar(codigo)
+    codigo = (codigo or '').strip()
     if not codigo.isdigit() or len(codigo) not in (8, 12, 13):
         return False
     return digito_verificador_ean(codigo[:-1]) == codigo[-1]
-
-
-def parece_ean(codigo: str) -> bool:
-    """
-    True si el código tiene la pinta de un EAN/UPC (solo dígitos y largo
-    de EAN-8, UPC-A o EAN-13), independientemente de si el DV cierra.
-    """
-    codigo = normalizar(codigo)
-    return codigo.isdigit() and len(codigo) in (8, 12, 13)
 
 
 def generar_ean_interno(numero: int) -> str:
@@ -100,34 +68,7 @@ def generar_ean_interno(numero: int) -> str:
     return cuerpo + digito_verificador_ean(cuerpo)
 
 
-def es_interno(codigo: str) -> bool:
+def es_interno(codigo) -> bool:
     """True si el código lo generó este sistema (prefijo GS1 de uso interno)."""
-    codigo = normalizar(codigo)
+    codigo = (codigo or '').strip()
     return len(codigo) == 13 and codigo.startswith(PREFIJO_INTERNO)
-
-
-def validar_codigo_barras(codigo):
-    """
-    Validador del campo `Variante.codigo_barras`.
-
-    Vacío es válido: la mayoría del catálogo arranca sin código y se van
-    cargando a medida que entra mercadería.
-    """
-    codigo = normalizar(codigo)
-    if not codigo:
-        return
-
-    if not _PATRON_VALIDO.match(codigo):
-        raise ValidationError(
-            'El código de barras solo puede tener letras, números, guiones y '
-            'puntos, y entre 4 y 32 caracteres. Si lo escaneaste y salió esto, '
-            'volvé a escanearlo: probablemente se cortó a la mitad.'
-        )
-
-    if parece_ean(codigo) and not es_ean_valido(codigo):
-        esperado = digito_verificador_ean(codigo[:-1])
-        raise ValidationError(
-            f'El código {codigo} tiene largo de EAN pero el dígito verificador '
-            f'no cierra (termina en {codigo[-1]} y debería terminar en '
-            f'{esperado}). Revisá si se tipeó mal algún dígito.'
-        )

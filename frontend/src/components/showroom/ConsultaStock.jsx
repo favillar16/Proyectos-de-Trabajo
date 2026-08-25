@@ -19,8 +19,8 @@ import {
   ScanLine, Info,
 } from 'lucide-react'
 import { inventarioApi } from '../../services/api'
+import { useLectorCodigoBarras } from '../../hooks/useLectorCodigoBarras'
 import { useDevice } from '../../hooks/useDevice'
-import { useEscaner, alEnterDeEscaneo } from '../../hooks/useEscaner'
 
 const C = {
   sidebar:    '#453941', sidebarHov:'#362F31',
@@ -261,7 +261,6 @@ function DetalleItem({ item, onVolver }) {
       {/* Datos del ítem */}
       <p style={{ fontSize: '11px', color: C.textMuted, fontFamily: 'monospace', marginBottom: '4px' }}>
         {item.producto_codigo} · SKU: {item.sku}
-        {item.codigo_barras ? ` · CB: ${item.codigo_barras}` : ''}
       </p>
       <h3 style={{ fontSize: '17px', fontWeight: '500', color: C.text,
         fontFamily: 'var(--font-display)', marginBottom: '4px', lineHeight: 1.3 }}>
@@ -344,16 +343,13 @@ export default function ConsultaStock({
   abierto       = true,
   onCerrar,
   onAgregarPedido,
-  // Código que ya venía escaneado desde afuera: el showroom captura el
-  // escaneo con el panel cerrado, lo abre y lo pasa por acá para que se
-  // resuelva solo. Sin esto, el lector solo serviría con el panel ya abierto.
+  // Código que ya venía leído desde afuera: el showroom escucha el lector con
+  // este panel cerrado, lo abre y le pasa el código por acá. Sin esto, el
+  // lector solo serviría con el panel ya abierto.
   codigoInicial = '',
 }) {
   const [query,          setQuery]          = useState('')
   const [itemSeleccionado, setItemSeleccionado] = useState(null)
-  // Código escaneado que no está en el catálogo. Se guarda aparte del estado
-  // de búsqueda para poder dar un mensaje distinto al de "sin resultados".
-  const [escaneoSinResultado, setEscaneoSinResultado] = useState('')
   const inputRef = useRef(null)
   const device   = useDevice()
   const dQuery   = useDebounce(query, 400)
@@ -390,43 +386,24 @@ export default function ConsultaStock({
     inputRef.current?.focus()
   }, [])
 
-  // ── Lector de código de barras ──────────────────────────────────────────
-  // Un escaneo resuelve exacto: si da una sola variante se abre su detalle
-  // directamente, sin pasar por la lista. Es el punto del lector — que la
-  // vendedora no tenga que elegir nada.
-  const resolverEscaneo = useCallback(async (codigo) => {
-    setQuery(codigo)
-    setItemSeleccionado(null)
-    setEscaneoSinResultado('')
-    try {
-      const { data } = await inventarioApi.escanear(codigo)
-      if (data.encontrado && !data.ambiguo && data.resultado) {
-        setItemSeleccionado(data.resultado)
-      }
-      // Si es ambiguo (un código de producto con varias variantes) se deja
-      // la búsqueda hecha y la lista de abajo muestra las opciones.
-    } catch (err) {
-      if (err?.response?.status === 404) {
-        // El código no está en el catálogo. Se avisa explícitamente en vez de
-        // dejar la búsqueda vacía: "sin resultados" no distingue entre un
-        // código desconocido y un error de red.
-        setEscaneoSinResultado(codigo)
-      }
-    }
-  }, [])
+  // Lector de código de barras (FTX LC123BH5).
+  // Escucha en toda la pantalla, no solo en el campo: el vendedor apunta a la
+  // caja y dispara sin tener que hacer clic antes en el buscador.
+  useLectorCodigoBarras({
+    activo: abierto,
+    onLectura: (codigo) => {
+      setQuery(codigo)
+      setItemSeleccionado(null)
+    },
+  })
 
-  // Escaneo con el foco fuera del buscador (tablet apoyada en el mostrador).
-  useEscaner(resolverEscaneo, { activo: abierto })
-
-  // Escaneo con el foco dentro del buscador: el lector escribe ahí y cierra
-  // con Enter.
-  const alEnterEnBuscador = alEnterDeEscaneo(resolverEscaneo)
-
-  // Escaneo que llegó desde afuera con el panel cerrado (el showroom lo
-  // captura y abre este panel). Se resuelve al abrirse.
+  // Lectura que llegó con el panel cerrado. Se aplica al abrirse.
   useEffect(() => {
-    if (abierto && codigoInicial) resolverEscaneo(codigoInicial)
-  }, [abierto, codigoInicial, resolverEscaneo])
+    if (abierto && codigoInicial) {
+      setQuery(codigoInicial)
+      setItemSeleccionado(null)
+    }
+  }, [abierto, codigoInicial])
 
   if (!abierto && modo === 'modal') return null
 
@@ -456,7 +433,7 @@ export default function ConsultaStock({
                 Consulta de stock
               </p>
               <p style={{ fontSize: '11px', color: C.textMuted }}>
-                Escaneá el código de barras, o buscá por SKU o nombre
+                Escaneá con el lector, o buscá por código, SKU o nombre
               </p>
             </div>
           </div>
@@ -480,13 +457,8 @@ export default function ConsultaStock({
           <input
             ref={inputRef}
             value={query}
-            onChange={e => {
-              setQuery(e.target.value)
-              setItemSeleccionado(null)
-              setEscaneoSinResultado('')
-            }}
-            onKeyDown={alEnterEnBuscador}
-            placeholder="Escaneá el código o buscá: POR-001 · 60x60 · gris..."
+            onChange={e => { setQuery(e.target.value); setItemSeleccionado(null) }}
+            placeholder="Escaneá o escribí: POR-001 · 60x60 · gris..."
             autoComplete="off"
             autoCorrect="off"
             spellCheck={false}
@@ -547,26 +519,6 @@ export default function ConsultaStock({
       {/* ── Contenido ── */}
       <div style={{ flex: 1, overflowY: 'auto', WebkitOverflowScrolling: 'touch' }}>
 
-        {/* Código escaneado que no está en el catálogo */}
-        {escaneoSinResultado && !itemSeleccionado && (
-          <div style={{
-            margin: '12px 16px 0', padding: '12px 14px',
-            background: C.warningBg, border: `1px solid ${C.warningBorder}`,
-            borderRadius: '10px',
-          }}>
-            <p style={{ fontSize: '13px', fontWeight: '500', color: C.warning,
-              display: 'flex', alignItems: 'center', gap: '6px' }}>
-              <AlertCircle size={14} /> Código no reconocido
-            </p>
-            <p style={{ fontSize: '12.5px', color: C.textSec, marginTop: '4px', lineHeight: 1.5 }}>
-              Ningún producto tiene el código{' '}
-              <strong style={{ fontFamily: 'monospace' }}>{escaneoSinResultado}</strong>.
-              Si es mercadería nueva, hay que cargarle el código desde la ficha
-              del producto. Abajo quedan los resultados de buscarlo como texto.
-            </p>
-          </div>
-        )}
-
         {/* Detalle de ítem seleccionado */}
         {itemSeleccionado ? (
           <DetalleItem
@@ -616,8 +568,8 @@ export default function ConsultaStock({
                   Consulta rápida de stock
                 </p>
                 <p style={{ fontSize: '13px', marginTop: '4px', lineHeight: 1.6 }}>
-                  Pasá el lector por el código de barras,<br />
-                  o escribí el código de producto, SKU o nombre.
+                  Escribí el código de producto,<br />
+                  SKU de variante o nombre.
                 </p>
               </div>
             )}

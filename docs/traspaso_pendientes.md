@@ -153,45 +153,53 @@ teclas de función, es la única vía.
 
 ## 2 bis. Periféricos — lector e impresoras (25/08/2026)
 
-### Lector de código de barras FTX-LC123BH5 — implementado
+Guía de uso del lector: **`docs/LECTOR_CODIGO_BARRAS.md`**.
+Impresoras y etiquetas: **`docs/perifericos.md`**.
+
+### Lector FTX LC123BH5 — implementado
 
 Es un HID (se comporta como un teclado): no hay driver ni servicio. El sistema
 lo distingue del tipeo humano por la velocidad entre teclas
-(`frontend/src/hooks/useEscaner.js`).
+(`frontend/src/hooks/useLectorCodigoBarras.js`).
 
-Lo que se agregó:
+- `Variante.codigo_barras` — EAN-13 de fábrica o interno con prefijo GS1 200.
+  **Sin código guarda `NULL`, no cadena vacía**: el campo es `unique=True` y
+  dos vacíos chocarían. Cualquier consulta de "sin código" tiene que usar
+  `__isnull=True`.
+- `GET productos/variantes/por-codigo-barras/` — responde siempre 200 con
+  `encontrado: true|false`. Un código desconocido no es un error: al dar de
+  alta mercadería nueva es justamente lo esperado.
+- Escaneo integrado en: alta de producto (con aviso si el código ya está en
+  otra ficha), consulta rápida de stock, buscador general, **nota de pedido**
+  (agrega el producto) e **inventario** (abre el panel de ajuste).
+- `python manage.py asignar_codigos_barras` genera los códigos internos para
+  la mercadería que no trae EAN de fábrica.
 
-- `Variante.codigo_barras` — EAN-13 de fábrica o interno con prefijo GS1 200
-  (`apps/productos/codigo_barras.py`). Unicidad por `UniqueConstraint`
-  **condicional**, que ignora los vacíos porque el vacío es el caso normal.
-- `GET /inventario/escanear/` — resuelve exacto: una variante o 404. No es la
-  consulta rápida: un escaneo que devuelve una lista no sirve de nada.
-- `POST /inventario/codigo-barras/` — asigna el código de la caja a la
-  variante (admin/depósito).
-- Escaneo integrado en showroom, nota de pedido, inventario y ficha de
-  producto.
-- `python manage.py asignar_codigos_barras` — genera los internos.
-
-**Cubierto por tests:** 22 del algoritmo del EAN y el modelo, 18 de la
-resolución del escaneo y los permisos, 22 del hook del frontend.
+**Cubierto por tests:** 15 backend del campo y la búsqueda, 12 del EAN interno
+y 16 frontend del hook.
 
 #### ⚠️ Lo que queda por confirmar a mano
 
-1. **El lector tiene que tener Enter (CR) como sufijo.** Viene así de fábrica;
-   si alguien lo reconfiguró, el sistema junta las teclas y nunca busca. Se
-   prueba en el Bloc de notas: tiene que bajar un renglón después del código.
-2. **El umbral de velocidad (60 ms entre teclas).** Está calibrado para
+1. **El lector tiene que tener Enter (CR) como sufijo** y estar en modo
+   teclado (HID), no en modo puerto serie. Viene así de fábrica. Se prueba en
+   el Bloc de notas: tiene que escribir el código y bajar un renglón.
+2. **El umbral de velocidad (50 ms entre teclas).** Está calibrado para
    distinguir el lector de una persona, pero contra el aparato real no se
-   probó. Si un escaneo no dispara, ese número es lo primero a mirar.
+   probó. Si una lectura no dispara, ese número es lo primero a mirar.
 3. **Correr `asignar_codigos_barras` en la PC servidor, no en la notebook.**
    La notebook es espejo de solo lectura: lo que se escriba ahí se pisa.
+4. **El código se escribe además en el campo que tenga el foco.** El hook
+   escucha en fase de captura y no bloquea la tecla, así que si alguien
+   escanea mientras está escribiendo el nombre de un cliente, el código le
+   queda dentro de ese campo. Las pantallas que usan el lector lo contemplan;
+   conviene verificar en el local que no moleste en ninguna otra.
 
 ### Epson EcoTank L1250 — etiquetas, NO facturas
 
 **La L1250 no es la impresora de facturas.** El comprobante fiscal va a salir
 por su propio equipo, todavía sin conectar. La L1250 imprime la planilla A4 de
-etiquetas de código de barras, que es lo que le da algo que leer al lector en
-la mercadería que viene sin EAN de fábrica.
+etiquetas de código de barras, que es lo que le da algo que escanear al lector
+en la mercadería que viene sin EAN de fábrica.
 
 - `apps/caja/impresora_a4.py` — driver (envío por el verbo `printto` de
   Windows) y armado de la planilla con reportlab.
@@ -280,11 +288,11 @@ migración. Ver `docs/todo_montaje_servidor.md` §7.
 - **`CLAUDE.md` documenta mal el comando de migraciones.** Dice
   `makemigrations apps.productos ...` pero las etiquetas de app son cortas:
   `makemigrations productos facturacion`.
-- **Los tests cubren solo una parte del sistema.** Hoy son 165 backend
-  (facturación electrónica, código de barras, resolución del escaneo,
-  planilla de etiquetas) y 44 frontend (ayuda contextual y el hook del
-  lector). Ventas, caja, inventario y costos siguen sin tests y se verifican
-  a mano contra `docs/checklist_entrega.md` (83 casos).
+- **Los tests cubren solo una parte del sistema.** Hoy son 151 backend
+  (facturación electrónica, código de barras, EAN interno, planilla de
+  etiquetas) y 38 frontend (ayuda contextual y el hook del lector). Ventas,
+  caja, inventario y costos siguen sin tests y se verifican a mano contra
+  `docs/checklist_entrega.md` (85 casos).
 - **El channel layer es `InMemoryChannelLayer`.** Alcanza porque hay un solo
   proceso daphne. Si algún día se escala a varios, hay que pasar a Redis.
 

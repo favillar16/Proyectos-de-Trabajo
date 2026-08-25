@@ -40,7 +40,10 @@ class Command(BaseCommand):
         simular  = opciones['simular']
         producto = (opciones['producto'] or '').strip()
 
-        qs = Variante.objects.select_related('producto').filter(codigo_barras='')
+        # Sin codigo la variante guarda NULL, no cadena vacia (ver
+        # Variante.save()): filtrar por '' no traeria ninguna.
+        qs = Variante.objects.select_related('producto').filter(
+            codigo_barras__isnull=True)
         if not opciones['incluir_inactivas']:
             qs = qs.filter(activa=True, producto__activo=True)
         if producto:
@@ -49,7 +52,7 @@ class Command(BaseCommand):
 
         total = qs.count()
         if total == 0:
-            ya = Variante.objects.exclude(codigo_barras='').count()
+            ya = Variante.objects.exclude(codigo_barras__isnull=True).count()
             self.stdout.write(self.style.SUCCESS(
                 f'No hay variantes sin código de barras. '
                 f'Ya tienen código: {ya}.'))
@@ -86,7 +89,7 @@ class Command(BaseCommand):
             self.stdout.write(self.style.SUCCESS(
                 f'{asignados} código(s) asignado(s).'))
             internos = sum(1 for c in Variante.objects
-                           .exclude(codigo_barras='')
+                           .exclude(codigo_barras__isnull=True)
                            .values_list('codigo_barras', flat=True)
                            if es_interno(c))
             self.stdout.write(

@@ -9,7 +9,6 @@ from .models import (
     Producto, Variante, ImagenProducto, ImagenVariante,
 )
 from apps.inventario.models import Stock
-from .codigo_barras import normalizar as normalizar_codigo_barras
 
 
 # ─── Auxiliares (solo lectura) ────────────────────────────────────────────────
@@ -149,29 +148,6 @@ class VarianteWriteSerializer(serializers.ModelSerializer):
             'tipo_ducha', 'tipo_cisterna',
             'stock_inicial', 'stock_inicial_unidad', 'stock_minimo', 'ubicacion',
         ]
-
-    def validate_codigo_barras(self, valor):
-        """
-        Normaliza y verifica que el código no esté ya en otra variante.
-
-        La unicidad en la base es un UniqueConstraint condicional (ignora los
-        vacíos) y DRF no genera un validador automático para ese caso, así que
-        sin esto un código repetido llegaría al INSERT y saldría como un 500 en
-        vez de como un error de formulario.
-        """
-        valor = normalizar_codigo_barras(valor)
-        if not valor:
-            return valor
-        qs = Variante.objects.filter(codigo_barras=valor)
-        if self.instance is not None:
-            qs = qs.exclude(pk=self.instance.pk)
-        duenio = qs.select_related('producto').first()
-        if duenio is not None:
-            raise serializers.ValidationError(
-                f'Ese código ya está asignado a {duenio.producto.nombre} '
-                f'({duenio.sku}).'
-            )
-        return valor
 
     def validate(self, attrs):
         largo = attrs.get('largo_cm')

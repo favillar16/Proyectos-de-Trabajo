@@ -10,8 +10,8 @@ import toast from 'react-hot-toast'
 
 const VARIANTE_VACÍA = {
   id:              null,     // presente solo si la variante ya existe en el backend (edición)
+  codigo_barras:   '',       // se completa con el lector; vacío = sin código
   color:           '',
-  codigo_barras:   '',       // EAN de la caja; se puede cargar escaneándolo
   acabado_id:      null,
   largo_cm:        '',
   ancho_cm:        '',

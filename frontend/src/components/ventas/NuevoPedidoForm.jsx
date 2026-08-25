@@ -14,10 +14,10 @@ import {
   User, FileText, Loader2, CheckCircle, Package,
   X, ShoppingCart, PackagePlus,
 } from 'lucide-react'
-import { ventasApi, productosApi, inventarioApi } from '../../services/api'
+import { ventasApi, productosApi } from '../../services/api'
 import { useDevice } from '../../hooks/useDevice'
 import { useAuthStore } from '../../store/authStore'
-import { useEscaner, alEnterDeEscaneo } from '../../hooks/useEscaner'
+import { useLectorCodigoBarras } from '../../hooks/useLectorCodigoBarras'
 import { mensajeErrorApi } from '../../utils/apiErrors'
 import toast from 'react-hot-toast'
 
@@ -216,7 +216,7 @@ function BuscadorCliente({ clienteSel, onSeleccionar, onLimpiar }) {
 }
 
 // ─── Buscador de variantes (grande, persistente) ──────────────────────────────
-function BuscadorVariante({ onAgregar, idsEnCarrito, onEscanear }) {
+function BuscadorVariante({ onAgregar, idsEnCarrito }) {
   const [q, setQ] = useState('')
   const dq = useDebounce(q, 300)
   const ref = useRef()
@@ -238,7 +238,6 @@ function BuscadorVariante({ onAgregar, idsEnCarrito, onEscanear }) {
           ref={ref}
           value={q}
           onChange={e => setQ(e.target.value)}
-          onKeyDown={alEnterDeEscaneo((codigo) => { setQ(''); onEscanear?.(codigo) })}
           placeholder="Escaneá el código o buscá por nombre..."
           autoFocus
           style={{
@@ -550,47 +549,34 @@ export default function NuevoPedidoForm({ onPedidoCreado, onCancelar }) {
   // vendedora la pasa por el lector.
   const alEscanear = useCallback(async (codigo) => {
     try {
-      const { data } = await inventarioApi.escanear(codigo)
+      const { data } = await productosApi.buscarPorCodigoBarras(codigo)
 
-      if (data.ambiguo) {
-        // Un código de producto con varias variantes no se puede agregar
-        // solo: no se sabe cuál color quiere el cliente.
-        toast(`El código ${codigo} tiene ${data.total} variantes. `
-              + 'Buscalo y elegí cuál.', { icon: '🔎', duration: 3000 })
-        return
-      }
-
-      const r = data.resultado
-      if (Number(r.disponible) <= 0) {
-        toast.error(`${r.descripcion} está sin stock.`)
-        return
-      }
-
-      // El escaneo devuelve el dict de stock, que tiene otra forma que la
-      // variante del buscador. Se traduce acá para reusar agregarVariante(),
-      // que es quien conoce el tope de stock y el agrupado de repetidos.
-      agregarVariante(
-        {
-          id:                r.variante_id,
-          sku:               r.sku,
-          precio_venta:      r.precio_venta,
-          dimension_display: r.dimension,
-          color:             r.color,
-          acabado:           r.acabado ? { nombre: r.acabado } : null,
-          stock:             { disponible: r.disponible, cantidad: r.cantidad },
-        },
-        { nombre: r.producto_nombre, unidad_venta: r.unidad_venta },
-      )
-    } catch (err) {
-      if (err?.response?.status === 404) {
+      if (!data.encontrado) {
         toast.error(`El código ${codigo} no está en el catálogo.`)
-      } else {
-        toast.error(mensajeErrorApi(err, 'No se pudo leer el código escaneado.'))
+        return
       }
+
+      const variante = data.variante
+      const disponible = Number(variante.stock?.disponible ?? variante.stock?.cantidad ?? 0)
+      if (disponible <= 0) {
+        toast.error(`${data.producto.nombre} está sin stock.`)
+        return
+      }
+      if (!data.producto.activo) {
+        toast.error(`${data.producto.nombre} está dado de baja.`)
+        return
+      }
+
+      // La variante viene con la forma del buscador, así que se la puede
+      // pasar tal cual a agregarVariante(), que es quien conoce el tope de
+      // stock y el agrupado de repetidos.
+      agregarVariante(variante, data.producto)
+    } catch (err) {
+      toast.error(mensajeErrorApi(err, 'No se pudo leer el código escaneado.'))
     }
   }, [agregarVariante])
 
-  useEscaner(alEscanear)
+  useLectorCodigoBarras({ onLectura: alEscanear })
 
   const actualizarItem = useCallback((idx, campo, valor) => {
     setItems(prev => prev.map((i, n) => n === idx ? { ...i, [campo]: valor } : i))
@@ -658,8 +644,7 @@ export default function NuevoPedidoForm({ onPedidoCreado, onCancelar }) {
       {/* Buscador SIEMPRE visible y prominente */}
       <div style={{ padding:'14px 20px', borderBottom:`1px solid ${C.border}`,
         background:C.bgSec, flexShrink:0 }}>
-        <BuscadorVariante onAgregar={agregarVariante} idsEnCarrito={idsEnCarrito}
-          onEscanear={alEscanear} />
+        <BuscadorVariante onAgregar={agregarVariante} idsEnCarrito={idsEnCarrito} />
       </div>
 
       {/* Contenido scrollable: carrito + cliente */}

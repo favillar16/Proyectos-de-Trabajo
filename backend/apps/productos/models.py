@@ -20,9 +20,6 @@ from django.core.validators import MinValueValidator
 from django.core.exceptions import ValidationError
 from django.utils.text import slugify
 
-from .codigo_barras import normalizar as normalizar_codigo_barras
-from .codigo_barras import validar_codigo_barras
-
 
 # ─── Helpers de paths ─────────────────────────────────────────────────────────
 
@@ -465,19 +462,21 @@ class Variante(models.Model):
 
     # ── Identificación ────────────────────────────────────────
     sku    = models.CharField(max_length=100, unique=True, blank=True, db_index=True)
-    # Código de barras que lee el FTX-LC123BH5. Puede ser el EAN-13 de fábrica
-    # que trae la caja, o uno interno que genera el sistema para la mercadería
-    # que viene sin código (ver apps/productos/codigo_barras.py).
+    # Código de barras que se lee con el lector (FTX LC123BH5). Es el de la caja
+    # del fabricante (EAN-13 y similares) o, para la mercadería que viene sin
+    # código, una etiqueta impresa por el negocio.
     #
-    # No lleva unique=True a nivel de campo porque el vacío es el caso normal
-    # —la mayoría del catálogo arranca sin código— y unique trataría cada ''
-    # como un duplicado. La unicidad se impone abajo con un UniqueConstraint
-    # condicional, que sí ignora los vacíos.
+    # Va en la variante y no en el producto porque la variante es la que tiene
+    # caja física: el Roma Beige 60×60 y el Roma Gris 60×60 son dos cajas
+    # distintas, con dos códigos distintos y dos stocks distintos.
+    #
+    # unique=True con null: dos variantes sin código no chocan entre sí (para la
+    # base, cada vacío es distinto de los demás), pero un código cargado no se
+    # puede repetir. Por eso el campo guarda NULL y no cadena vacía cuando no
+    # hay código — ver save().
     codigo_barras = models.CharField(
-        max_length=32, blank=True, default='', db_index=True,
-        validators=[validar_codigo_barras],
-        help_text='EAN-13 de la caja, o el interno que genera el sistema. '
-                  'Se puede cargar escaneándolo con el lector.',
+        max_length=64, unique=True, null=True, blank=True, db_index=True,
+        help_text='Código de barras de la caja. Se completa con el lector.'
     )
     activa = models.BooleanField(default=True, db_index=True)
 
@@ -491,17 +490,6 @@ class Variante(models.Model):
         ]
         indexes = [
             models.Index(fields=['producto', 'activa'], name='idx_variante_producto'),
-        ]
-        constraints = [
-            # Un mismo código de barras no puede apuntar a dos variantes: si
-            # pasara, el escaneo sería ambiguo y la caja cobraría el producto
-            # equivocado. La condición excluye los vacíos, que son legítimos y
-            # muchos.
-            models.UniqueConstraint(
-                fields=['codigo_barras'],
-                condition=~models.Q(codigo_barras=''),
-                name='uniq_variante_codigo_barras',
-            ),
         ]
 
     def _generar_sku(self):
@@ -523,11 +511,12 @@ class Variante(models.Model):
     def save(self, *args, **kwargs):
         from django.db import IntegrityError, transaction
 
-        # El lector puede mandar el código con un CR/LF de sufijo y en
-        # minúsculas según cómo esté configurado. Se normaliza acá, en el
-        # único punto por el que pasan todas las altas, para que la búsqueda
-        # exacta del escaneo siempre matchee.
-        self.codigo_barras = normalizar_codigo_barras(self.codigo_barras)
+        # Sin código de barras se guarda NULL, nunca cadena vacía: si se
+        # guardaran vacíos, la segunda variante sin código chocaría contra la
+        # restricción de unicidad. La mayoría de los porcelanatos no traen
+        # código de fábrica, así que ese es el caso normal, no el raro.
+        if self.codigo_barras is not None:
+            self.codigo_barras = self.codigo_barras.strip() or None
 
         if not self.sku:
             # Reintentar ante colisión por concurrencia (dos altas simultáneas
@@ -547,25 +536,6 @@ class Variante(models.Model):
         super().save(*args, **kwargs)
 
     def clean(self):
-        # Código de barras: normalizar antes de validar, para que un código
-        # pegado con espacios no dispare un error que confunda.
-        self.codigo_barras = normalizar_codigo_barras(self.codigo_barras)
-        if self.codigo_barras:
-            duenio = (Variante.objects
-                      .filter(codigo_barras=self.codigo_barras)
-                      .exclude(pk=self.pk)
-                      .select_related('producto')
-                      .first())
-            if duenio is not None:
-                raise ValidationError({
-                    'codigo_barras': (
-                        f'El código {self.codigo_barras} ya está asignado a '
-                        f'{duenio.producto.nombre} ({duenio.sku}). Un código no '
-                        f'puede apuntar a dos variantes: al escanearlo, la caja '
-                        f'no sabría cuál cobrar.'
-                    )
-                })
-
         # Largo y ancho deben ir juntos
         if bool(self.largo_cm) != bool(self.ancho_cm):
             raise ValidationError(

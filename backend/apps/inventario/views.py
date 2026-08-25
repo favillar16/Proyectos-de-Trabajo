@@ -20,14 +20,9 @@ from apps.usuarios.permissions import EsAdminODeposito, TodosLosRoles
 from django.db import transaction
 from django.db.models import Q
 from django.utils import timezone
-from django.core.exceptions import ValidationError as DjangoValidationError
 
 from .models import Stock, MovimientoStock
 from apps.productos.models import Producto, Variante
-from apps.productos.codigo_barras import (
-    normalizar as normalizar_codigo_barras,
-    validar_codigo_barras,
-)
 
 MAX_MOVIMIENTOS = 200
 
@@ -185,10 +180,6 @@ class ConsultaRapidaStockView(views.APIView):
                 'mensaje': 'Ingresá al menos 2 caracteres para buscar.',
             })
 
-        # El código de barras se compara exacto y normalizado: un EAN-13
-        # escaneado no se busca "parecido", o matchea entero o no es.
-        q_normalizado = normalizar_codigo_barras(q)
-
         # Buscar variantes cuyos productos o el SKU coincidan
         stocks = Stock.objects.select_related(
             'variante__producto__categoria',
@@ -198,7 +189,9 @@ class ConsultaRapidaStockView(views.APIView):
             'variante__producto__imagenes',
         ).filter(
             Q(variante__sku__icontains=q)
-            | Q(variante__codigo_barras=q_normalizado)
+            # El código de barras importa acá porque es donde apunta el lector:
+            # el operario dispara y el resultado sale solo, sin tocar la pantalla.
+            | Q(variante__codigo_barras__iexact=q)
             | Q(variante__producto__codigo__icontains=q)
             | Q(variante__producto__nombre__icontains=q)
             | Q(variante__color__icontains=q),
@@ -214,7 +207,9 @@ class ConsultaRapidaStockView(views.APIView):
         def relevancia(s):
             sku    = s.variante.sku.lower()
             codigo = s.variante.producto.codigo.lower()
-            if s.variante.codigo_barras and s.variante.codigo_barras == q_normalizado:
+            barras = (s.variante.codigo_barras or '').lower()
+            # Una lectura del lector es siempre coincidencia exacta: va primero
+            if barras and barras == q_lower:
                 return 0
             if sku == q_lower or codigo == q_lower:
                 return 0
@@ -263,9 +258,9 @@ class StockListView(views.APIView):
                 Q(variante__producto__nombre__icontains=search)
                 | Q(variante__producto__codigo__icontains=search)
                 | Q(variante__sku__icontains=search)
-                # Exacto y normalizado: un código de barras escaneado matchea
-                # entero o no matchea. Buscarlo "parecido" traería ruido.
-                | Q(variante__codigo_barras=normalizar_codigo_barras(search))
+                # Exacto: un código de barras leído matchea entero o no
+                # matchea. Buscarlo "parecido" solo traería ruido.
+                | Q(variante__codigo_barras__iexact=search)
             )
 
         estado = request.query_params.get('estado')
@@ -382,175 +377,3 @@ class MovimientoStockListView(views.APIView):
         )
         data = MovimientoStockSerializer(qs, many=True).data
         return Response({'results': data, 'count': len(data)})
-
-
-# ─── Escaneo con el lector de código de barras ────────────────────────────────
-
-class EscanearCodigoView(views.APIView):
-    """
-    GET  /inventario/escanear/?codigo=<lo que tipeó el lector>
-    POST /inventario/escanear/   {"codigo": "..."}     (equivalente)
-
-    Resuelve un escaneo del FTX-LC123BH5 a UNA variante, de forma exacta.
-
-    Es deliberadamente distinto de /inventario/consulta/: aquella busca
-    "parecido" y devuelve hasta 20 resultados para que una persona elija; esta
-    resuelve o no resuelve. Un escaneo que devuelve una lista no sirve — el
-    punto del lector es que la vendedora no tenga que elegir nada.
-
-    Orden de resolución, del más específico al más laxo:
-      1. codigo_barras exacto  → la variante
-      2. SKU exacto            → la variante (los SKU son legibles y alguien
-                                  puede imprimirlos como etiqueta Code128)
-      3. código de producto    → ambiguo si el producto tiene varias variantes;
-                                  se devuelven todas para que la UI muestre el
-                                  selector, marcado con ambiguo=True
-    """
-    permission_classes = [TodosLosRoles]
-
-    def get(self, request):
-        return self._resolver(request, request.query_params.get('codigo', ''))
-
-    def post(self, request):
-        return self._resolver(request, request.data.get('codigo', ''))
-
-    def _resolver(self, request, codigo_crudo):
-        codigo = normalizar_codigo_barras(codigo_crudo)
-
-        if not codigo:
-            return Response(
-                {'error': 'Falta el código escaneado.'},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        base = Stock.objects.select_related(
-            'variante__producto__categoria', 'variante__acabado',
-        ).prefetch_related(
-            'variante__imagenes', 'variante__producto__imagenes',
-        ).filter(
-            variante__activa=True,
-            variante__producto__activo=True,
-        )
-
-        # 1 — código de barras exacto
-        stock = base.filter(variante__codigo_barras=codigo).first()
-        if stock is not None:
-            return self._encontrado(stock, 'codigo_barras', codigo, request)
-
-        # 2 — SKU exacto (case-insensitive: el SKU se genera en mayúsculas
-        #     pero alguien puede tipearlo a mano)
-        stock = base.filter(variante__sku__iexact=codigo).first()
-        if stock is not None:
-            return self._encontrado(stock, 'sku', codigo, request)
-
-        # 3 — código de producto: puede dar varias variantes
-        stocks = list(base.filter(variante__producto__codigo__iexact=codigo)
-                          .order_by('variante__color')[:20])
-        if len(stocks) == 1:
-            return self._encontrado(stocks[0], 'producto', codigo, request)
-        if len(stocks) > 1:
-            return Response({
-                'encontrado':  True,
-                'ambiguo':     True,
-                'coincidencia': 'producto',
-                'codigo':      codigo,
-                'resultados':  [_stock_a_dict(s, request) for s in stocks],
-                'total':       len(stocks),
-            })
-
-        return Response({
-            'encontrado': False,
-            'ambiguo':    False,
-            'codigo':     codigo,
-            'resultados': [],
-            'total':      0,
-            'mensaje':    (
-                f'Ningún producto tiene el código {codigo}. Si es mercadería '
-                f'nueva, cargale el código desde la ficha del producto.'
-            ),
-        }, status=status.HTTP_404_NOT_FOUND)
-
-    def _encontrado(self, stock, coincidencia, codigo, request):
-        return Response({
-            'encontrado':   True,
-            'ambiguo':      False,
-            'coincidencia': coincidencia,
-            'codigo':       codigo,
-            'resultado':    _stock_a_dict(stock, request),
-            'resultados':   [_stock_a_dict(stock, request)],
-            'total':        1,
-        })
-
-
-# ─── Asignación de código de barras por escaneo ───────────────────────────────
-
-class AsignarCodigoBarrasView(views.APIView):
-    """
-    POST /inventario/codigo-barras/   {"variante_id": 12, "codigo": "7791234567890"}
-
-    Guarda contra una variante el código que trae la caja del proveedor. Es el
-    flujo de recepción de mercadería: el depósito abre la variante, escanea la
-    caja y queda asociado para siempre.
-
-    Mandar codigo="" borra la asociación.
-
-    Es admin/depósito: asignar mal un código hace que la caja cobre otro
-    producto, así que no lo puede hacer cualquiera desde el showroom.
-    """
-    permission_classes = [EsAdminODeposito]
-
-    def post(self, request):
-        variante_id = request.data.get('variante_id')
-        codigo      = normalizar_codigo_barras(request.data.get('codigo', ''))
-
-        if not variante_id:
-            return Response({'error': 'variante_id es requerido.'},
-                            status=status.HTTP_400_BAD_REQUEST)
-
-        try:
-            variante = Variante.objects.select_related('producto').get(pk=variante_id)
-        except Variante.DoesNotExist:
-            return Response({'error': 'La variante no existe.'},
-                            status=status.HTTP_404_NOT_FOUND)
-
-        # Se valida solo el código de barras, no la variante entera: un
-        # full_clean() acá haría fallar la asignación por cualquier
-        # inconsistencia vieja de dimensiones o m2_por_caja que no tiene nada
-        # que ver con lo que se está haciendo.
-        try:
-            validar_codigo_barras(codigo)
-        except DjangoValidationError as e:
-            return Response({'error': ' '.join(e.messages)},
-                            status=status.HTTP_400_BAD_REQUEST)
-
-        if codigo:
-            duenio = (Variante.objects
-                      .filter(codigo_barras=codigo)
-                      .exclude(pk=variante.pk)
-                      .select_related('producto')
-                      .first())
-            if duenio is not None:
-                return Response({
-                    'error': (
-                        f'El código {codigo} ya está asignado a '
-                        f'{duenio.producto.nombre} ({duenio.sku}). Quitáselo '
-                        f'primero si la etiqueta cambió de producto.'
-                    ),
-                    'variante_en_conflicto': duenio.id,
-                }, status=status.HTTP_409_CONFLICT)
-
-        variante.codigo_barras = codigo
-        variante.save(update_fields=['codigo_barras'])
-
-        return Response({
-            'ok':            True,
-            'variante_id':   variante.id,
-            'sku':           variante.sku,
-            'producto':      variante.producto.nombre,
-            'codigo_barras': variante.codigo_barras,
-            'mensaje': (
-                f'Código {variante.codigo_barras} asignado a {variante.sku}.'
-                if variante.codigo_barras
-                else f'Se quitó el código de barras de {variante.sku}.'
-            ),
-        })

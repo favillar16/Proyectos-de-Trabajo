@@ -252,7 +252,7 @@ Windows, hoy desactivado).
 
 Con todos los equipos prendidos al mismo tiempo:
 
-1. Correr el checklist funcional: `docs/checklist_entrega.md` (83 casos).
+1. Correr el checklist funcional: `docs/checklist_entrega.md` (85 casos).
 2. **Prueba de tiempo real:** dejar un pedido abierto en pantalla en una
    tablet, confirmar el pago desde la PC de caja, y ver que la tablet pasa el
    pedido a `pagado` **sola, sin recargar**. Si no cambia solo, el servidor

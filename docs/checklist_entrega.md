@@ -252,7 +252,8 @@ Detalle de instalación y problemas comunes en **`docs/perifericos.md`**.
 Antes de empezar, correr el diagnóstico: `python diagnostico_impresora.py`.
 Lista las impresoras instaladas y avisa si el nombre del `.env` no coincide.
 
-**Lector FTX-LC123BH5** — se enchufa el receptor USB y listo, no hay driver.
+**Lector FTX LC123BH5** — se enchufa el receptor USB y listo, no hay driver.
+Guía completa en **`docs/LECTOR_CODIGO_BARRAS.md`**.
 
 | # | Prueba | Esperado | OK |
 |---|--------|----------|:--:|
@@ -260,13 +261,15 @@ Lista las impresoras instaladas y avisa si el nombre del `.env` no coincide.
 | 67 | Asignar códigos internos: `python manage.py asignar_codigos_barras --simular` | Lista las variantes sin código, sin escribir nada | ☐ |
 | 68 | Correrlo de verdad, sin `--simular`, **en la PC servidor** | Asigna un EAN-13 con prefijo 200 a cada una | ☐ |
 | 69 | Escanear una caja con EAN de fábrica en Productos → ficha → «Código de barras» | El campo se completa solo | ☐ |
-| 70 | Guardar y escanear ese mismo código en el showroom | Abre la ficha de esa variante con su stock | ☐ |
+| 70 | Guardar y escanear ese mismo código en la consulta rápida de stock | Deja la búsqueda hecha y muestra esa variante con su stock | ☐ |
 | 71 | Escanear el mismo código en una nota de pedido nueva | Lo agrega al pedido; escanearlo otra vez le suma 1 | ☐ |
 | 72 | Escanear un producto sin stock | Avisa "está sin stock" y NO lo agrega | ☐ |
-| 73 | Escanear en Inventario | Abre directo el panel de ajuste de esa variante | ☐ |
-| 74 | Escanear un código que no existe | Mensaje "el código no está en el catálogo" | ☐ |
+| 73 | Escanear en Inventario, con la variante a la vista en la lista | Abre directo su panel de ajuste | ☐ |
+| 73b | Escanear en Inventario una variante que NO está en la página actual | Filtra por su SKU y la deja a un toque | ☐ |
+| 74 | Escanear un código que no existe | Avisa que no está asignado a ningún producto (no es un error: es lo esperado al dar de alta mercadería) | ☐ |
 | 75 | Intentar asignar a otra variante un código ya usado | Lo rechaza y dice a qué producto pertenece | ☐ |
-| 76 | Escribir a mano en el buscador, a velocidad normal | NO dispara un escaneo: busca como texto | ☐ |
+| 76 | Escribir a mano en el buscador, a velocidad normal | NO dispara una lectura: busca como texto | ☐ |
+| 76b | Escanear con el foco puesto en un campo de texto de otra pantalla | El código además queda escrito en ese campo — verificar que no moleste en ninguna pantalla | ☐ |
 
 **Epson EcoTank L1250** — etiquetas de código de barras. *No imprime facturas:
 el comprobante fiscal sale por su propio equipo, todavía sin conectar.*

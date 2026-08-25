@@ -50,7 +50,7 @@ class Command(BaseCommand):
         qs = (Variante.objects
               .select_related('producto', 'acabado')
               .filter(activa=True, producto__activo=True)
-              .exclude(codigo_barras=''))
+              .exclude(codigo_barras__isnull=True))
 
         if opciones['producto']:
             qs = qs.filter(producto__codigo__iexact=opciones['producto'].strip())

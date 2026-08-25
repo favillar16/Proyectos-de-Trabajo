@@ -78,6 +78,13 @@ export const productosApi = {
   actualizarVariante: (varId, data)  => api.patch(`/productos/variantes/${varId}/`, data),
   eliminarVariante:   (varId)        => api.delete(`/productos/variantes/${varId}/`),
 
+  // Lector de código de barras (FTX LC123BH5).
+  // Responde siempre 200, con { encontrado, codigo, variante, producto }.
+  // Un código que no está cargado NO es un error: al dar de alta mercadería
+  // nueva es lo esperado, y la pantalla ofrece cargarlo.
+  buscarPorCodigoBarras: (codigo) =>
+    api.get('/productos/variantes/por-codigo-barras/', { params: { codigo } }),
+
   subirImagenVariante:           (varId, formData) => api.post(`/productos/variantes/${varId}/imagenes/`, formData, {
     headers: { 'Content-Type': 'multipart/form-data' },
   }),
@@ -106,14 +113,6 @@ export const inventarioApi = {
   stockGeneral:   (params) => api.get('/inventario/stock/', { params }),
   movimientos:    (params) => api.get('/inventario/movimientos/', { params }),
   ajustar:        (data)   => api.post('/inventario/ajustes/', data),
-
-  // Lector de código de barras FTX-LC123BH5.
-  // escanear() resuelve exacto: devuelve una variante o 404. Es distinto de
-  // consultaRapida(), que busca "parecido" y devuelve una lista para elegir.
-  escanear:            (codigo)              => api.get('/inventario/escanear/', { params: { codigo } }),
-  asignarCodigoBarras: (varianteId, codigo)  => api.post('/inventario/codigo-barras/', {
-    variante_id: varianteId, codigo,
-  }),
 }
 
 // ─── Ventas ───────────────────────────────────────────────────

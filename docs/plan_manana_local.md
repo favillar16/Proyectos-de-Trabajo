@@ -168,7 +168,7 @@ Checklist completo con el detalle de la impresora: `docs/pc_caja.md`.
 ## 6. Verificación final (con todos los equipos prendidos)
 
 - [ ] Correr el checklist funcional completo: `docs/checklist_entrega.md`
-      (83 casos)
+      (85 casos)
 - [ ] Prueba de tiempo real entre dispositivos: abrir un pedido en una
       tablet y dejarlo en pantalla, confirmar el pago en la PC de Caja, ver
       que la tablet lo pasa a `pagado` sola, **sin recargar**
@@ -202,5 +202,5 @@ Checklist completo con el detalle de la impresora: `docs/pc_caja.md`.
 | `pwa_tablet.md` | Instalación y diagnóstico de tablets |
 | `pc_caja.md` | Puesto de caja e impresora compartida |
 | `verificacion_red.md` | Diagnóstico de red por capas |
-| `checklist_entrega.md` | 83 casos funcionales de prueba |
+| `checklist_entrega.md` | 85 casos funcionales de prueba |
 | `todo_montaje_servidor.md` | Registro general de qué queda pendiente |

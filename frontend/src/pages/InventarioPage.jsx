@@ -18,7 +18,7 @@ import {
 import Layout from '../components/layout/Layout'
 import { inventarioApi, productosApi, cajaApi } from '../services/api'
 import { usePedidoSocket } from '../hooks/usePedidoSocket'
-import { useEscaner, alEnterDeEscaneo } from '../hooks/useEscaner'
+import { useLectorCodigoBarras } from '../hooks/useLectorCodigoBarras'
 import { abrirPdfParaImprimir } from '../utils/imprimirPdf'
 import toast from 'react-hot-toast'
 
@@ -554,28 +554,33 @@ export default function InventarioPage() {
   // se carga la cantidad que entró.
   const alEscanear = useCallback(async (codigo) => {
     try {
-      const { data } = await inventarioApi.escanear(codigo)
-      if (data.ambiguo) {
-        // Código de producto con varias variantes: no se puede ajustar sin
-        // saber cuál. Se deja la búsqueda hecha para que se elija.
+      const { data } = await productosApi.buscarPorCodigoBarras(codigo)
+      if (!data.encontrado) {
+        // Se deja el código en el buscador: si es mercadería nueva, lo que
+        // sigue es cargarlo en la ficha del producto, y tenerlo a la vista
+        // ahorra volver a escanear.
         setBusqueda(codigo)
-        toast(`${data.total} variantes con ese código — elegí cuál ajustar.`,
-          { icon: '🔎' })
+        toast.error(`El código ${codigo} no está asignado a ningún producto.`)
         return
       }
-      setItemAjuste(data.resultado)
-    } catch (err) {
-      if (err?.response?.status === 404) {
-        toast.error(`El código ${codigo} no está asignado a ningún producto.`)
-      } else {
-        toast.error('No se pudo leer el código escaneado.')
-      }
+      // El panel de ajuste espera el dict de stock de esta pantalla, no la
+      // variante del catálogo. Si la variante leída ya está en la página que
+      // se está viendo, se abre su panel directo; si no, se filtra por su SKU
+      // para traerla y que quede a un toque.
+      const enPantalla = items.find(i => i.variante_id === data.variante.id)
+      if (enPantalla) setItemAjuste(enPantalla)
+      else setBusqueda(data.variante.sku)
+    } catch {
+      toast.error('No se pudo leer el código escaneado.')
     }
-  }, [])
+  }, [items])
 
   // Solo cuando no hay un panel abierto: dentro del ajuste el foco está en
-  // los campos de cantidad y un escaneo ahí sería un accidente.
-  useEscaner(alEscanear, { activo: !itemAjuste && !itemHistorial })
+  // los campos de cantidad y una lectura ahí sería un accidente.
+  useLectorCodigoBarras({
+    onLectura: alEscanear,
+    activo: !itemAjuste && !itemHistorial,
+  })
 
   const { data, isLoading, refetch } = useQuery({
     queryKey: ['stock', busquedaDebounced, filtroEstado, filtroCateg, pagina],
@@ -732,7 +737,6 @@ export default function InventarioPage() {
           <input
             value={busqueda}
             onChange={e => { setBusqueda(e.target.value); setPagina(1) }}
-            onKeyDown={alEnterDeEscaneo((codigo) => alEscanear(codigo))}
             placeholder="Escaneá el código, o buscá por SKU o nombre..."
             style={{ width:'100%', height:'38px', padding:'0 34px',
               border:`1px solid ${C.border}`, borderRadius:'9px',

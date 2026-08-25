@@ -62,7 +62,7 @@ export const AYUDA_POR_RUTA = {
       {
         titulo: 'Consultar un producto con el lector',
         items: [
-          'Pasar el lector por el código de la caja abre la ficha de esa variante con su stock, sin buscar nada.',
+          'Pasar el lector por el código de la caja deja la búsqueda hecha y muestra esa variante con su stock, sin escribir nada.',
           'Si el código corresponde a un producto con varias variantes, el sistema muestra la lista para elegir cuál.',
         ],
       },
@@ -230,7 +230,7 @@ export const AYUDA_POR_RUTA = {
         items: [
           'Se carga como movimiento de entrada sobre la variante correspondiente.',
           'Si viene en cajas o pallets, conviene cargarlo en esa unidad y dejar que el sistema convierta: se cometen menos errores que multiplicando a mano.',
-          'Con el lector: pasar el código de la caja abre directamente el panel de ajuste de esa variante, sin buscarla.',
+          'Con el lector: pasar el código de la caja abre el panel de ajuste de esa variante si está en la lista, y si no, la filtra para dejarla a un toque.',
         ],
       },
       {

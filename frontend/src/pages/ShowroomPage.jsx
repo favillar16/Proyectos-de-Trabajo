@@ -25,7 +25,7 @@ import GaleriaImagenes from '../components/showroom/GaleriaImagenes'
 import ConsultaStock from '../components/showroom/ConsultaStock'
 import { useShowroom, VISTA, ORDEN } from '../hooks/useShowroom'
 import { useDevice } from '../hooks/useDevice'
-import { useEscaner } from '../hooks/useEscaner'
+import { useLectorCodigoBarras } from '../hooks/useLectorCodigoBarras'
 import { useAuthStore } from '../store/authStore'
 import { ventasApi } from '../services/api'
 import { mensajeErrorApi } from '../utils/apiErrors'
@@ -918,10 +918,13 @@ export default function ShowroomPage() {
   // nada primero, que es todo el punto del lector en el showroom.
   const [codigoEscaneado, setCodigoEscaneado] = useState('')
 
-  useEscaner((codigo) => {
-    setCodigoEscaneado(codigo)
-    setConsultaAbierta(true)
-  }, { activo: !consultaAbierta })
+  useLectorCodigoBarras({
+    activo: !consultaAbierta,
+    onLectura: (codigo) => {
+      setCodigoEscaneado(codigo)
+      setConsultaAbierta(true)
+    },
+  })
   const [carrito, setCarrito] = useState([])
   const [carritoAbierto, setCarritoAbierto] = useState(false)
 

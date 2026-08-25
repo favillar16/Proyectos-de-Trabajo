@@ -11,10 +11,9 @@ import { useQuery } from '@tanstack/react-query'
 import {
   X, ChevronRight, ChevronLeft, Plus, Trash2,
   Upload, Image, Star, Loader2, Package,
-  CheckCircle,
+  CheckCircle, ScanLine,
 } from 'lucide-react'
 import { productosApi } from '../../services/api'
-import { alEnterDeEscaneo } from '../../hooks/useEscaner'
 import { tieneDimensiones, comboExtra } from './camposPorTipo'
 
 const C = {
@@ -265,6 +264,116 @@ function PasoDatos({ form, errores, setField }) {
 
 // ─── Paso 1: Variantes ────────────────────────────────────────────────────────
 
+/**
+ * Campo de código de barras con el lector FTX LC123BH5.
+ *
+ * El lector es un teclado: parado en este campo, apuntar y disparar escribe el
+ * código solo y manda un Enter. Acá se hacen dos cosas con ese Enter:
+ *   1. Frenarlo, para que no envíe el formulario a medio completar.
+ *   2. Aprovecharlo para preguntarle al sistema si ese código ya está usado.
+ *
+ * Ese aviso es lo que evita el error caro: cargar dos veces la misma
+ * mercadería y terminar con el stock partido entre dos fichas.
+ */
+function CampoCodigoBarras({ valor, varianteId, onChange }) {
+  const [estado, setEstado] = useState(null)   // null | 'buscando' | 'libre' | 'ocupado'
+  const [ocupadoPor, setOcupadoPor] = useState(null)
+
+  const verificar = async (codigo) => {
+    const limpio = (codigo || '').trim()
+    if (!limpio) { setEstado(null); setOcupadoPor(null); return }
+
+    setEstado('buscando')
+    try {
+      const { data } = await productosApi.buscarPorCodigoBarras(limpio)
+      // Que el código lo tenga esta misma variante no es conflicto: pasa cada
+      // vez que se reedita una variante ya cargada.
+      if (data.encontrado && data.variante?.id !== varianteId) {
+        setEstado('ocupado')
+        setOcupadoPor(data)
+      } else {
+        setEstado('libre')
+        setOcupadoPor(null)
+      }
+    } catch {
+      // Si el servidor no contesta no se traba la carga: el operario sigue
+      // trabajando y el aviso simplemente no aparece.
+      setEstado(null)
+      setOcupadoPor(null)
+    }
+  }
+
+  const colorBorde = estado === 'ocupado' ? C.danger
+    : estado === 'libre' ? C.success
+    : C.border
+
+  return (
+    <Field
+      label="Código de barras"
+      hint="Apuntá el lector a la caja y dispará. También se puede escribir a mano."
+    >
+      <div style={{ position: 'relative' }}>
+        <ScanLine
+          size={15}
+          style={{
+            position: 'absolute', left: '10px', top: '50%',
+            transform: 'translateY(-50%)', pointerEvents: 'none',
+            color: estado === 'ocupado' ? C.danger : estado === 'libre' ? C.success : C.textMuted,
+          }}
+        />
+        <input
+          value={valor || ''}
+          onChange={e => { onChange('codigo_barras', e.target.value); setEstado(null) }}
+          onKeyDown={e => {
+            if (e.key === 'Enter') {
+              // El Enter del lector no debe enviar el formulario
+              e.preventDefault()
+              verificar(e.target.value)
+            }
+          }}
+          onBlur={e => verificar(e.target.value)}
+          placeholder="Escaneá o escribí el código"
+          autoComplete="off"
+          spellCheck={false}
+          style={{
+            width: '100%', height: '38px', padding: '0 12px 0 32px',
+            border: `1px solid ${colorBorde}`, borderRadius: '8px',
+            fontSize: '14px', color: C.text, background: C.bg, outline: 'none',
+            fontFamily: 'ui-monospace, monospace',
+          }}
+        />
+      </div>
+
+      {estado === 'buscando' && (
+        <p style={{ fontSize: '11px', color: C.textMuted, marginTop: '5px' }}>
+          Verificando…
+        </p>
+      )}
+
+      {estado === 'libre' && (
+        <p style={{ fontSize: '11px', color: C.success, marginTop: '5px',
+                    display: 'flex', alignItems: 'center', gap: '4px' }}>
+          <CheckCircle size={12} /> Código disponible
+        </p>
+      )}
+
+      {estado === 'ocupado' && (
+        <p style={{
+          fontSize: '11px', color: C.danger, marginTop: '5px',
+          background: C.dangerBg, border: `1px solid ${C.danger}22`,
+          borderRadius: '6px', padding: '6px 8px', lineHeight: 1.4,
+        }}>
+          Ese código ya está cargado en <strong>{ocupadoPor?.producto?.nombre}</strong>
+          {ocupadoPor?.variante?.color ? ` — ${ocupadoPor.variante.color}` : ''}
+          {' '}({ocupadoPor?.variante?.sku}).
+          <br />
+          Si es la misma mercadería, cargá el stock ahí en vez de crear una ficha nueva.
+        </p>
+      )}
+    </Field>
+  )
+}
+
 function FilaVariante({
   variante, idx, errores, onChange, onEliminar, onAgregarImagen, onEliminarImagen,
   categoriaTipo, mostrarPrecioDiferencial, unidadVenta,
@@ -396,23 +505,12 @@ function FilaVariante({
         </Field>
       </div>
 
-      {/* Código de barras — se carga escaneando la caja con el lector */}
-      <Field
-        label="Código de barras"
-        hint="Poné el cursor acá y pasá el lector por la caja. Si el producto no
-              trae código, dejalo vacío: el sistema le genera uno interno y se
-              imprime la etiqueta desde Inventario."
-      >
-        <Input
-          value={variante.codigo_barras || ''}
-          onChange={e => onChange('codigo_barras', e.target.value)}
-          onKeyDown={alEnterDeEscaneo((codigo) => onChange('codigo_barras', codigo))}
-          placeholder="Ej: 7791234567890"
-          autoComplete="off"
-          spellCheck={false}
-          style={{ fontFamily: 'monospace' }}
-        />
-      </Field>
+      {/* Código de barras — se completa con el lector */}
+      <CampoCodigoBarras
+        valor={variante.codigo_barras}
+        varianteId={variante.id}
+        onChange={onChange}
+      />
 
       {/* Dimensiones — solo para categorías donde aplica (pisos, bachas, piletas, grifería, duchas, espejos...) */}
       {tieneDimensiones(categoriaTipo) && (
