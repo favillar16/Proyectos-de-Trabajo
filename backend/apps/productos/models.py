@@ -19,6 +19,7 @@ from django.db import models
 from django.core.validators import MinValueValidator
 from django.core.exceptions import ValidationError
 from django.utils.text import slugify
+from apps.sync.mixins import ModeloSincronizable
 
 
 # ─── Helpers de paths ─────────────────────────────────────────────────────────
@@ -38,7 +39,7 @@ def variante_imagen_path(instance, filename):
 
 # ─── Tablas de soporte ────────────────────────────────────────────────────────
 
-class Categoria(models.Model):
+class Categoria(ModeloSincronizable):
     TIPOS = [
         ('piso',             'Pisos'),
         ('porcelanato',      'Porcelanatos'),
@@ -91,7 +92,7 @@ class Categoria(models.Model):
             raise ValidationError({'nombre': 'El nombre no puede estar vacío.'})
 
 
-class Marca(models.Model):
+class Marca(ModeloSincronizable):
     nombre      = models.CharField(max_length=100, unique=True)
     pais_origen = models.CharField(max_length=60, blank=True)
     activa      = models.BooleanField(default=True, db_index=True)
@@ -109,7 +110,7 @@ class Marca(models.Model):
         self.nombre = self.nombre.strip()
 
 
-class Acabado(models.Model):
+class Acabado(ModeloSincronizable):
     """Mate, brillante, antideslizante, natural, pulido, rectificado, rústico..."""
     nombre      = models.CharField(max_length=80, unique=True)
     descripcion = models.CharField(max_length=200, blank=True)
@@ -126,7 +127,7 @@ class Acabado(models.Model):
 
 # ─── Producto ─────────────────────────────────────────────────────────────────
 
-class Producto(models.Model):
+class Producto(ModeloSincronizable):
     UNIDAD_M2    = 'm2'
     UNIDAD_PIEZA = 'pieza'
     UNIDAD_JUEGO = 'juego'
@@ -366,7 +367,7 @@ class Producto(models.Model):
 
 # ─── Variante ─────────────────────────────────────────────────────────────────
 
-class Variante(models.Model):
+class Variante(ModeloSincronizable):
     """
     Unidad mínima vendible. Cada variante es una combinación única de
     atributos de un producto y tiene su propio stock.
@@ -635,7 +636,7 @@ class Variante(models.Model):
 
 # ─── Imágenes ─────────────────────────────────────────────────────────────────
 
-class ImagenProducto(models.Model):
+class ImagenProducto(ModeloSincronizable):
     """
     Imágenes del producto en general.
     Una sola puede marcarse como principal (aparece en el showroom).
@@ -693,7 +694,7 @@ class ImagenProducto(models.Model):
         return f'{self.producto.codigo} — imagen {label}'
 
 
-class ImagenVariante(models.Model):
+class ImagenVariante(ModeloSincronizable):
     """
     Imagen específica de una variante.
     Muestra cómo se ve ese color o acabado en particular.

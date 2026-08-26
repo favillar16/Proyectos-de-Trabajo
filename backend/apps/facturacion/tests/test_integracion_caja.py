@@ -18,6 +18,11 @@ from . import factories as f
 
 
 class BaseCaja(TestCase):
+    # El catálogo dispara el registro de cambios del sync, que vive en su
+    # propia base (ver apps/sync/routers.py). Sin declararla, Django la
+    # bloquea y el signal falla en silencio.
+    databases = {'default', 'sync'}
+
     def setUp(self):
         self.cajero = f.crear_usuario()
         self.variante = f.crear_variante(precio=Decimal('110000'))

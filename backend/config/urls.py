@@ -6,6 +6,7 @@ from django.urls import path, re_path, include
 from django.conf import settings
 from django.conf.urls.static import static
 from django.views.static import serve as servir_estatico
+from .salud import salud
 from rest_framework_simplejwt.views import (
     TokenObtainPairView,
     TokenRefreshView,
@@ -13,6 +14,11 @@ from rest_framework_simplejwt.views import (
 )
 
 api_v1 = [
+    # Identidad del nodo — sonda de descubrimiento, pública y sin auth.
+    # Es lo que permite que tablets/notebook encuentren al servidor por
+    # nombre en vez de por IP (ver config/salud.py).
+    path('salud/', salud, name='salud'),
+
     # Autenticación JWT
     path('auth/login/', TokenObtainPairView.as_view(), name='token_obtain_pair'),
     path('auth/refresh/', TokenRefreshView.as_view(), name='token_refresh'),
@@ -25,6 +31,7 @@ api_v1 = [
     path('ventas/', include('apps.ventas.urls')),
     path('caja/', include('apps.caja.urls')),
     path('costos/', include('apps.costos.urls')),
+    path('sync/', include('apps.sync.urls')),
 ]
 
 urlpatterns = [

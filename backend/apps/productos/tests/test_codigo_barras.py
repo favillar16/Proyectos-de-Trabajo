@@ -15,6 +15,11 @@ from apps.usuarios.models import Usuario
 
 
 class CodigoDeBarrasTest(TestCase):
+    # El catálogo dispara el registro de cambios del sync, que vive en su
+    # propia base (ver apps/sync/routers.py). Sin declararla, Django la
+    # bloquea y el signal falla en silencio.
+    databases = {'default', 'sync'}
+
 
     def setUp(self):
         self.producto = crear_producto()
@@ -69,6 +74,11 @@ class CodigoDeBarrasTest(TestCase):
 
 class BusquedaPorCodigoDeBarrasApiTest(TestCase):
     """El endpoint que consulta el sistema cada vez que se dispara el lector."""
+    # El catálogo dispara el registro de cambios del sync, que vive en su
+    # propia base (ver apps/sync/routers.py). Sin declararla, Django la
+    # bloquea y el signal falla en silencio.
+    databases = {'default', 'sync'}
+
 
     URL = '/api/v1/productos/variantes/por-codigo-barras/'
 

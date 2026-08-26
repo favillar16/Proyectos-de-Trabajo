@@ -6,14 +6,32 @@ web (sin costo de hosting), la notebook mantiene su **propia base de datos
 local**, que se sobreescribe automáticamente con una copia de la del
 servidor cada vez que ambas están conectadas a la misma red WiFi.
 
-**La notebook es un espejo de solo lectura.** El servidor (la PC fija del
-local) es siempre el origen de verdad. El sync va en un solo sentido:
-servidor → notebook, nunca al revés. Si se carga una venta en la notebook
-estando fuera del local, esa venta **no** viaja al servidor y se pierde en
-el próximo sync — la notebook es para consultar (stock, reportes, pedidos),
-no para operar la caja. Si en algún momento hace falta operar la caja desde
-la notebook estando en el local, mejor usarla como una tablet más (contra
-el servidor directamente), no contra su base de datos local.
+> **Desde el 26/08/2026 el sync ya no es de una sola dirección.** El
+> **catálogo** (productos, variantes, precios, categorías, marcas, fotos,
+> clientes, proveedores) viaja en los dos sentidos: lo que se carga o se
+> corrige en la notebook, incluso estando fuera del local, se manda al
+> servidor al volver. El detalle completo está en
+> **`docs/sync_bidireccional.md`**; este documento describe la mitad
+> servidor → notebook, que sigue funcionando igual.
+
+**Para todo lo que no es el catálogo, la notebook sigue siendo un espejo de
+solo lectura.** El servidor (la PC fija del local) es el origen de verdad
+del **stock, las ventas, la caja y la facturación**, y esos datos van en un
+solo sentido: servidor → notebook, nunca al revés. Si se carga una venta en
+la notebook estando fuera del local, esa venta **no** viaja al servidor y se
+pierde en el próximo sync — la notebook es para consultar y para mantener el
+catálogo, no para operar la caja. Si en algún momento hace falta operar la
+caja desde la notebook estando en el local, mejor usarla como una tablet más
+(contra el servidor directamente), no contra su base de datos local.
+
+La razón no es una limitación técnica sino aritmética: `Stock.cantidad` es un
+saldo corriente. Si el local vendió 10 cajas mientras la notebook estaba
+afuera y allá alguien tocó la cantidad, no existe un merge correcto — uno de
+los dos números está mal y nada puede saber cuál.
+
+El servidor ya no se busca por IP: se lo encuentra por nombre de red y, si
+hace falta, barriendo la subred (`docs/descubrimiento_red.md`). Y antes de
+intentarlo, el agente mira el SSID del WiFi para saber si está en el local.
 
 Cómo funciona en la práctica:
 - **En el local, con WiFi:** cada 5 minutos, la notebook chequea si el

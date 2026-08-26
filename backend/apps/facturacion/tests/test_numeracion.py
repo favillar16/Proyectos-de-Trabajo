@@ -67,6 +67,11 @@ class SecuenciaTests(TransactionTestCase):
     reales (select_for_update, rollback), no el rollback automático que
     TestCase envuelve alrededor de cada test.
     """
+    # El catálogo dispara el registro de cambios del sync, que vive en su
+    # propia base (ver apps/sync/routers.py). Sin declararla, Django la
+    # bloquea y el signal falla en silencio.
+    databases = {'default', 'sync'}
+
     reset_sequences = True
 
     def test_arranca_en_uno_y_avanza_de_a_uno(self):
@@ -139,6 +144,11 @@ class ConcurrenciaTests(TransactionTestCase):
     La garantía que la DNIT no perdona: dos cajas cobrando a la vez no pueden
     sacar el mismo número de factura.
     """
+    # El catálogo dispara el registro de cambios del sync, que vive en su
+    # propia base (ver apps/sync/routers.py). Sin declararla, Django la
+    # bloquea y el signal falla en silencio.
+    databases = {'default', 'sync'}
+
     reset_sequences = True
 
     def test_varias_cajas_simultaneas_no_duplican_ni_saltan(self):

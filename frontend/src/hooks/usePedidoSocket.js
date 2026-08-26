@@ -8,31 +8,29 @@
 import { useEffect, useRef, useCallback } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { useAuthStore } from '../store/authStore'
-
-const WS_BASE = (() => {
-  // Misma lógica que services/api.js: usa VITE_API_URL si está fijada,
-  // si no deriva el host actual del navegador (funciona en localhost,
-  // en la PC servidor y en tablets sin recompilar).
-  const API_PORT = import.meta.env.VITE_API_PORT || '8000'
-  const api = import.meta.env.VITE_API_URL || `http://${window.location.hostname}:${API_PORT}/api/v1`
-  const wsProtocol = window.location.protocol === 'https:' ? 'wss' : 'ws'
-  const host = api.replace(/^https?/, wsProtocol).replace('/api/v1', '')
-  return host
-})()
+import { baseUrlWs } from '../services/servidor'
 
 export function usePedidoSocket({ pedidoId, rol, onMensaje } = {}) {
   const ws          = useRef(null)
   const timeoutId   = useRef(null)
   const intentos    = useRef(0)
+  // La búsqueda del servidor es asíncrona: puede terminar después de que el
+  // componente se desmontó. Sin esta bandera, abriríamos un socket huérfano.
+  const cancelado   = useRef(false)
   const queryClient = useQueryClient()
 
-  const conectar = useCallback(() => {
+  const conectar = useCallback(async () => {
+    // El servidor se descubre por nombre de red, igual que la API REST
+    // (services/servidor.js) — así el socket sigue al servidor si cambia de IP.
+    const wsBase = await baseUrlWs()
+    if (cancelado.current) return
+
     // El backend autentica el socket con el mismo JWT que la API REST (ver
     // apps/usuarios/ws_auth.py) — sin esto, la conexión se rechaza.
     const token = useAuthStore.getState().token
     const base = pedidoId
-      ? `${WS_BASE}/ws/pedidos/${pedidoId}/`
-      : `${WS_BASE}/ws/pedidos/rol/${rol}/`
+      ? `${wsBase}/ws/pedidos/${pedidoId}/`
+      : `${wsBase}/ws/pedidos/rol/${rol}/`
     const url = token ? `${base}?token=${encodeURIComponent(token)}` : base
 
     ws.current = new WebSocket(url)
@@ -57,6 +55,7 @@ export function usePedidoSocket({ pedidoId, rol, onMensaje } = {}) {
     }
 
     ws.current.onclose = () => {
+      if (cancelado.current) return
       // Reconexión exponencial: 2s, 4s, 8s… máx 30s
       const delay = Math.min(30000, 2000 * 2 ** intentos.current)
       timeoutId.current = setTimeout(() => {
@@ -72,8 +71,10 @@ export function usePedidoSocket({ pedidoId, rol, onMensaje } = {}) {
 
   useEffect(() => {
     if (!pedidoId && !rol) return
+    cancelado.current = false
     conectar()
     return () => {
+      cancelado.current = true
       clearTimeout(timeoutId.current)
       ws.current?.close()
     }

@@ -52,8 +52,18 @@ export default defineConfig({
     }),
   ],
   server: {
-    host: '0.0.0.0',      // Accesible desde otros equipos en la red WiFi
+    // '::' escucha IPv4 e IPv6 a la vez (Node no activa ipv6Only por defecto).
+    // Hace falta IPv6 porque los nombres de red resuelven primero a IPv6: con
+    // '0.0.0.0', entrar por http://ogapora.local:5173 daba timeout.
+    host: '::',           // Accesible desde otros equipos en la red WiFi
     port: 5173,
+    // Vite 5.4.12+ rechaza con 403 cualquier Host que no sea una IP o
+    // localhost. Sin esto, entrar por nombre (http://ogapora.local:5173)
+    // da "Blocked request. This host is not allowed". Se abre igual que
+    // ALLOWED_HOSTS='*' del backend y por la misma razón: es un appliance
+    // de red local sin salida a internet, y el nombre del equipo puede
+    // cambiar. Ver docs/descubrimiento_red.md.
+    allowedHosts: true,
     proxy: {
       '/api': {
         target: 'http://localhost:8000',

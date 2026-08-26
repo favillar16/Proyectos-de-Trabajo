@@ -37,7 +37,14 @@ DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.sqlite3',
         'NAME': ':memory:',
-    }
+    },
+    # El registro de cambios del sync vive en su propia base también acá (ver
+    # apps/sync/routers.py). Los tests que la tocan tienen que declararla:
+    #     databases = {'default', 'sync'}
+    'sync': {
+        'ENGINE': 'django.db.backends.sqlite3',
+        'NAME': ':memory:',
+    },
 }
 
 # Hash de contraseñas rápido: los tests crean muchos usuarios y el hash real
