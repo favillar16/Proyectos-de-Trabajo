@@ -548,6 +548,29 @@ export default function InventarioPage() {
     },
   })
 
+  const { data, isLoading, refetch } = useQuery({
+    queryKey: ['stock', busquedaDebounced, filtroEstado, filtroCateg, pagina],
+    queryFn: () => inventarioApi.stockGeneral({
+      search:    busquedaDebounced || undefined,
+      estado:    filtroEstado|| undefined,
+      categoria: filtroCateg || undefined,
+      page:      pagina,
+      page_size: PAGE,
+    }).then(r => r.data),
+    staleTime: 20_000,
+    keepPreviousData: true,
+  })
+
+  const { data: categorias } = useQuery({
+    queryKey: ['categorias'],
+    queryFn: () => productosApi.categorias().then(r => r.data?.results || r.data || []),
+    staleTime: 300_000,
+  })
+
+  const items    = data?.results || []
+  const total    = data?.count   || 0
+  const paginas  = data?.pages   || 1
+
   // ── Lector de código de barras FTX-LC123BH5 ─────────────────────────────
   // En depósito el escaneo abre directo el panel de ajuste de esa variante:
   // es el flujo de recepción de mercadería, donde se escanea caja por caja y
@@ -581,29 +604,6 @@ export default function InventarioPage() {
     onLectura: alEscanear,
     activo: !itemAjuste && !itemHistorial,
   })
-
-  const { data, isLoading, refetch } = useQuery({
-    queryKey: ['stock', busquedaDebounced, filtroEstado, filtroCateg, pagina],
-    queryFn: () => inventarioApi.stockGeneral({
-      search:    busquedaDebounced || undefined,
-      estado:    filtroEstado|| undefined,
-      categoria: filtroCateg || undefined,
-      page:      pagina,
-      page_size: PAGE,
-    }).then(r => r.data),
-    staleTime: 20_000,
-    keepPreviousData: true,
-  })
-
-  const { data: categorias } = useQuery({
-    queryKey: ['categorias'],
-    queryFn: () => productosApi.categorias().then(r => r.data?.results || r.data || []),
-    staleTime: 300_000,
-  })
-
-  const items    = data?.results || []
-  const total    = data?.count   || 0
-  const paginas  = data?.pages   || 1
 
   // ── Etiquetas de código de barras (Epson L1250) ─────────────────────────
   // Se imprime lo que está a la vista: los filtros de arriba son los que
