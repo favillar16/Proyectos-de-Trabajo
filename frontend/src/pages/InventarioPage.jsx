@@ -7,19 +7,17 @@
  * - Historial de movimientos por variante
  * - WebSocket para actualizar en tiempo real cuando hay ventas
  */
-import { useState, useCallback, useEffect } from 'react'
+import { useState, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   AlertCircle, XCircle, CheckCircle, Package,
   Search, SlidersHorizontal, RefreshCw, Plus,
   Minus, RotateCcw, History, X, ChevronDown,
-  Warehouse, TrendingDown, TrendingUp, ArrowUpDown, Tag,
+  Warehouse, TrendingDown, TrendingUp, ArrowUpDown,
 } from 'lucide-react'
 import Layout from '../components/layout/Layout'
-import { inventarioApi, productosApi, cajaApi } from '../services/api'
+import { inventarioApi, productosApi } from '../services/api'
 import { usePedidoSocket } from '../hooks/usePedidoSocket'
-import { useLectorCodigoBarras } from '../hooks/useLectorCodigoBarras'
-import { abrirPdfParaImprimir } from '../utils/imprimirPdf'
 import toast from 'react-hot-toast'
 
 const C = {
@@ -525,7 +523,6 @@ export default function InventarioPage() {
   const [itemAjuste,  setItemAjuste]  = useState(null)
   const [itemHistorial,setItemHistorial]=useState(null)
   const [pagina,      setPagina]      = useState(1)
-  const [etiquetasCargando, setEtiquetasCargando] = useState(false)
   const busquedaDebounced = useDebounce(busqueda, 380)
   const PAGE = 40
 
@@ -570,68 +567,6 @@ export default function InventarioPage() {
   const items    = data?.results || []
   const total    = data?.count   || 0
   const paginas  = data?.pages   || 1
-
-  // ── Lector de código de barras FTX-LC123BH5 ─────────────────────────────
-  // En depósito el escaneo abre directo el panel de ajuste de esa variante:
-  // es el flujo de recepción de mercadería, donde se escanea caja por caja y
-  // se carga la cantidad que entró.
-  const alEscanear = useCallback(async (codigo) => {
-    try {
-      const { data } = await productosApi.buscarPorCodigoBarras(codigo)
-      if (!data.encontrado) {
-        // Se deja el código en el buscador: si es mercadería nueva, lo que
-        // sigue es cargarlo en la ficha del producto, y tenerlo a la vista
-        // ahorra volver a escanear.
-        setBusqueda(codigo)
-        toast.error(`El código ${codigo} no está asignado a ningún producto.`)
-        return
-      }
-      // El panel de ajuste espera el dict de stock de esta pantalla, no la
-      // variante del catálogo. Si la variante leída ya está en la página que
-      // se está viendo, se abre su panel directo; si no, se filtra por su SKU
-      // para traerla y que quede a un toque.
-      const enPantalla = items.find(i => i.variante_id === data.variante.id)
-      if (enPantalla) setItemAjuste(enPantalla)
-      else setBusqueda(data.variante.sku)
-    } catch {
-      toast.error('No se pudo leer el código escaneado.')
-    }
-  }, [items])
-
-  // Solo cuando no hay un panel abierto: dentro del ajuste el foco está en
-  // los campos de cantidad y una lectura ahí sería un accidente.
-  useLectorCodigoBarras({
-    onLectura: alEscanear,
-    activo: !itemAjuste && !itemHistorial,
-  })
-
-  // ── Etiquetas de código de barras (Epson L1250) ─────────────────────────
-  // Se imprime lo que está a la vista: los filtros de arriba son los que
-  // eligen qué etiquetar. Las variantes sin código quedan afuera — no hay
-  // nada que imprimirles todavía.
-  const varianteConCodigo = items.filter(i => i.codigo_barras)
-  const conCodigo = varianteConCodigo.length
-
-  const imprimirEtiquetas = async () => {
-    if (conCodigo === 0) return
-    setEtiquetasCargando(true)
-    try {
-      const res = await cajaApi.etiquetas(varianteConCodigo.map(i => i.variante_id))
-      const abrio = abrirPdfParaImprimir(res.data, { imprimir: false })
-      if (abrio) {
-        toast('Imprimí a escala 100%, sin "ajustar a la página": '
-              + 'si no, las etiquetas caen fuera del troquel.',
-          { icon: '🖨️', duration: 7000 })
-      } else {
-        toast('El navegador bloqueó la ventana: la planilla se descargó.',
-          { icon: '📄', duration: 5000 })
-      }
-    } catch {
-      toast.error('No se pudo armar la planilla de etiquetas.')
-    } finally {
-      setEtiquetasCargando(false)
-    }
-  }
 
   // Stats
   const conStock  = items.filter(i => i.estado === 'disponible').length
@@ -785,23 +720,6 @@ export default function InventarioPage() {
             <RotateCcw size={13}/> Limpiar
           </button>
         )}
-
-        {/* Etiquetas de código de barras — Epson L1250 */}
-        <button onClick={imprimirEtiquetas} disabled={etiquetasCargando || conCodigo === 0}
-          title={conCodigo === 0
-            ? 'Ninguna de las variantes listadas tiene código de barras cargado'
-            : `Planilla A4 con ${conCodigo} etiqueta(s) de lo que se está viendo`}
-          style={{ height:'38px', padding:'0 12px', marginLeft:'auto',
-            display:'flex', alignItems:'center', gap:'6px',
-            background:'transparent',
-            border:`1px solid ${conCodigo === 0 ? C.border : C.gold}`,
-            borderRadius:'9px',
-            color: conCodigo === 0 ? C.textMuted : C.goldDark,
-            fontSize:'13px',
-            cursor: conCodigo === 0 ? 'not-allowed' : (etiquetasCargando ? 'wait' : 'pointer') }}>
-          <Tag size={13}/>
-          {etiquetasCargando ? 'Armando...' : `Etiquetas (${conCodigo})`}
-        </button>
 
         <button onClick={()=>refetch()}
           style={{ width:'38px', height:'38px', borderRadius:'9px',

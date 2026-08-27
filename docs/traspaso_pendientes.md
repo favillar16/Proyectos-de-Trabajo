@@ -6,7 +6,8 @@ equipo pueda continuar sin haber participado de las sesiones previas.
 Complementa, no reemplaza:
 
 - `docs/facturacion_electronica.md` — detalle técnico de la facturación electrónica
-- `docs/perifericos.md` — lector de código de barras e impresoras
+- `docs/perifericos.md` — impresoras
+- `docs/carga_final/` — lote de carga de agosto 2026 y datos fiscales
 - `docs/todo_montaje_servidor.md` — checklist del armado del local
 - `docs/log_revisiones_tecnicas.md` — historial de revisiones
 - `CLAUDE.md` — arquitectura del sistema
@@ -151,78 +152,40 @@ teclas de función, es la única vía.
 
 ---
 
-## 2 bis. Periféricos — lector e impresoras (25/08/2026)
+## 2 bis. Periféricos — impresoras (actualizado 26/08/2026)
 
-Guía de uso del lector: **`docs/LECTOR_CODIGO_BARRAS.md`**.
-Impresoras y etiquetas: **`docs/perifericos.md`**.
+Detalle en **`docs/perifericos.md`**.
 
-### Lector FTX LC123BH5 — implementado
+### El sistema de código de barras se retiró
 
-Es un HID (se comporta como un teclado): no hay driver ni servicio. El sistema
-lo distingue del tipeo humano por la velocidad entre teclas
-(`frontend/src/hooks/useLectorCodigoBarras.js`).
+El 26/08/2026 se sacó del sistema todo el trabajo con código de barras: el
+lector FTX LC123BH5, el generador de EAN-13 interno, la planilla de etiquetas y
+la Epson EcoTank L1250 que las imprimía. Los dos aparatos siguen siendo del
+local, pero el software ya no los usa.
 
-- `Variante.codigo_barras` — EAN-13 de fábrica o interno con prefijo GS1 200.
-  **Sin código guarda `NULL`, no cadena vacía**: el campo es `unique=True` y
-  dos vacíos chocarían. Cualquier consulta de "sin código" tiene que usar
-  `__isnull=True`.
-- `GET productos/variantes/por-codigo-barras/` — responde siempre 200 con
-  `encontrado: true|false`. Un código desconocido no es un error: al dar de
-  alta mercadería nueva es justamente lo esperado.
-- Escaneo integrado en: alta de producto (con aviso si el código ya está en
-  otra ficha), consulta rápida de stock, buscador general, **nota de pedido**
-  (agrega el producto) e **inventario** (abre el panel de ajuste).
-- `python manage.py asignar_codigos_barras` genera los códigos internos para
-  la mercadería que no trae EAN de fábrica.
+**La columna `Variante.codigo_barras` se dejó a propósito**, sin migración
+destructiva: si el negocio decide retomarlo, los códigos ya cargados siguen
+ahí. Hoy nada la escribe ni la lee, y no sale ni por la API ni por el admin.
 
-**Cubierto por tests:** 15 backend del campo y la búsqueda, 12 del EAN interno
-y 16 frontend del hook.
+Qué implica para quien retome esto:
 
-#### ⚠️ Lo que queda por confirmar a mano
+- Reponerlo es volver a exponer la interfaz, no recuperar datos.
+- El detalle de qué se borró está en `docs/log_revisiones_tecnicas.md`, entrada
+  del 2026-08-26. El código anterior está en el historial de git.
 
-1. **El lector tiene que tener Enter (CR) como sufijo** y estar en modo
-   teclado (HID), no en modo puerto serie. Viene así de fábrica. Se prueba en
-   el Bloc de notas: tiene que escribir el código y bajar un renglón.
-2. **El umbral de velocidad (50 ms entre teclas).** Está calibrado para
-   distinguir el lector de una persona, pero contra el aparato real no se
-   probó. Si una lectura no dispara, ese número es lo primero a mirar.
-3. **Correr `asignar_codigos_barras` en la PC servidor, no en la notebook.**
-   La notebook es espejo de solo lectura: lo que se escriba ahí se pisa.
-4. **El código se escribe además en el campo que tenga el foco.** El hook
-   escucha en fase de captura y no bloquea la tecla, así que si alguien
-   escanea mientras está escribiendo el nombre de un cliente, el código le
-   queda dentro de ese campo. Las pantallas que usan el lector lo contemplan;
-   conviene verificar en el local que no moleste en ninguna otra.
+### Térmica FTX FTXP-80W — la única impresora conectada
 
-### Epson EcoTank L1250 — etiquetas, NO facturas
-
-**La L1250 no es la impresora de facturas.** El comprobante fiscal va a salir
-por su propio equipo, todavía sin conectar. La L1250 imprime la planilla A4 de
-etiquetas de código de barras, que es lo que le da algo que escanear al lector
-en la mercadería que viene sin EAN de fábrica.
-
-- `apps/caja/impresora_a4.py` — driver (envío por el verbo `printto` de
-  Windows) y armado de la planilla con reportlab.
-- `GET/POST /caja/etiquetas/` y `python manage.py imprimir_etiquetas`.
-- Botón «Etiquetas» en Inventario: imprime lo que está filtrado a la vista.
-
-Dos modos, en `IMPRESORA_A4_MODO`: `manual` (default, se imprime desde el
-navegador — anda siempre) y `auto` (el servidor la manda a la cola, pero
-necesita que el `.pdf` tenga registrado el verbo `printto`, que **no** trae el
-visor de Edge). `diagnostico_impresora.py` chequea las dos cosas.
+Tickets, cierres de caja y —mientras no haya equipo fiscal— la factura. Habla
+ESC/POS, se le mandan bytes crudos por la cola de Windows
+(`apps/caja/printer.py`). Se prueba con `python diagnostico_impresora.py`.
 
 #### ⚠️ Pendiente de la impresora de facturas
 
 Cuando se defina el equipo, el punto de entrada es `apps/caja/printer.py`
 (`FacturaBuilder`), que hoy saca la factura por la térmica. Si el equipo nuevo
-tampoco habla ESC/POS, el patrón a copiar es el de `impresora_a4.py`: armar un
-PDF y mandarlo por la cola de Windows.
-
-#### ⚠️ Al imprimir etiquetas: escala 100%
-
-"Ajustar a la página" achica el código y el lector deja de leerlo. La etiqueta
-se ve perfecta, así que el error cuesta encontrarlo. Está en la ayuda
-contextual y en el checklist (caso 81, que lo hace fallar a propósito).
+tampoco habla ESC/POS, hay que armar un PDF y mandarlo por la cola de Windows
+— el `impresora_a4.py` que hacía exactamente eso está en el historial de git
+(borrado el 26/08/2026) y sirve de patrón.
 
 ---
 
@@ -288,11 +251,10 @@ migración. Ver `docs/todo_montaje_servidor.md` §7.
 - **`CLAUDE.md` documenta mal el comando de migraciones.** Dice
   `makemigrations apps.productos ...` pero las etiquetas de app son cortas:
   `makemigrations productos facturacion`.
-- **Los tests cubren solo una parte del sistema.** Hoy son 151 backend
-  (facturación electrónica, código de barras, EAN interno, planilla de
-  etiquetas) y 38 frontend (ayuda contextual y el hook del lector). Ventas,
-  caja, inventario y costos siguen sin tests y se verifican a mano contra
-  `docs/checklist_entrega.md` (85 casos).
+- **Los tests cubren solo una parte del sistema.** Hoy son 117 backend
+  (facturación electrónica y productos) y 22 frontend (ayuda contextual).
+  Ventas, caja, inventario y costos siguen sin tests y se verifican a mano
+  contra `docs/checklist_entrega.md`.
 - **El channel layer es `InMemoryChannelLayer`.** Alcanza porque hay un solo
   proceso daphne. Si algún día se escala a varios, hay que pasar a Redis.
 

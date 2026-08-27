@@ -22,21 +22,19 @@ python manage.py loaddata initial_data.json   # demo fixture
 python manage.py seed_categorias              # seeds CategoriaGasto for apps.costos
 python manage.py createsuperuser
 python cargar_demo.py                         # loads demo catalog/stock data
-python diagnostico_impresora.py               # standalone check of BOTH printers (thermal + L1250)
-python manage.py test apps                    # 151 tests (facturación, código de barras, etiquetas)
+python diagnostico_impresora.py               # standalone check of the thermal printer
+python manage.py test apps                    # 117 tests (facturación, productos, caja)
 python manage.py verificar_fiscal             # diagnóstico de la configuración fiscal
-python manage.py asignar_codigos_barras       # EAN-13 interno a las variantes sin código de fábrica
-python manage.py imprimir_etiquetas --sin-imprimir   # planilla A4 de etiquetas (Epson L1250)
 ```
 
-Test coverage is **partial**: 151 backend tests (`apps/facturacion/` full suite, plus `apps/productos/tests/` for the barcode field and the internal EAN, and `apps/caja/tests/` for the A4 label sheets) and 38 frontend tests (`cd frontend && npm test`, vitest + jsdom — contextual help and the barcode-scanner hook). Everything else has no automated tests — verify those changes manually against `docs/checklist_entrega.md`.
+Test coverage is **partial**: 117 backend tests (`apps/facturacion/` full suite, plus `apps/productos/tests/`) and 22 frontend tests (`cd frontend && npm test`, vitest + jsdom — contextual help). Everything else has no automated tests — verify those changes manually against `docs/checklist_entrega.md`.
 
 ### Frontend (from `frontend/`)
 ```
 npm run dev       # Vite dev server, binds 0.0.0.0:5173 so tablets can reach it over WiFi
 npm run build
 npm run preview
-npm test          # vitest run — ayuda contextual + hook del lector de código de barras
+npm test          # vitest run — ayuda contextual
 npm run test:watch
 ```
 No lint script is configured in `package.json`.
@@ -49,10 +47,10 @@ No lint script is configured in `package.json`.
 
 ### Django apps (`backend/apps/`)
 - **usuarios** — custom `Usuario` model (`AUTH_USER_MODEL`), no separate `is_active` flag (uses `activo`). Role-based access, not Django groups/permissions: roles are `admin`, `encargada_ventas`, `vendedor`, `cajero`, `deposito`. All authorization goes through hand-written permission classes in `apps/usuarios/permissions.py` (`EsAdmin`, `EsAdminOVendedor`, `PermisosPorAccion`, etc.) — check that file before adding a new endpoint rather than inventing ad hoc role checks.
-- **productos** — catalog: `Categoria` → `Producto` → `Variante` (the actual sellable unit, one SKU each) → `ImagenProducto`/`ImagenVariante`. `Producto.codigo` and `Variante.sku` are auto-generated in `save()` with collision-retry loops (see `_generar_codigo`/`_generar_sku`) — don't set them manually except in tests/fixtures. `m2_por_caja` can be entered directly or derived from dimensions; `Variante.clean()` cross-validates the two. `Variante.codigo_barras` holds what the FTX LC123BH5 scanner reads — either the factory EAN-13 or an internal one generated with the GS1 200-prefix (see `apps/productos/codigo_barras.py` and `docs/LECTOR_CODIGO_BARRAS.md`). It is `unique=True` **and nullable**: an empty code is stored as `NULL`, never as `''`, because most of the catalogue has no factory code and two empty strings would collide on the unique index — `Variante.save()` does that conversion, so any query for "no barcode" must use `__isnull=True`, not `=''`. The scanner endpoint is `GET productos/variantes/por-codigo-barras/`, which always answers 200 with `encontrado: true|false`.
+- **productos** — catalog: `Categoria` → `Producto` → `Variante` (the actual sellable unit, one SKU each) → `ImagenProducto`/`ImagenVariante`. `Producto.codigo` and `Variante.sku` are auto-generated in `save()` with collision-retry loops (see `_generar_codigo`/`_generar_sku`) — don't set them manually except in tests/fixtures. `m2_por_caja` can be entered directly or derived from dimensions; `Variante.clean()` cross-validates the two. `Variante.codigo_barras` still exists as a column but **the barcode system was retired on 2026-08-26**: the scanner, the internal EAN generator, the label sheets and all the UI are gone. The column was deliberately left in place (no destructive migration) so the codes already loaded survive if the business ever picks it back up — nothing reads or writes it today, and it is exposed neither through the API nor the admin. If it is ever revived, note it is `unique=True` **and nullable**: `Variante.save()` still stores an empty code as `NULL` rather than `''`, so a query for "no barcode" must use `__isnull=True`.
 - **inventario** — `Stock` is one-to-one with `Variante` and is auto-created via a `post_save` signal on `Variante`. **Never mutate `Stock.cantidad`/`cantidad_reservada` directly** — always go through `Stock.registrar_movimiento(tipo, cantidad, usuario, ...)`, which writes the paired immutable `MovimientoStock` audit row in the same transaction. `cantidad_disponible = cantidad - cantidad_reservada`.
 - **ventas** — `NotaPedido` (order) owns the stock lifecycle end-to-end: `reservar_stock()` on creation, `liberar_stock()` on cancel, `descontar_stock()` on payment confirmation (called from `apps.caja`). All three are `@transaction.atomic` and use `select_for_update()` to prevent overselling across concurrent vendedores. Order states: `pendiente → en_preparacion → listo → pagado` (or `cancelado`). Real-time updates go over Channels: `PedidoConsumer` (room `pedido_<id>`) and `RolConsumer` (room `rol_<rol>`) in `apps/ventas/consumers.py`; stock-critical alerts are pushed to `rol_admin`/`rol_deposito` from `_emitir_alerta_stock()` in `ventas/models.py`.
-- **caja** — `SesionCaja` (one open session per cajero, enforced by a `UniqueConstraint`) and `Pago`. Confirming a `Pago` is what triggers `NotaPedido.descontar_stock()` and ticket printing. `printer.py` builds raw ESC/POS byte sequences (`TicketBuilder`, `FacturaBuilder`, `TicketCierreBuilder`) and sends them via `win32print` (Windows-only; falls back to a "simulado" no-op off Windows) — see the file's own architecture notes when touching ticket formatting. `impresora_a4.py` + `views_a4.py` are a **separate** device: the Epson EcoTank L1250, an A4 inkjet that does **not** print invoices (the fiscal document will get its own printer) and does not speak ESC/POS — everything sent to it is a reportlab PDF. Today that means only the barcode label sheets. See `docs/perifericos.md`.
+- **caja** — `SesionCaja` (one open session per cajero, enforced by a `UniqueConstraint`) and `Pago`. Confirming a `Pago` is what triggers `NotaPedido.descontar_stock()` and ticket printing. `printer.py` builds raw ESC/POS byte sequences (`TicketBuilder`, `FacturaBuilder`, `TicketCierreBuilder`) and sends them via `win32print` (Windows-only; falls back to a "simulado" no-op off Windows) — see the file's own architecture notes when touching ticket formatting. The Epson EcoTank L1250 that used to print the barcode label sheets was removed along with the barcode system — the thermal printer is the only one wired up, and the fiscal document will get its own. See `docs/perifericos.md`.
 - **costos** — gastos operativos, proveedores, empleados, pedidos a proveedores. Independent of the sales/stock flow; admin-only in the frontend.
 
 ### WebSocket wiring

@@ -370,3 +370,91 @@ próxima sesión:
 - Hay trabajo sin commitear de la sesión del 2026-08-05 (reportes A4/Oficio
   + carga de catálogo + `CLAUDE.md` nuevo) — confirmar con el usuario el
   mensaje de commit antes de tocarlo, no asumir que ya se guardó.
+
+---
+
+## 2026-08-26 — Retiro del sistema de código de barras + lote de carga final
+
+Dos trabajos independientes en la misma sesión.
+
+### 1. Se retiró el sistema de código de barras
+
+Decisión del negocio: dejar de trabajar con código de barras, **por el
+momento**. Ese "por el momento" es lo que define el alcance elegido —
+**se quitó todo el uso pero NO se tocó la base de datos**.
+
+**Se borró entero:**
+
+| Backend | Frontend | Docs |
+|---|---|---|
+| `apps/productos/codigo_barras.py` | `hooks/useLectorCodigoBarras.js` | `docs/LECTOR_CODIGO_BARRAS.md` |
+| `management/commands/asignar_codigos_barras.py` | `hooks/useLectorCodigoBarras.test.jsx` | |
+| `management/commands/imprimir_etiquetas.py` | `utils/imprimirPdf.js` | |
+| `apps/caja/impresora_a4.py` | | |
+| `apps/caja/views_a4.py` | | |
+| `apps/productos/tests/test_codigo_barras.py` (15) | | |
+| `apps/productos/tests/test_ean_interno.py` (11) | | |
+| `apps/caja/tests/test_impresora_a4.py` (8) | | |
+
+`imprimirPdf.js` no era del sistema de barras, pero la planilla de etiquetas
+era su único consumidor y quedaba muerto.
+
+**Se quitó de archivos que siguen:** el endpoint
+`GET productos/variantes/por-codigo-barras/`, el campo en los dos serializers
+de `Variante`, las columnas del admin, las tres búsquedas por código en
+`apps/inventario/views.py`, la ruta `/caja/etiquetas/`, el bloque
+`IMPRESORA_A4` de `settings.py` y del `.env.example`, la mitad L1250 de
+`diagnostico_impresora.py`, el escaneo en Inventario / Showroom /
+ConsultaStock / NuevoPedidoForm, el campo del alta en `ProductoForm.jsx` y
+`useProductoForm.js`, las dos llamadas de `services/api.js` y cinco bloques de
+la ayuda contextual.
+
+**Lo que se conservó a propósito:**
+
+`Variante.codigo_barras` **sigue siendo una columna de la base**. No se generó
+migración: si el negocio retoma el sistema, los códigos ya cargados siguen ahí.
+Hoy nada la escribe ni la lee. Deshacer esto es volver a exponer la interfaz,
+no recuperar datos — que es exactamente la propiedad que se buscaba.
+
+Ojo si alguna vez se retoma: el campo es `unique=True` **y nullable**, y
+`Variante.save()` sigue convirtiendo la cadena vacía a `NULL`. Cualquier
+consulta de "sin código" tiene que usar `__isnull=True`, nunca `=''`.
+
+**La Epson EcoTank L1250 salió por completo**, porque las etiquetas eran su
+único uso. Queda solo la térmica FTX FTXP-80W. Si mañana hace falta imprimir un
+PDF en A4, `impresora_a4.py` está en el historial de git y sirve de patrón —
+es también el patrón para la impresora de facturas si no habla ESC/POS.
+
+**Verificación:** `manage.py check` sin issues, **117 backend tests OK**
+(eran 151 — los 34 borrados son exactamente los del sistema), **22 frontend
+tests OK** (eran 38), `npm run build` limpio.
+
+### 2. Lote de carga final de productos
+
+Se procesó `docs/pdf de carga final de productos.pdf`: 30 páginas escaneadas a
+300 DPI, **sin capa de texto**, todas rotadas 180° salvo tres. Se leyeron como
+imagen, página por página.
+
+Resultado en **`docs/carga_final/`**: 184 líneas de mercadería (26 comprobantes
+de 8 proveedores, 156.953.452 Gs.), más los pendientes de verificación con
+número de página y los datos fiscales.
+
+**Control de exactitud:** 25 de las 26 facturas cierran **exacto** contra el
+total impreso. La única que no es la página 27 (Prolar Shop): 10.000 Gs. de
+diferencia, marcada para revisar contra el papel.
+
+También se extrajeron los datos fiscales de los dos PDF de la DNIT —
+**RUC 80173107-0, timbrado 18936285** — que es lo que `verificar_fiscal` venía
+marcando como faltante. Bloque listo para el `.env` en
+`docs/carga_final/datos_fiscales.md`.
+
+### Pendiente para la próxima sesión
+
+- Cargar el lote en la PC servidor (los precios del CSV son **costo**, falta
+  definir el margen de venta por rubro).
+- Resolver los 6 datos ilegibles y las 8 decisiones anotadas a mano sobre las
+  facturas — `docs/carga_final/pendientes_verificacion.md`.
+- Completar en el `.env` del servidor los códigos SIFEN de
+  departamento/distrito/ciudad y el CSC, que no están en la constancia.
+- `frontend/dist/` se reconstruyó en esta sesión: las tablets toman el cambio
+  al recargar la PWA.

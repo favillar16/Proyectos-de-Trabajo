@@ -26,7 +26,6 @@ logger = logging.getLogger(__name__)
 
 from .models import SesionCaja, Pago
 from .printer import imprimir_ticket, imprimir_factura, imprimir_cierre, ticket_a_texto
-from . import impresora_a4
 from apps.ventas.models import NotaPedido
 from apps.facturacion import emisor as fe_emisor
 
@@ -530,12 +529,8 @@ class ReimprimirTicketView(views.APIView):
 class EstadoImpresora(views.APIView):
     """
     GET /caja/impresora/estado/
-    Verifica si las impresoras están disponibles.
+    Verifica si la impresora térmica está disponible.
     Útil para mostrar un indicador en la UI de caja.
-
-    Responde el estado de la térmica en el nivel de arriba (como siempre, para
-    no romper lo que ya consume este endpoint) y agrega 'a4' con el de la
-    Epson L1250.
     """
     permission_classes = [EsAdminOCajero]
 
@@ -550,8 +545,6 @@ class EstadoImpresora(views.APIView):
             'disponible':    False,
             'error':         None,
         }
-
-        resultado['a4'] = impresora_a4.estado_impresora_a4()
 
         if not resultado['configurada']:
             resultado['error'] = 'No hay impresora configurada en el .env'

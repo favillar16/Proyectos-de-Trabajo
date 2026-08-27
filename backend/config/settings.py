@@ -215,36 +215,9 @@ IMPRESORA_TERMICA = {
     'copias':           config('IMPRESORA_COPIAS', default=1, cast=int),
 }
 
-# Epson EcoTank L1250 — hoja A4.
-#
-# OJO: NO es la impresora de facturas. El comprobante fiscal sale por su propio
-# equipo. Acá va lo que necesita una hoja A4 común — hoy, las etiquetas de
-# código de barras que le dan algo que leer al lector FTX-LC123BH5.
-#
-# Tampoco es una segunda térmica: es una inyección de tinta con driver GDI y no
-# entiende ESC/POS. Lo que sale por acá va como PDF armado con reportlab
-# (apps/caja/impresora_a4.py), no como bytes crudos.
-#
-# 'modo':
-#   manual — el backend devuelve el PDF y se imprime desde el navegador. Es el
-#            default porque anda siempre, sin depender de qué visor de PDF
-#            esté instalado en la PC servidor.
-#   auto   — el servidor la manda solo a la cola de Windows. Necesita que el
-#            .pdf tenga el verbo "printto" registrado (lo instala Adobe
-#            Acrobat Reader; el visor de Edge no lo trae). Verificarlo con
-#            `python diagnostico_impresora.py` antes de prenderlo.
-IMPRESORA_A4 = {
-    'modelo':         'Epson EcoTank L1250',
-    'nombre_windows': config('IMPRESORA_A4_NOMBRE', default='EPSON L1250 Series'),
-    'modo':           config('IMPRESORA_A4_MODO', default='manual'),
-    'copias':         config('IMPRESORA_A4_COPIAS', default=1, cast=int),
-}
-
-IMPRESORA_MATRICIAL = {
-    'modelo':           'Epson LX-350',
-    'ancho_papel_mm':   240,
-    'nombre_windows':   config('IMPRESORA_MATRICIAL_NOMBRE', default='Epson LX-350'),
-}
+# El sistema imprime SOLO por la térmica de arriba. Acá había un bloque
+# IMPRESORA_MATRICIAL (Epson LX-350) que no leía ningún módulo: se eliminó el
+# 27/08/2026, junto con el retiro de la L1250.
 
 # Datos fiscales para la emisión de facturas (se configuran en el .env)
 DATOS_FISCALES = {
@@ -295,8 +268,17 @@ SIFEN = {
     # 'test' mientras se hacen las pruebas de habilitación, 'produccion' después.
     'ambiente':    config('SIFEN_AMBIENTE', default='test'),
 
-    # Certificado cualificado de firma electrónica (.p12 / .pfx). Lo entrega la
-    # DNIT sin costo. NUNCA versionar este archivo ni su clave.
+    # Código de Seguridad del Contribuyente. Lo entrega el DNIT junto con la
+    # habilitación (en el PDF del timbrado, como «ID» y «código de seguridad»).
+    # Es lo que firma el QR del KuDE: sin él el QR no se puede generar.
+    # Es un secreto: vive en el .env, que no se versiona.
+    'csc_id': config('SIFEN_CSC_ID', default=''),
+    'csc':    config('SIFEN_CSC', default=''),
+
+    # Certificado cualificado de firma electrónica (.p12 / .pfx).
+    # ⚠️ Que sea sin costo está SIN CONFIRMAR: en Paraguay los emiten
+    # prestadores habilitados, que suelen cobrarlos. NUNCA versionar este
+    # archivo ni su clave.
     'certificado_path':     config('SIFEN_CERT_PATH', default=''),
     'certificado_password': config('SIFEN_CERT_PASSWORD', default=''),
 

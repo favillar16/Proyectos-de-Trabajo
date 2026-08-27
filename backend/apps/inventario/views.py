@@ -39,7 +39,6 @@ class StockConsultaSerializer(serializers.Serializer):
     producto_nombre  = serializers.CharField()
     variante_id      = serializers.IntegerField()
     sku              = serializers.CharField()
-    codigo_barras    = serializers.CharField(allow_blank=True)
     descripcion      = serializers.CharField()
     color            = serializers.CharField()
     dimension        = serializers.CharField()
@@ -126,7 +125,6 @@ def _stock_a_dict(stock, request=None):
         'producto_nombre':   p.nombre,
         'variante_id':       v.id,
         'sku':               v.sku,
-        'codigo_barras':     v.codigo_barras,
         'descripcion':       ' — '.join(partes_desc),
         'color':             v.color,
         'calidad':           v.calidad,
@@ -189,9 +187,6 @@ class ConsultaRapidaStockView(views.APIView):
             'variante__producto__imagenes',
         ).filter(
             Q(variante__sku__icontains=q)
-            # El código de barras importa acá porque es donde apunta el lector:
-            # el operario dispara y el resultado sale solo, sin tocar la pantalla.
-            | Q(variante__codigo_barras__iexact=q)
             | Q(variante__producto__codigo__icontains=q)
             | Q(variante__producto__nombre__icontains=q)
             | Q(variante__color__icontains=q),
@@ -207,10 +202,6 @@ class ConsultaRapidaStockView(views.APIView):
         def relevancia(s):
             sku    = s.variante.sku.lower()
             codigo = s.variante.producto.codigo.lower()
-            barras = (s.variante.codigo_barras or '').lower()
-            # Una lectura del lector es siempre coincidencia exacta: va primero
-            if barras and barras == q_lower:
-                return 0
             if sku == q_lower or codigo == q_lower:
                 return 0
             if sku.startswith(q_lower) or codigo.startswith(q_lower):
@@ -258,9 +249,6 @@ class StockListView(views.APIView):
                 Q(variante__producto__nombre__icontains=search)
                 | Q(variante__producto__codigo__icontains=search)
                 | Q(variante__sku__icontains=search)
-                # Exacto: un código de barras leído matchea entero o no
-                # matchea. Buscarlo "parecido" solo traería ruido.
-                | Q(variante__codigo_barras__iexact=search)
             )
 
         estado = request.query_params.get('estado')

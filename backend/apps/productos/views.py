@@ -121,7 +121,7 @@ class ProductoViewSet(ProtegeAlBorrarMixin, viewsets.ModelViewSet):
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     filterset_class = ProductoFilter
     search_fields   = ['nombre', 'codigo', 'descripcion', 'marca__nombre',
-                       'variantes__sku', 'variantes__codigo_barras']
+                       'variantes__sku']
     ordering_fields = ['nombre', 'precio_base', 'fecha_creacion', 'destacado']
     ordering        = ['-destacado', 'nombre']
     parser_classes  = [MultiPartParser, FormParser, JSONParser]
@@ -272,9 +272,6 @@ class VarianteViewSet(ProtegeAlBorrarMixin, viewsets.ModelViewSet):
         'update':   [LecturaLibreEscrituraAdminOVendedor],
         'partial_update': [LecturaLibreEscrituraAdminOVendedor],
         'destroy':  [EsAdmin],
-        # Todos los roles leen el código de barras: depósito al recibir
-        # mercadería, vendedor al armar el pedido, caja al cobrar.
-        'por_codigo_barras': [TodosLosRoles],
         'default':  [TodosLosRoles],
     }
 
@@ -290,57 +287,6 @@ class VarianteViewSet(ProtegeAlBorrarMixin, viewsets.ModelViewSet):
         if self.action in ('create', 'update', 'partial_update'):
             return VarianteWriteSerializer
         return VarianteReadSerializer
-
-    # ── Lectura del código de barras ──────────────────────────
-    @action(detail=False, methods=['get'], url_path='por-codigo-barras')
-    def por_codigo_barras(self, request):
-        """
-        GET /api/v1/productos/variantes/por-codigo-barras/?codigo=7891234567895
-
-        Devuelve la variante que tiene ese código de barras, con su stock.
-        Es lo que consulta el sistema cada vez que alguien dispara el lector.
-
-        Responde 200 siempre, con `encontrado` en true o false, incluso cuando
-        el código no está cargado. Un código desconocido no es un error: al dar
-        de alta mercadería nueva es justamente lo que se espera, y la pantalla
-        tiene que poder ofrecer cargarlo en vez de mostrar un cartel de error.
-
-        Busca también por SKU: algunas etiquetas del proveedor traen impreso el
-        código interno y no un código de barras de fábrica, y así el lector
-        sirve igual.
-        """
-        codigo = (request.query_params.get('codigo') or '').strip()
-
-        if not codigo:
-            return Response(
-                {'detail': 'Falta el parámetro "codigo".'},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        # Se busca en las inactivas también: si una variante dada de baja
-        # conserva ese código, hay que avisarlo y no dejar cargarlo de nuevo.
-        base = Variante.objects.select_related('producto', 'acabado').prefetch_related('stock')
-
-        variante = (
-            base.filter(codigo_barras__iexact=codigo).first()
-            or base.filter(sku__iexact=codigo).first()
-        )
-
-        if variante is None:
-            return Response({'encontrado': False, 'codigo': codigo})
-
-        return Response({
-            'encontrado': True,
-            'codigo':     codigo,
-            'variante':   VarianteReadSerializer(variante, context={'request': request}).data,
-            'producto': {
-                'id':           variante.producto_id,
-                'codigo':       variante.producto.codigo,
-                'nombre':       variante.producto.nombre,
-                'unidad_venta': variante.producto.unidad_venta,
-                'activo':       variante.producto.activo,
-            },
-        })
 
     # ── Subir imagen de variante ──────────────────────────────
     @action(detail=True, methods=['post'], url_path='imagenes',

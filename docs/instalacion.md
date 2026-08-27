@@ -214,10 +214,21 @@ al sistema final con datos reales.)*
 - Si no: descargar driver desde el sitio de FTX o usar driver genérico ESC/POS
 - Verificar en: Panel de control → Dispositivos e impresoras
 
-### Impresora matricial Epson LX-350
-- Conectar por USB o puerto paralelo (con adaptador USB-Paralelo si es necesario)
-- Driver oficial: https://epson.com/Support/Printers/sl/s/SPT_C11C637011
-- Instalar el driver Epson LX-350 para Windows
+### Cualquier otra impresora del local
+
+**El sistema maneja una sola impresora: la térmica de arriba.** Es la única que
+`apps/caja/printer.py` conoce y la única que se configura en
+`IMPRESORA_TERMICA_NOMBRE`.
+
+Cualquier otra impresora del local —la de depósito, una multifunción de
+oficina— se instala como impresora normal de Windows y **no tiene ninguna
+relación con el sistema**: no imprime facturas, ni tickets, ni reportes desde la
+aplicación. No hay que configurarla en el `.env`.
+
+> Registrado el 27/08/2026: esta sección listaba una **Epson LX-350 matricial**
+> como parte del armado. No lo era —no hay código que la use— y hacía perder
+> tiempo instalando un driver que el sistema no necesita. Junto con el retiro de
+> la **Epson L1250** del 26/08, queda una sola impresora en juego.
 
 ### Verificar la conexión antes de dar por armada la PC servidor
 ```bat

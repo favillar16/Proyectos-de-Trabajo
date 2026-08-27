@@ -93,7 +93,7 @@ class VarianteReadSerializer(serializers.ModelSerializer):
     class Meta:
         model  = Variante
         fields = [
-            'id', 'sku', 'codigo_barras', 'color', 'calidad',
+            'id', 'sku', 'color', 'calidad',
             'acabado',
             'largo_cm', 'ancho_cm', 'espesor_mm',
             'dimension_display',
@@ -140,7 +140,7 @@ class VarianteWriteSerializer(serializers.ModelSerializer):
     class Meta:
         model  = Variante
         fields = [
-            'id', 'sku', 'codigo_barras', 'color', 'calidad', 'acabado_id',
+            'id', 'sku', 'color', 'calidad', 'acabado_id',
             'largo_cm', 'ancho_cm', 'espesor_mm',
             'piezas_por_caja', 'm2_por_caja', 'peso_kg_caja', 'cajas_por_pallet',
             'precio_diferencial', 'activa',

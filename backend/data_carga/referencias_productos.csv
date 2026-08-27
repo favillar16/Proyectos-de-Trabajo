@@ -77,8 +77,8 @@ factura;codigo_prov;nombre;categoria_tipo;marca;color;largo_cm;ancho_cm;unidad_v
 0005910;HD40081;Revestimiento 32x58 HD40081;ceramica;;;32;58;m2;2.88;145.44;25000;35000;VERIFICAR cantidad contra factura fisica
 0005910;DR90094;Revestimiento 32x58 Retif. Onix Gold;ceramica;Decore;dorado;32;58;m2;2.88;145.44;25000;35000;VERIFICAR cantidad contra factura fisica
 0005910;60006;Piso 60x60 Retificado 60006;piso;Decore;madera;60;60;m2;2.02;145.44;23500;33000;VERIFICAR cantidad contra factura fisica
-promo_sideragro;20329;Kit Inodoro Cisterna Baja Dona + Gabinete Sider Opera + Asiento Astra Paris;sanitario;Sider;gris claro;;;pieza;;1;;799000;Precio de oferta SiderAgro (promo 101 14/05); sin costo mayorista confirmado
-promo_sideragro;27372;Kit Inodoro Cisterna Baja Alamo + Gabinete Sider Blanco + Asiento Thema;sanitario;Sider;blanco;;;pieza;;1;;647000;Precio de oferta SiderAgro (promo 112 25/05); sin costo mayorista confirmado
+promo_sideragro;20329;Kit Inodoro Cisterna Baja Dona + Gabinete Sider Opera + Asiento Astra Paris;sanitario;Sider;gris claro;;;pieza;;1;;799000;Precio de oferta SiderAgro (promo 101 14/05), sin costo mayorista confirmado
+promo_sideragro;27372;Kit Inodoro Cisterna Baja Alamo + Gabinete Sider Blanco + Asiento Thema;sanitario;Sider;blanco;;;pieza;;1;;647000;Precio de oferta SiderAgro (promo 112 25/05), sin costo mayorista confirmado
 catalogo_minga;19964;Conjunto p/Baño Mod. KS 65cm Blanco/Volakas c/pie;sanitario;Sao Joao;blanco;;;pieza;;1;399365;559000;Precio2 de catalogo usado como costo distribuidor
 catalogo_minga;30959;Conjunto p/Baño Mod. Lyon 55cm Solanum/Provence c/pie;sanitario;Sao Joao;madera/blanco;;;pieza;;1;471450;660000;Precio2 de catalogo usado como costo distribuidor
 catalogo_minga;19963;Conjunto p/Baño Mod. KS 65cm Blanco/Nero c/pie;sanitario;Sao Joao;blanco/negro;;;pieza;;1;399460;559000;Precio2 de catalogo usado como costo distribuidor

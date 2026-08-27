@@ -5,7 +5,7 @@
  * Casos de uso:
  * 1. Vendedor en showroom busca "POR-001" → ve stock de todas sus variantes
  * 2. Cliente pregunta por "porcelanato gris 60x60" → búsqueda por nombre
- * 3. Vendedor escanea código → resultado inmediato
+ * 3. Vendedor busca por SKU exacto → resultado inmediato
  *
  * Modos:
  * - Inline: se embebe en el showroom como panel lateral
@@ -19,7 +19,6 @@ import {
   ScanLine, Info,
 } from 'lucide-react'
 import { inventarioApi } from '../../services/api'
-import { useLectorCodigoBarras } from '../../hooks/useLectorCodigoBarras'
 import { useDevice } from '../../hooks/useDevice'
 
 const C = {
@@ -343,9 +342,7 @@ export default function ConsultaStock({
   abierto       = true,
   onCerrar,
   onAgregarPedido,
-  // Código que ya venía leído desde afuera: el showroom escucha el lector con
-  // este panel cerrado, lo abre y le pasa el código por acá. Sin esto, el
-  // lector solo serviría con el panel ya abierto.
+  // Búsqueda con la que abrir el panel ya cargado, en vez de vacío.
   codigoInicial = '',
 }) {
   const [query,          setQuery]          = useState('')
@@ -386,18 +383,7 @@ export default function ConsultaStock({
     inputRef.current?.focus()
   }, [])
 
-  // Lector de código de barras (FTX LC123BH5).
-  // Escucha en toda la pantalla, no solo en el campo: el vendedor apunta a la
-  // caja y dispara sin tener que hacer clic antes en el buscador.
-  useLectorCodigoBarras({
-    activo: abierto,
-    onLectura: (codigo) => {
-      setQuery(codigo)
-      setItemSeleccionado(null)
-    },
-  })
-
-  // Lectura que llegó con el panel cerrado. Se aplica al abrirse.
+  // Búsqueda que llegó desde afuera. Se aplica al abrirse.
   useEffect(() => {
     if (abierto && codigoInicial) {
       setQuery(codigoInicial)
@@ -433,7 +419,7 @@ export default function ConsultaStock({
                 Consulta de stock
               </p>
               <p style={{ fontSize: '11px', color: C.textMuted }}>
-                Escaneá con el lector, o buscá por código, SKU o nombre
+                Buscá por código, SKU o nombre
               </p>
             </div>
           </div>
@@ -458,7 +444,7 @@ export default function ConsultaStock({
             ref={inputRef}
             value={query}
             onChange={e => { setQuery(e.target.value); setItemSeleccionado(null) }}
-            placeholder="Escaneá o escribí: POR-001 · 60x60 · gris..."
+            placeholder="POR-001 · 60x60 · gris..."
             autoComplete="off"
             autoCorrect="off"
             spellCheck={false}
