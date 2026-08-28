@@ -18,8 +18,10 @@ from .serializers import (
     ClienteSerializer,
 )
 from apps.usuarios.permissions import (
-    EsAdminOVendedor, EsAdminODeposito, EsAdminVendedorODeposito, TodosLosRoles,
+    EsAdminOVendedor, EsAdminOCajero, EsAdminODeposito,
+    EsAdminVendedorODeposito, TodosLosRoles,
 )
+from . import nota_pedido_doc as nota_doc
 
 
 # ─── Helpers WebSocket ────────────────────────────────────────────────────────
@@ -417,3 +419,30 @@ class ClienteDetailView(views.APIView):
         cliente.activo = False
         cliente.save(update_fields=['activo'])
         return Response({'detail': 'Cliente desactivado.'}, status=status.HTTP_200_OK)
+
+
+# ════════════════════════════════════════════════════════
+# Nota para el cliente, como documento descargable (PDF / Excel)
+# ════════════════════════════════════════════════════════
+class NotaPedidoDocumentoView(views.APIView):
+    """
+    GET /api/ventas/pedidos/<pk>/nota/?formato=pdf|xlsx&tipo=presupuesto|pedido
+
+    Devuelve el pedido diagramado como la nota que el negocio ya usaba.
+    Depósito queda afuera: el documento lleva precios y totales, y ese rol
+    no ve montos en ningún lado del sistema.
+    """
+    permission_classes = [EsAdminOVendedor | EsAdminOCajero]
+
+    def get(self, request, pk):
+        pedido = get_object_or_404(
+            NotaPedido.objects.select_related('vendedor', 'cliente')
+                              .prefetch_related('items__variante__producto',
+                                                'items__variante__acabado'),
+            pk=pk,
+        )
+        formato = request.query_params.get('formato', 'pdf').lower()
+        formato = 'xlsx' if formato in ('xlsx', 'excel') else 'pdf'
+        tipo = request.query_params.get('tipo', nota_doc.TIPO_DEFECTO).lower()
+        datos = nota_doc.datos_desde_pedido(pedido, tipo=tipo)
+        return nota_doc.responder(datos, formato)

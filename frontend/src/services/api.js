@@ -121,6 +121,14 @@ export const ventasApi = {
   eliminarItem: (pedidoId, itemId) =>
     api.delete(`/ventas/pedidos/${pedidoId}/items/${itemId}/`),
 
+  // Nota diagramada para el cliente — descarga un archivo (PDF o Excel).
+  // `tipo` elige el encabezado: 'presupuesto' o 'pedido'.
+  descargarNota: (id, formato, tipo = 'presupuesto') =>
+    api.get(`/ventas/pedidos/${id}/nota/`, {
+      params: { formato, tipo },
+      responseType: 'blob',
+    }),
+
   // Padrón de clientes con RUC
   clientes:        (buscar = '') => api.get('/ventas/clientes/', { params: buscar ? { buscar } : {} }),
   crearCliente:    (data)        => api.post('/ventas/clientes/', data),

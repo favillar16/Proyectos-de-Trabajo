@@ -153,6 +153,23 @@ de Caja ni ver los reportes, aunque conozca la URL.
   en cuanto depósito empieza a prepararlo.
 - Todo cambio de estado se ve **en vivo** en las pantallas de los demás
   roles involucrados (sin recargar), vía notificaciones en tiempo real.
+- **Nota para el cliente**: desde el detalle del pedido se descarga la nota
+  diagramada con el logo y los colores del negocio. Se elige el encabezado
+  —**Presupuesto** (lo que se le pasa al cliente para que decida, es la
+  opción por defecto) o **Pedido** (la venta ya confirmada)— y el formato.
+  Los datos de contacto del pie son los comerciales (correo, teléfono y
+  dirección que el negocio le da al cliente), no los fiscales de la
+  factura. Los dos formatos sirven para cosas distintas:
+  - **PDF** — para imprimir o mandar por WhatsApp. Respeta el diseño de la
+    nota que el negocio ya venía usando (logo arriba, cajas de fecha,
+    tabla CANTIDAD / PRODUCTO / PRECIO / TOTAL con renglones en blanco al
+    final para agregar algo a mano, y la franja de contacto al pie).
+  - **Excel** — para trabajarla y editarla. Cantidad y precio unitario van
+    como números y el total sale por fórmula, así que cambiar una cantidad
+    recalcula solo esa fila y el total general. Trae 12 renglones en
+    blanco ya con la fórmula puesta.
+  Depósito no ve estos botones: la nota lleva precios y ese rol no maneja
+  montos en ninguna pantalla.
 
 ---
 

@@ -251,6 +251,20 @@ DATOS_FISCALES = {
     'actividad_desc':      config('FISCAL_ACTIVIDAD_DESC', default=''),
 }
 
+# Datos de contacto que van al pie de la Nota de Pedido. NO son los fiscales:
+# el teléfono y la dirección que el negocio le da al cliente en un presupuesto
+# son distintos de los que la DNIT tiene registrados para la factura. Los
+# valores por defecto son los de la nota que el negocio ya venía usando
+# (docs/Ejemplos Nota de Pedido/).
+# El `or` no sobra: si la variable está en el .env pero vacía, python-decouple
+# devuelve '' y nunca llega a aplicar el default — y el pie quedaría en blanco.
+CONTACTO_COMERCIAL = {
+    'email':     config('CONTACTO_EMAIL', default='') or 'ogapora26@gmail.com',
+    'telefono':  config('CONTACTO_TELEFONO', default='') or '+595 975 792195',
+    'direccion': (config('CONTACTO_DIRECCION', default='')
+                  or 'Lida P. Benítez y Dr. Luis M. Argaña, Cnel. Oviedo'),
+}
+
 # ─── SIFEN / e-Kuatia ─────────────────────────────────────────────────────────
 # Transmisión de documentos electrónicos a la DNIT.
 #
