@@ -4,7 +4,6 @@ Cada cambio de estado emite un evento WebSocket a los grupos correspondientes.
 """
 from rest_framework import views, status
 from rest_framework.response import Response
-from rest_framework.permissions import IsAuthenticated
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from django.db import transaction
@@ -19,8 +18,7 @@ from .serializers import (
     ClienteSerializer,
 )
 from apps.usuarios.permissions import (
-    EsAdminOVendedor, EsAdminODeposito, EsAdminOCajero,
-    EsAdminVendedorODeposito, TodosLosRoles, EsAdmin,
+    EsAdminOVendedor, EsAdminODeposito, EsAdminVendedorODeposito, TodosLosRoles,
 )
 
 

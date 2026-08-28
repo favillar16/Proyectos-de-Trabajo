@@ -18,7 +18,6 @@ ESC/POS Reference:
     GS V    — corte de papel
     LF      — avance de línea
 """
-import os
 import logging
 from datetime import datetime
 
@@ -480,7 +479,7 @@ class WindowsPrinter:
 
             try:
                 # Iniciar trabajo de impresión
-                hjob = win32print.StartDocPrinter(
+                win32print.StartDocPrinter(
                     hprinter, 1,
                     ('Ticket', None, 'RAW')   # RAW = bytes directos, sin driver de conversión
                 )

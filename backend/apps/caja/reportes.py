@@ -8,10 +8,9 @@ Cada función de reporte arma una estructura común:
 y luego se renderiza a PDF o XLSX con los helpers de abajo.
 """
 import io
-from datetime import datetime, date, timedelta
+from datetime import datetime, date
 from django.http import HttpResponse
-from django.db.models import Sum, Count, Q
-from django.utils import timezone
+from django.db.models import Sum
 
 
 # ════════════════════════════════════════════════════════
@@ -245,7 +244,6 @@ def reporte_stock():
 
 def reporte_ventas(desde: date, hasta: date):
     from apps.caja.models import Pago
-    from apps.ventas.models import NotaPedido
 
     pagos = Pago.objects.filter(
         estado=Pago.ESTADO_CONFIRMADO,

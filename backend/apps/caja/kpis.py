@@ -13,10 +13,9 @@ Agrupa en una sola llamada todos los datos que necesita la pantalla:
 """
 from rest_framework import views
 from rest_framework.response import Response
-from rest_framework.permissions import IsAuthenticated
 from apps.usuarios.permissions import EsAdmin
-from django.db.models import Sum, Count, Avg, F, Q
-from django.db.models.functions import TruncDate, TruncWeek
+from django.db.models import Sum, Count, F
+from django.db.models.functions import TruncDate
 from django.utils import timezone
 from datetime import timedelta
 import logging
@@ -63,7 +62,6 @@ class KPIsDashboardView(views.APIView):
         from .models import Pago
         from apps.ventas.models import NotaPedido, ItemPedido
         from apps.inventario.models import Stock
-        from apps.costos.models import GastoOperativo, Empleado
 
         dias = int(request.query_params.get('dias', 30))
 

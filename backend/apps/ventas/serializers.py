@@ -255,7 +255,7 @@ class NotaPedidoCreateSerializer(serializers.Serializer):
                 'stock_insuficiente': [
                     f'{err["sku"]}: {err["error"]}' for err in e.errores
                 ]
-            })
+            }) from e
 
         return pedido
 

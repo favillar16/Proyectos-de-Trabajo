@@ -2,7 +2,7 @@
 Views de productos — API REST
 Endpoints completos para crear, editar, subir imágenes y gestionar variantes.
 """
-from rest_framework import viewsets, filters, status, permissions
+from rest_framework import viewsets, filters, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.parsers import MultiPartParser, FormParser, JSONParser

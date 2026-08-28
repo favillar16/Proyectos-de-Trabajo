@@ -13,8 +13,7 @@ Al confirmar un pago:
 """
 from rest_framework import views, status
 from rest_framework.response import Response
-from rest_framework.permissions import IsAuthenticated
-from apps.usuarios.permissions import EsAdminOCajero, EsAdmin, TodosLosRoles
+from apps.usuarios.permissions import EsAdminOCajero, EsAdmin
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from django.db import transaction, IntegrityError
@@ -211,7 +210,6 @@ class CerrarCajaView(views.APIView):
         })
 
 class RegistrarPagoView(views.APIView):
-    permission_classes = [EsAdminOCajero]
     """
     POST /caja/pagos/
     Body:
@@ -681,7 +679,7 @@ def _datos_ticket(pedido, pago, sesion, tipo_comprobante='ticket',
 # ════════════════════════════════════════════════════════
 # REPORTES (PDF / Excel) — solo admin
 # ════════════════════════════════════════════════════════
-from datetime import datetime, date, timedelta
+from datetime import datetime, date
 from . import reportes as rep
 
 

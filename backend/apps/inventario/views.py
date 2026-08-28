@@ -12,17 +12,13 @@ Stock general (/inventario/stock/):
 Ajuste de stock (/inventario/ajustes/):
   Registro de entradas, salidas y ajustes de inventario.
 """
-from rest_framework import viewsets, views, filters, status
+from rest_framework import views, status
 from rest_framework.response import Response
-from rest_framework.decorators import action
-from rest_framework.permissions import IsAuthenticated
 from apps.usuarios.permissions import EsAdminODeposito, TodosLosRoles
 from django.db import transaction
 from django.db.models import Q
-from django.utils import timezone
 
 from .models import Stock, MovimientoStock
-from apps.productos.models import Producto, Variante
 
 MAX_MOVIMIENTOS = 200
 

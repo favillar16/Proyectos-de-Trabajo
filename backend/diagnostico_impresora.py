@@ -41,7 +41,7 @@ django.setup()
 from django.conf import settings
 from apps.caja.printer import (
     TicketBuilder, WindowsPrinter,
-    ticket_a_texto, INIT, CUT_PARTIAL, FEED_LINES, LF,
+    ticket_a_texto, INIT, CUT_PARTIAL, FEED_LINES,
 )
 
 def separador(char='═', n=55):
@@ -92,8 +92,8 @@ def verificar_configuracion(impresoras_disponibles):
         else:
             print(f'\n  ✗ La impresora "{nombre}" NO está instalada en este equipo.')
             print(f'    Impresoras disponibles: {", ".join(impresoras_disponibles)}')
-            print(f'\n  → Para corregir: en el archivo backend/.env, cambiar:')
-            print(f'    IMPRESORA_TERMICA_NOMBRE=<nombre exacto de la lista>')
+            print('\n  → Para corregir: en el archivo backend/.env, cambiar:')
+            print('    IMPRESORA_TERMICA_NOMBRE=<nombre exacto de la lista>')
             return False
     elif puerto:
         print(f'\n  Usando puerto directo: {puerto}')
@@ -187,7 +187,7 @@ def prueba_bytes_minimos():
     try:
         import win32print
         hprinter = win32print.OpenPrinter(nombre)
-        hjob = win32print.StartDocPrinter(hprinter, 1, ('Test', None, 'RAW'))
+        win32print.StartDocPrinter(hprinter, 1, ('Test', None, 'RAW'))
         win32print.StartPagePrinter(hprinter)
         win32print.WritePrinter(hprinter, INIT + b'Test de comunicacion\n' + FEED_LINES(3) + CUT_PARTIAL)
         win32print.EndPagePrinter(hprinter)

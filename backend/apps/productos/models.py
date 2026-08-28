@@ -14,7 +14,6 @@ Mejoras v2:
 - peso_kg_caja y UNIDAD_ML agregados
 - imagen_principal sin query extra cuando se usa prefetch_related
 """
-import os
 from django.db import models
 from django.core.validators import MinValueValidator
 from django.core.exceptions import ValidationError
