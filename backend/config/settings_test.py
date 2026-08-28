@@ -12,15 +12,17 @@ PostgreSQL levantado ni conocer su contraseña.
 La base es SQLite en memoria: arranca vacía, se descarta al terminar y no toca
 en ningún momento los datos del negocio.
 
-IMPORTANTE — un test falla acá y está bien que falle:
+IMPORTANTE — un test se saltea acá (aparece como "s", y el resumen final dice
+"OK (skipped=1)"):
 
     apps.facturacion.tests.test_numeracion.ConcurrenciaTests
     .test_varias_cajas_simultaneas_no_duplican_ni_saltan
 
 Ese test levanta varios hilos cobrando al mismo tiempo para verificar que la
 numeración de comprobantes no se duplique. Necesita bloqueo por fila, que es de
-PostgreSQL; SQLite bloquea la tabla entera y el test muere con "database table
-is locked". **No es un problema del sistema.** Contra PostgreSQL pasa:
+PostgreSQL; SQLite bloquea la tabla entera. Se saltea solo
+(`@skipUnlessDBFeature('has_select_for_update')`) para que la corrida sin
+Postgres no avise de una falla que no existe. Contra PostgreSQL sí corre:
 
     python manage.py test apps.facturacion
 
