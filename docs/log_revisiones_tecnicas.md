@@ -458,3 +458,120 @@ marcando como faltante. Bloque listo para el `.env` en
   departamento/distrito/ciudad y el CSC, que no están en la constancia.
 - `frontend/dist/` se reconstruyó en esta sesión: las tablets toman el cambio
   al recargar la PWA.
+
+---
+
+## 2026-08-27 — Revisión final previa a producción
+
+Última pasada antes de llevar el sistema al local. Se corrió todo lo que se
+puede correr —117 tests contra PostgreSQL, los 22 del frontend, `check
+--deploy`, `makemigrations --check`, el build de Vite, daphne levantado de
+verdad contra la base real— y se auditó a mano lo que ninguna de esas cosas
+cubre.
+
+### Lo que salió bien y no hay que volver a mirar
+
+- **117 tests en verde** contra PostgreSQL y **22 en el frontend**. El
+  `frontend/dist/` versionado reconstruye byte por byte (mismo hash
+  `index-DUaT-YG-.js`), así que lo que corren las tablets es lo que está en
+  git.
+- **Ninguna referencia colgada** al sistema de código de barras ni a la
+  impresora A4 fuera de la documentación histórica.
+- **Autorización sólida.** Los cinco grupos de endpoints (`productos`,
+  `inventario/stock`, `ventas/pedidos`, `caja/sesiones`, `costos/gastos`)
+  responden 401 sin token; el WebSocket rechaza anónimo con 403 y las cuatro
+  vistas que no declaran `permission_classes` resuelven por `get_permissions()`.
+  Ninguna cuenta tiene contraseña de diccionario.
+- **La facturación electrónica no puede tumbar un cobro.** `emitir_para_pago()`
+  no lanza nunca y `crear_documento()` corre en su propio `atomic`, así que un
+  fallo del DE revierte hasta el número de comprobante sin dejar hueco en el
+  correlativo.
+
+### Bloqueante encontrado: no se podía crear ningún producto
+
+`productos.0005` y `0006` estaban **sin aplicar** en la base, y la columna
+`variantes.codigo_barras` existía igual pero con la forma de la *otra*
+implementación del lector, la que se descartó al unificar (commit `6f99c13`):
+`varchar(32) NOT NULL` con un índice único parcial `WHERE codigo_barras <> ''`.
+
+El modelo, en cambio, guarda `NULL` cuando no hay código. Resultado: **toda
+alta de Variante moría** con
+
+```
+IntegrityError: null value in column "codigo_barras" of relation "variantes"
+```
+
+tanto desde la pantalla de Productos como desde cualquier comando de carga. El
+sistema arrancaba, vendía y cobraba sin problema — solo fallaba el alta, que
+es justo lo primero que se iba a hacer en el local.
+
+`migrate` tampoco lo resolvía: el `AddField` de `0005` chocaba contra la
+columna existente.
+
+**Arreglo:** se reescribió `0005` como `SeparateDatabaseAndState`. El estado de
+Django sigue siendo el `AddField` de siempre; la parte de base de datos ahora
+crea la columna si no está (instalación nueva) o la reconcilia si está
+(la base del negocio): ancho a 64, `DROP NOT NULL`, `'' → NULL`, se cambia el
+índice único parcial por el que espera Django. Es idempotente y no hay pérdida
+de datos — ninguna variante tenía código cargado. Verificado en los tres
+caminos: SQLite de cero, PostgreSQL de cero y la base real de la notebook.
+
+### Otros hallazgos
+
+| Qué | Estado |
+|---|---|
+| `SIFEN_HABILITADO=True` en el `.env`, con el código y los docs asumiendo `False` | Apagado. En `True` numeraba `001-001-NNNNNNN` de verdad e imprimía un CDC que no existe en el portal del DNIT, sin certificado ni worker que transmita. |
+| `probar.bat` **siempre** avisaba «alguna prueba falló» | El test de concurrencia de numeración necesita bloqueo por fila y SQLite bloquea la tabla entera. Ahora se saltea solo con `@skipUnlessDBFeature('has_select_for_update')`; contra PostgreSQL sigue corriendo. |
+| `revisar.bat` devolvía 43 avisos de ruff | En cero. El único que era un bug real: `RegistrarPagoView` declaraba `permission_classes` dos veces (mismo valor, sin impacto de seguridad, pero anulaba el docstring). El resto, 33 imports sin usar, 5 `raise ... from`, 2 f-strings vacíos y 2 variables muertas. |
+| `checklist_entrega.md` §1.4 afirmaba que `ALLOWED_HOSTS` y CORS se autodetectan | Es falso, no hay tal detección: `settings.py` usa `*` y `CORS_ALLOW_ALL_ORIGINS=True` por defecto. Corregido. |
+| `CLAUDE.md` decía que el WebSocket va bajo `AuthMiddlewareStack` | Va bajo `JWTAuthMiddleware` (`apps/usuarios/ws_auth.py`), con el token por query param. Corregido. |
+| El `.env` conservaba la sección de la Epson L1250 | Quitada: esa impresora salió del sistema el 26/08. |
+| `DEBUG=True` | Es lo que corresponde en la notebook, pero el `.env` **no se versiona**: hay que ponerlo en `False` en la PC servidor a mano (bloque 4.1 del checklist). |
+| Solo 3 cuentas activas, ninguna de rol `cajero`, `vendedor` ni `deposito`; quedan 4 usuarios `_test_*` | Anotado en el checklist §4.3. Sin cuentas reales activas nadie puede atender el primer día. |
+
+### El lote de 184 productos no se podía cargar
+
+`docs/carga_final/productos_a_cargar.csv` tiene un formato distinto al que lee
+`cargar_referencias_productos`, y **ninguna fila trae precio de venta** — son
+todos costos. No existía forma de cargarlo con un comando.
+
+Se escribió **`cargar_lote_facturas`** (`apps/productos/management/commands/`),
+con 21 tests propios. Deriva el precio de venta del costo con `--margen` (y
+`--margen-rubro` para pisarlo por rubro), redondea al millar, agrupa las filas
+que comparten `nombre_producto` en un solo Producto con una Variante por
+color, y es idempotente: repetirlo no duplica ni vuelve a sumar stock.
+
+El `--dry-run` recorre el camino real dentro de una transacción que se deshace
+al final, así que valida de verdad. Fue lo que destapó siete filas que el
+modelo rechazaba: cuatro conjuntos de baño con una sola medida (`clean()` pide
+largo y ancho juntos) y tres cerámicos donde el m²/caja del fabricante no
+cierra con las piezas por caja. El comando las adapta y lo informa, en vez de
+perderlas.
+
+Con margen parejo de 40%: **181 variantes en 111 productos, 0 errores**, 3
+filas salteadas por decisión de negocio pendiente, 2 al catálogo con stock 0
+(el espejo ROTO y el kit devuelto) y 19 avisos de filas que comparten producto
+con distinto costo entre facturas.
+
+**Suite total: 138 tests backend.**
+
+### Lo que queda para el día del lanzamiento
+
+En la PC servidor, en este orden:
+
+1. `python manage.py migrate` y confirmar que `showmigrations` quede todo en `[X]`.
+2. `.env`: `DEBUG=False`, `SECRET_KEY` propia, `SIFEN_HABILITADO=False`,
+   `CORS`/`ALLOWED_HOSTS` acotados a la IP del servidor.
+3. `python manage.py collectstatic --noinput` (sin esto el `/admin/` da 500).
+4. Definir el margen de venta y correr `cargar_lote_facturas --margen N --dry-run`,
+   leer la salida, después sin `--dry-run`.
+5. Crear las cuentas reales del personal y borrar las `_test_*`.
+6. `python manage.py verificar_fiscal` como control final.
+
+### Lo que sigue abierto (no bloquea)
+
+- El rango de pesos del módulo 11 del CDC sigue sin verificarse contra el
+  documento de la DNIT (enlace caído). Con `SIFEN_HABILITADO=False` no se
+  ejercita.
+- Sidecar Node, worker de transmisión, QR del KuDE y nota de crédito.
+- La decisión e-Kuatia'i vs. e-Kuatia, y si la PC servidor va a tener internet.

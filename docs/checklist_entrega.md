@@ -65,23 +65,40 @@ DB_PASSWORD=ceramica_pass_2025
 IMPRESORA_TERMICA_NOMBRE=<nombre exacto desde Panel de control>
 ```
 
-> **`ALLOWED_HOSTS` y CORS no se cargan a mano.** El sistema detecta al
-> arrancar las direcciones de esta máquina en la red del local y habilita solo
-> esas. Las líneas están comentadas en `.env` a propósito: descomentarlas solo
-> si algo quedara bloqueado y haya que trabajar igual.
+> **`ALLOWED_HOSTS` y CORS quedan abiertos a propósito.** No hay detección
+> automática de IPs: `backend/config/settings.py` usa `ALLOWED_HOSTS=*` y
+> `CORS_ALLOW_ALL_ORIGINS=True` por defecto, porque la tablet llama a la API
+> por la IP LAN de la PC servidor y esa IP cambia según dónde se instale. Es
+> deliberado para un appliance de red local cerrada, **no** para exponer a
+> internet. Si el servidor tiene IP fija (ver `fijar_ip.bat`), reemplazar el
+> `*` por esa IP en el `.env` es más seguro y no rompe nada.
 
 ### 1.5 Migraciones — PASO MÁS CRÍTICO
 
 ```cmd
-python manage.py makemigrations usuarios
-python manage.py makemigrations productos
-python manage.py makemigrations inventario
-python manage.py makemigrations ventas
-python manage.py makemigrations caja
 python manage.py migrate
+python manage.py showmigrations
 ```
 
-Verificar que no haya errores. Si aparece `django.db.utils.OperationalError`, verificar que PostgreSQL esté corriendo y los datos del `.env` sean correctos.
+Todas las líneas de `showmigrations` tienen que quedar en `[X]`. **Si queda
+alguna en `[ ]`, el sistema no está listo** aunque arranque y se vea bien:
+una migración sin aplicar rompe justo la operación que la necesita, no el
+arranque.
+
+> **Esto ya mordió una vez.** El 27/08/2026 la base del local tenía
+> `productos.0005` y `0006` sin aplicar, y por eso **no se podía crear ningún
+> producto**: cada alta moría con `null value in column "codigo_barras"`. El
+> sistema abría, vendía y cobraba con normalidad; solo fallaba el alta. La
+> migración `0005` ya está escrita para resolver ese caso sola, pero el
+> `showmigrations` es lo que avisa antes de que pase.
+
+No hace falta correr `makemigrations`: las migraciones están versionadas. Si
+`makemigrations --check --dry-run` dice algo distinto de «No changes
+detected», hay un modelo cambiado sin migrar y eso se resuelve **antes** de
+seguir, no en el local.
+
+Si aparece `django.db.utils.OperationalError`, verificar que PostgreSQL esté
+corriendo y que los datos del `.env` sean correctos.
 
 ### 1.6 Datos iniciales y demo
 
@@ -315,6 +332,9 @@ Estos cambios se hacen ANTES de la entrega definitiva.
 
 ### 4.1 En `backend/.env`
 
+El `.env` **no está versionado**: cada máquina tiene el suyo, así que este
+bloque hay que hacerlo en la PC servidor aunque ya esté hecho en la notebook.
+
 ```env
 # Cambiar:
 DEBUG=False
@@ -325,7 +345,23 @@ ALLOWED_HOSTS=localhost,127.0.0.1,<IP-servidor>
 
 # Verificar:
 DB_PASSWORD=<contraseña fuerte, no la de demo>
+SIFEN_HABILITADO=False
 ```
+
+> **`DEBUG=False` importa más de lo que parece.** Con `DEBUG=True` cualquier
+> error 404 o 500 devuelve una página de Django con el URLconf completo y el
+> traceback. En una red WiFi de local eso lo ve cualquiera que se conecte.
+> Después de cambiarlo hay que correr el paso 4.2 sí o sí: sin
+> `collectstatic`, con `DEBUG=False` el `/admin/` responde 500.
+
+> **`SIFEN_HABILITADO` tiene que quedar en `False` hasta que esté el
+> certificado.** En `True` el sistema numera las facturas con el correlativo
+> oficial `001-001-NNNNNNN` e imprime el CDC con la leyenda «consulte este
+> documento en ekuatia.set.gov.py» — pero todavía no hay certificado ni
+> worker que transmita, así que ese CDC no existiría en el portal y el
+> correlativo empezaría a correr sin respaldo. Con `False` la caja funciona
+> igual que siempre: ticket y factura impresa con RUC y timbrado.
+> Verificar con `python manage.py verificar_fiscal`.
 
 ### 4.2 Colectar archivos estáticos
 
@@ -333,9 +369,24 @@ DB_PASSWORD=<contraseña fuerte, no la de demo>
 python manage.py collectstatic --noinput
 ```
 
-### 4.3 Cambiar contraseñas de demo
+### 4.3 Cuentas del personal
 
-Desde la interfaz de Usuarios (como admin), cambiar las contraseñas de `vendedor`, `cajero`, `deposito` y `admin` por contraseñas reales elegidas con el negocio.
+Dos cosas distintas:
+
+1. **Contraseñas.** Desde la interfaz de Usuarios (como admin), cambiar las de
+   `admin` y las de cualquier cuenta de demo que se vaya a usar de verdad, por
+   contraseñas reales elegidas con el negocio.
+2. **Cuentas activas.** Al 27/08/2026 las únicas cuentas activas son `admin`,
+   `Administrador` y `juanperez1` (encargada de ventas). Las de `vendedor`,
+   `cajero` y `deposito` están **desactivadas**, y las `_test_*` son restos de
+   pruebas. Sin una cuenta activa por cada persona que va a atender, el primer
+   día nadie puede entrar. Dar de alta las reales y borrar las `_test_*`.
+
+Para ver el estado:
+
+```cmd
+python manage.py shell -c "from apps.usuarios.models import Usuario; [print(u.username, u.rol, u.activo) for u in Usuario.objects.order_by('username')]"
+```
 
 ### 4.4 Verificación final de settings
 
@@ -366,9 +417,27 @@ Este bloque lo ejecuta el personal del negocio con ayuda.
 
 ### 5.1 Plan de carga
 
-1. Empezar con los 20 productos más vendidos
-2. Para cada producto: código, nombre, categoría, precio, foto (desde el celular)
-3. Cargar variantes con dimensiones y stock real del depósito
+El lote de compras de agosto 2026 (26 facturas, 184 líneas) **no se carga a
+mano**: está transcripto en `docs/carga_final/productos_a_cargar.csv` y entra
+con un comando.
+
+```cmd
+python manage.py cargar_lote_facturas --margen 40 --dry-run
+```
+
+El `--dry-run` hace la carga completa y la deshace, así que muestra exactamente
+lo que va a pasar. Leer la salida, y recién entonces correrlo sin `--dry-run`.
+El detalle de las opciones (margen por rubro, redondeo, qué filas se saltean y
+por qué) está en `docs/carga_final/README.md`.
+
+**Antes de correrlo hay que definir el margen de venta**: el CSV solo trae
+precios de costo. Sin `--margen` el comando se niega a correr, a propósito.
+
+Lo que quede fuera del lote —los 6 datos ilegibles y las 8 decisiones de
+negocio de `docs/carga_final/pendientes_verificacion.md`— se carga a mano:
+
+1. Para cada producto: nombre, categoría, precio, foto (desde el celular)
+2. Cargar variantes con dimensiones y stock real del depósito
 
 ### 5.2 Fotografía de productos
 
