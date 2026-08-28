@@ -87,9 +87,59 @@ Y el cierre es **cantidad y costo**:
 
 1. Leer `pendientes_verificacion.md` y resolver los 6 datos ilegibles y las 8
    decisiones de negocio anotadas a mano.
-2. Definir el margen de venta por rubro.
-3. Dar de alta las marcas que todavía no existan: OASIS, BELLO, DSN, FORMIGRES,
-   VIVA, ROCHAFORTE, CELITE, CORONA, DECA, INCEPA, ROCA, SANTA CLARA, SIDER,
-   ICASA, CIPLA, FV, MAPEI, MEGACOLA, CORTAG, METASUL, PCT, LORENZETTI, PERIN.
-4. El stock se carga con `Stock.registrar_movimiento()` — **nunca** tocando
-   `Stock.cantidad` a mano (ver `CLAUDE.md`).
+2. Definir el margen de venta por rubro (paso 3 de abajo).
+
+Las marcas y las categorías **no** hay que darlas de alta a mano: el comando
+las crea si faltan. El stock tampoco se toca a mano — entra por
+`Stock.registrar_movimiento()`, como exige `CLAUDE.md`.
+
+## Cómo cargarlo
+
+```
+cd backend
+venv\Scripts\activate
+python manage.py cargar_lote_facturas --margen 40 --dry-run
+```
+
+El `--dry-run` hace la carga completa de verdad y la deshace al final, así que
+lo que muestra es exactamente lo que va a pasar: cuántos productos y variantes
+entran, qué filas se saltean y cuáles se ajustan. Recién cuando la salida
+convence, se corre sin `--dry-run`.
+
+| Opción | Para qué |
+|--------|----------|
+| `--margen 40` | Margen general en % sobre el costo. **Obligatorio** (el CSV solo trae costos). |
+| `--margen-rubro ceramica=35,pastina=60` | Margen distinto por rubro; pisa al general. |
+| `--redondeo 1000` | Redondea el precio de venta hacia arriba al millar (default). `0` lo deja exacto. |
+| `--incluir-dudosos` | Carga también las 3 filas con decisiones de negocio abiertas. |
+| `--sin-stock` | Solo el catálogo, sin movimientos de inventario. |
+| `--archivo ruta.csv` | Otro CSV con el mismo formato. |
+
+Con margen parejo de 40% la corrida da **181 variantes en 111 productos**, 3
+filas salteadas y 0 errores.
+
+Es idempotente: repetirlo no duplica nada ni vuelve a sumar stock. La clave es
+(`nombre_producto`, `color`), y las filas que comparten `nombre_producto` se
+agrupan en un solo Producto con una Variante por color.
+
+### Lo que el comando decide solo, y avisa
+
+- **3 filas salteadas** — las que en `observaciones` dicen «confirmar si…»:
+  el kit Dona Beja que puede haberse vendido, la cuña niveladora marcada «NO»
+  y el exhibidor Cortag. Entran con `--incluir-dudosos`.
+- **2 al catálogo con stock 0** — las marcadas «no cargar al stock» (el espejo
+  ROTO y el kit devuelto): el producto existe, la mercadería no.
+- **7 filas ajustadas** — 4 conjuntos de baño que traen una sola medida (el
+  modelo pide largo y ancho juntos, así que se cargan sin dimensiones; la
+  medida ya está en el nombre) y 3 cerámicos donde el m²/caja del fabricante
+  no cierra con las piezas por caja (gana el m²/caja de la factura, que es el
+  que se verificó contra las cantidades).
+- **19 filas comparten producto con otro costo** — queda el de la primera
+  fila. Son diferencias reales entre facturas del mismo artículo; hay que
+  repasar esos precios a mano en la pantalla de Productos.
+
+### Después de cargar
+
+Las fotos no se vinculan solas: se suben por variante desde la pantalla de
+Productos, usando el código de proveedor que queda guardado en «notas
+internas» de cada producto junto con la página y el número de factura.
