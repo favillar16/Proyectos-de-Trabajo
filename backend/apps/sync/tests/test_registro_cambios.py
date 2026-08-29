@@ -4,7 +4,7 @@ genere un rebote.
 """
 from django.test import TestCase
 
-from apps.productos.models import Categoria, Producto
+from apps.productos.models import Categoria
 from apps.productos.tests.factories import crear_producto
 from apps.sync.contexto import aplicacion_remota
 from apps.sync.models import CambioSync

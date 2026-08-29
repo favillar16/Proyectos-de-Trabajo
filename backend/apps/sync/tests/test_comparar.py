@@ -19,7 +19,6 @@ from django.core.management import call_command
 from django.test import TestCase, override_settings
 from rest_framework.test import APIClient
 
-from apps.productos.models import Producto
 from apps.productos.tests.factories import crear_producto
 from apps.sync.models import CambioSync
 from apps.sync.serializacion import serializar

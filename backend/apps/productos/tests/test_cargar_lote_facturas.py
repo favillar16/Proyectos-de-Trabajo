@@ -48,6 +48,9 @@ def fila(**campos):
 
 
 class BaseLoteTests(TestCase):
+    # Crear catalogo dispara el registro de cambios del sync (base aparte).
+    databases = {'default', 'sync'}
+
     def setUp(self):
         self.usuario = crear_usuario(username='admin-lote')
         self._tmp = TemporaryDirectory()

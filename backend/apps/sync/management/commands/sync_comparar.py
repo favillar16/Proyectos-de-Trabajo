@@ -58,7 +58,7 @@ class Command(BaseCommand):
         try:
             identidad = pedir_json(f'{base}/salud/', token)
         except ErrorDeNodo as e:
-            raise CommandError(f'No se pudo contactar al servidor: {e}')
+            raise CommandError(f'No se pudo contactar al servidor: {e}') from e
         if identidad.get('rol') != 'servidor':
             raise CommandError(f'{opciones["servidor"]} dice ser "{identidad.get("rol")}", '
                                f'no el servidor.')
@@ -136,7 +136,7 @@ class Command(BaseCommand):
             try:
                 pagina = pedir_json(url, token)
             except ErrorDeNodo as e:
-                raise CommandError(f'Fallo trayendo {etiqueta_}: {e}')
+                raise CommandError(f'Fallo trayendo {etiqueta_}: {e}') from e
             for fila in pagina['filas']:
                 filas[fila['uid']] = fila
             desde += POR_PAGINA

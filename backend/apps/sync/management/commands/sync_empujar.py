@@ -69,7 +69,7 @@ class Command(BaseCommand):
         try:
             identidad = pedir_json(f'{base}/salud/', token)
         except ErrorDeNodo as e:
-            raise CommandError(f'No se pudo contactar al servidor: {e}')
+            raise CommandError(f'No se pudo contactar al servidor: {e}') from e
         if identidad.get('rol') != 'servidor':
             raise CommandError(
                 f'{opciones["servidor"]} dice ser "{identidad.get("rol")}", no el '
@@ -86,7 +86,7 @@ class Command(BaseCommand):
                 # Lo ya confirmado queda marcado; el resto se reintenta solo en
                 # la próxima corrida.
                 self._registrar_estado(enviados, conflictos, f'Cortado: {e}')
-                raise CommandError(f'Falló el envío del lote: {e}')
+                raise CommandError(f'Falló el envío del lote: {e}') from e
 
             aplicados += respuesta.get('aplicados', 0)
             conflictos += respuesta.get('conflictos', 0)

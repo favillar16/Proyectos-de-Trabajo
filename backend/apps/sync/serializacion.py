@@ -102,10 +102,10 @@ def _resolver_fk(campo, valor_uid):
     destino = campo.remote_field.model
     try:
         return destino.objects.get(uid=valor_uid)
-    except destino.DoesNotExist:
-        raise DependenciaFaltante(campo.name, valor_uid)
-    except (ValueError, TypeError):
-        raise DependenciaFaltante(campo.name, valor_uid)
+    except destino.DoesNotExist as e:
+        raise DependenciaFaltante(campo.name, valor_uid) from e
+    except (ValueError, TypeError) as e:
+        raise DependenciaFaltante(campo.name, valor_uid) from e
 
 
 def aplicar_datos(instancia, datos):

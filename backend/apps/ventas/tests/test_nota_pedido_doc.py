@@ -18,6 +18,9 @@ from apps.ventas.models import ItemPedido, NotaPedido
 
 
 class NotaPedidoDocumentoTests(TestCase):
+    # Crear catalogo dispara el registro de cambios del sync (base aparte).
+    databases = {'default', 'sync'}
+
     def setUp(self):
         self.usuario = crear_usuario('vendedora')
         producto = crear_producto(nombre='Porcelanato Ébano')
@@ -112,6 +115,8 @@ class NotaPedidoDocumentoTests(TestCase):
 
 class NotaPedidoEndpointTests(TestCase):
     """El cableado de la URL y los permisos, que es lo que más fácil se rompe."""
+
+    databases = {'default', 'sync'}
 
     def setUp(self):
         from rest_framework.test import APIClient

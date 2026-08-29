@@ -166,7 +166,7 @@ def aplicar_lote(cambios):
     )
 
     with aplicacion_remota():
-        for vuelta in range(MAX_VUELTAS):
+        for _ in range(MAX_VUELTAS):
             faltantes = []
             for cambio in pendientes:
                 try:
