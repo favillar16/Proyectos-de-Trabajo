@@ -213,6 +213,9 @@ class Command(BaseCommand):
         self.dudosas = []
         self.costos_distintos = []
         self.ajustes = []
+        self.categorias_elegidas = []
+        self.categorias_creadas = []
+        self._categorias = {}
 
     # ── adaptar la fila a lo que valida el modelo ─────────────────────────────
 
@@ -332,15 +335,59 @@ class Command(BaseCommand):
             if creo_producto:
                 self.productos_nuevos += 1
 
+    # ── categoría ─────────────────────────────────────────────────────────────
+
+    def _categoria_de(self, rubro):
+        """
+        La Categoria del rubro, sin crear duplicados.
+
+        `Categoria.tipo` NO es único: el catálogo real del negocio tiene varias
+        categorías del mismo tipo con nombres distintos («Pisos» y «Retificado»
+        son las dos tipo=piso; «Otros», «Adhesivos» y «Pastina» las tres
+        tipo=otro). Un `get_or_create(tipo=...)` explota con
+        MultipleObjectsReturned en cuanto hay más de una, así que la elección
+        tiene que ser explícita.
+
+        Gana la que el negocio ya está usando — la que más productos tiene —
+        porque cargar el lote en una categoría vacía «canónica» dejaría el
+        catálogo partido en dos para la misma cosa. A igualdad de uso desempata
+        el nombre canónico del tipo, y después el orden de la pantalla. Si no
+        hay ninguna, recién ahí se crea.
+        """
+        if rubro in self._categorias:
+            return self._categorias[rubro]
+
+        canonico = NOMBRE_CATEGORIA.get(rubro, rubro.title())
+        candidatas = list(Categoria.objects.filter(tipo=rubro, activa=True))
+        if not candidatas:
+            # Puede existir pero desactivada: se reusa igual antes que duplicar.
+            candidatas = list(Categoria.objects.filter(tipo=rubro))
+
+        if candidatas:
+            categoria = sorted(
+                candidatas,
+                key=lambda c: (-c.productos.count(),
+                               c.nombre.strip().lower() != canonico.lower(),
+                               c.orden, c.id),
+            )[0]
+            if len(candidatas) > 1:
+                self.categorias_elegidas.append(
+                    f'{rubro}: "{categoria.nombre}" '
+                    f'(de {len(candidatas)}: '
+                    f'{", ".join(sorted(c.nombre for c in candidatas))})')
+        else:
+            categoria = Categoria.objects.create(tipo=rubro, nombre=canonico)
+            self.categorias_creadas.append(f'{rubro}: "{canonico}"')
+
+        self._categorias[rubro] = categoria
+        return categoria
+
     # ── una fila ──────────────────────────────────────────────────────────────
 
     @transaction.atomic
     def _cargar_fila(self, fila, *, nombre, color, rubro, costo, precio_base,
                      cantidad, usuario, sin_stock, origen):
-        categoria, _ = Categoria.objects.get_or_create(
-            tipo=rubro,
-            defaults={'nombre': NOMBRE_CATEGORIA.get(rubro, rubro.title())},
-        )
+        categoria = self._categoria_de(rubro)
 
         marca = None
         nombre_marca = (fila.get('marca') or '').strip()
@@ -464,6 +511,21 @@ class Command(BaseCommand):
                 f'  {len(costos_distintos)} filas comparten producto con otro costo '
                 f'(quedó el de la primera fila; revisar el precio a mano):'))
             for linea in costos_distintos:
+                self.stdout.write(f'    · {linea}')
+
+        if self.categorias_creadas:
+            self.stdout.write('')
+            self.stdout.write(
+                f'  {len(self.categorias_creadas)} categorías nuevas:')
+            for linea in self.categorias_creadas:
+                self.stdout.write(f'    · {linea}')
+
+        if self.categorias_elegidas:
+            self.stdout.write('')
+            self.stdout.write(self.style.WARNING(
+                f'  {len(self.categorias_elegidas)} rubros tienen más de una '
+                f'categoría; se usó la que ya tiene más productos:'))
+            for linea in self.categorias_elegidas:
                 self.stdout.write(f'    · {linea}')
 
         if not dry:

@@ -16,7 +16,7 @@ from django.core.management import CommandError, call_command
 from django.test import TestCase
 
 from apps.inventario.models import MovimientoStock, Stock
-from apps.productos.models import Producto, Variante
+from apps.productos.models import Categoria, Producto, Variante
 from apps.productos.tests.factories import crear_usuario
 
 COLUMNAS = [
@@ -270,3 +270,40 @@ class DryRunTests(BaseLoteTests):
         self.assertIn('DRY-RUN', salida)
         self.assertIn('2 variantes se crearían', salida)
         self.assertIn('una sola medida', salida)
+
+
+class CategoriaRepetidaTests(BaseLoteTests):
+    """
+    `Categoria.tipo` no es único y el catálogo real tiene varias del mismo
+    tipo. El comando tiene que elegir una sola, no reventar ni duplicar.
+    """
+
+    def test_no_explota_con_varias_categorias_del_mismo_tipo(self):
+        Categoria.objects.create(tipo='sanitario', nombre='Sanitarios')
+        Categoria.objects.create(tipo='sanitario', nombre='Sanitarios importados')
+
+        self.cargar([fila(nombre_producto='Inodoro A', color='Blanco')])
+
+        self.assertEqual(Producto.objects.count(), 1)
+        self.assertEqual(Categoria.objects.filter(tipo='sanitario').count(), 2)
+
+    def test_gana_la_categoria_que_ya_tiene_productos(self):
+        vacia = Categoria.objects.create(tipo='sanitario', nombre='Sanitarios')
+        usada = Categoria.objects.create(tipo='sanitario', nombre='SANITARIOS DEL LOCAL')
+        Producto.objects.create(nombre='Ya cargado', categoria=usada,
+                                precio_base=Decimal('1000'))
+
+        salida = self.cargar([fila(nombre_producto='Inodoro A', color='Blanco')])
+
+        nuevo = Producto.objects.get(nombre='Inodoro A')
+        self.assertEqual(nuevo.categoria_id, usada.id)
+        self.assertNotEqual(nuevo.categoria_id, vacia.id)
+        self.assertIn('SANITARIOS DEL LOCAL', salida)
+
+    def test_crea_la_categoria_si_no_hay_ninguna(self):
+        Categoria.objects.filter(tipo='sanitario').delete()
+
+        self.cargar([fila(nombre_producto='Inodoro A', color='Blanco')])
+
+        categoria = Categoria.objects.get(tipo='sanitario')
+        self.assertEqual(categoria.nombre, 'Sanitarios')
