@@ -93,7 +93,7 @@ class VarianteReadSerializer(serializers.ModelSerializer):
     class Meta:
         model  = Variante
         fields = [
-            'id', 'sku', 'codigo_barras', 'color', 'calidad',
+            'id', 'sku', 'color', 'calidad',
             'acabado',
             'largo_cm', 'ancho_cm', 'espesor_mm',
             'dimension_display',
@@ -140,7 +140,7 @@ class VarianteWriteSerializer(serializers.ModelSerializer):
     class Meta:
         model  = Variante
         fields = [
-            'id', 'sku', 'codigo_barras', 'color', 'calidad', 'acabado_id',
+            'id', 'sku', 'color', 'calidad', 'acabado_id',
             'largo_cm', 'ancho_cm', 'espesor_mm',
             'piezas_por_caja', 'm2_por_caja', 'peso_kg_caja', 'cajas_por_pallet',
             'precio_diferencial', 'activa',
@@ -188,7 +188,7 @@ class VarianteWriteSerializer(serializers.ModelSerializer):
             try:
                 stock_inicial = variante.convertir_a_unidad_venta(stock_inicial, stock_inicial_unidad)
             except ValueError as e:
-                raise serializers.ValidationError({'stock_inicial': str(e)})
+                raise serializers.ValidationError({'stock_inicial': str(e)}) from e
 
         # La señal ya crea el Stock con cantidad=0.
         if stock_inicial > 0 or stock_minimo > 0 or ubicacion:
@@ -230,7 +230,7 @@ class VarianteWriteSerializer(serializers.ModelSerializer):
             try:
                 stock_inicial = instance.convertir_a_unidad_venta(stock_inicial, stock_inicial_unidad)
             except ValueError as e:
-                raise serializers.ValidationError({'stock_inicial': str(e)})
+                raise serializers.ValidationError({'stock_inicial': str(e)}) from e
 
         if any(v is not None for v in [stock_inicial, stock_minimo, ubicacion]):
             stock_qs = Stock.objects.filter(variante=instance)

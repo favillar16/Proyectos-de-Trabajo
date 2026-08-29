@@ -15,7 +15,7 @@ de verdad.
 import threading
 
 from django.db import connection, transaction
-from django.test import SimpleTestCase, TransactionTestCase
+from django.test import SimpleTestCase, TransactionTestCase, skipUnlessDBFeature
 
 from apps.facturacion import numeracion
 from apps.facturacion.models import SecuenciaComprobante
@@ -139,10 +139,17 @@ class SecuenciaTests(TransactionTestCase):
         self.assertEqual(secuencia.numeros_restantes, 9)
 
 
+@skipUnlessDBFeature('has_select_for_update')
 class ConcurrenciaTests(TransactionTestCase):
     """
     La garantía que la DNIT no perdona: dos cajas cobrando a la vez no pueden
     sacar el mismo número de factura.
+
+    Solo corre contra PostgreSQL, que es lo que usa el negocio. Con SQLite
+    (`--settings=config.settings_test`, la corrida sin Postgres) se saltea:
+    SQLite no tiene bloqueo por fila, bloquea la tabla entera y el test moría
+    con "database table is locked" — un falso positivo que hacía que
+    `probar.bat` avisara de una falla inexistente.
     """
     # El catálogo dispara el registro de cambios del sync, que vive en su
     # propia base (ver apps/sync/routers.py). Sin declararla, Django la

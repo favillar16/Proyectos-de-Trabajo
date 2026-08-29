@@ -36,6 +36,7 @@ class Command(BaseCommand):
         fiscal = getattr(settings, 'DATOS_FISCALES', {})
         sifen = getattr(settings, 'SIFEN', {})
         problemas = []
+        transmision = []
 
         self._titulo('DATOS FISCALES DEL EMISOR (.env)')
 
@@ -68,7 +69,6 @@ class Command(BaseCommand):
             ('direccion', 'FISCAL_DIRECCION', 'la que figura en el timbrado'),
             ('telefono', 'FISCAL_TELEFONO', ''),
             ('timbrado', 'FISCAL_TIMBRADO', 'número que otorga la DNIT'),
-            ('timbrado_vto', 'FISCAL_TIMBRADO_VTO', 'vencimiento del timbrado'),
         ]
         for clave, env, nota in obligatorios:
             valor = (fiscal.get(clave) or '').strip()
@@ -80,6 +80,13 @@ class Command(BaseCommand):
             else:
                 self._linea(FALTA, env, nota or 'sin definir')
                 problemas.append(env)
+
+        # El vencimiento no bloquea: los timbrados electrónicos no vencen como
+        # los de talonario, y la habilitación no imprime fecha de fin.
+        vto = (fiscal.get('timbrado_vto') or '').strip()
+        self._linea(
+            OK if vto else AVISO, 'FISCAL_TIMBRADO_VTO',
+            vto or 'sin definir — normal en timbrado electrónico; confirmar en Marangatú')
 
         self._titulo('PUNTO DE EXPEDICIÓN (compone el CDC)')
         for clave, env in [('establecimiento', 'FISCAL_ESTABLECIMIENTO'),
@@ -103,10 +110,10 @@ class Command(BaseCommand):
                            ('ciudad', 'FISCAL_CIUDAD'),
                            ('actividad_economica', 'FISCAL_ACTIVIDAD_CODIGO')]:
             valor = str(fiscal.get(clave) or '').strip()
-            self._linea(OK if valor else FALTA, env,
+            self._linea(OK if valor else AVISO, env,
                         valor or 'sin definir — código de la tabla de la DNIT')
             if not valor:
-                problemas.append(env)
+                transmision.append(env)
 
         self._titulo('SIFEN / e-Kuatia')
         habilitado = sifen.get('habilitado')
@@ -123,9 +130,20 @@ class Command(BaseCommand):
             self._linea(OK if existe else FALTA, 'SIFEN_CERT_PATH',
                         cert if existe else f'{cert} — el archivo no existe')
         else:
-            self._linea(FALTA, 'SIFEN_CERT_PATH',
-                        'sin definir — certificado cualificado de firma (lo da '
-                        'la DNIT sin costo)')
+            self._linea(AVISO, 'SIFEN_CERT_PATH',
+                        'sin definir — certificado cualificado de firma '
+                        '(confirmar quién lo emite y si tiene costo)')
+            transmision.append('SIFEN_CERT_PATH')
+
+        csc = (sifen.get('csc') or '').strip()
+        csc_id = str(sifen.get('csc_id') or '').strip()
+        if csc and csc_id:
+            self._linea(OK, 'SIFEN_CSC', f'cargado (ID {csc_id})')
+        else:
+            self._linea(AVISO, 'SIFEN_CSC',
+                        'sin definir — figura en el PDF de la habilitación; '
+                        'firma el QR del KuDE')
+            transmision.append('SIFEN_CSC')
 
         # ── CDC de prueba ─────────────────────────────────────────────────
         if opciones['cdc']:
@@ -148,20 +166,40 @@ class Command(BaseCommand):
 
         # ── Resumen ───────────────────────────────────────────────────────
         self._titulo('RESUMEN')
+
+        # Dos listas distintas a propósito. Emitir es local: numerar, calcular
+        # el CDC y encolar el documento no necesita internet ni certificado.
+        # Transmitir al SIFEN es el paso siguiente y pide otras cosas. Mezclar
+        # las dos hacía que el comando marcara como bloqueante algo que no
+        # impide facturar.
         if problemas:
-            self.stdout.write(self.style.WARNING(
-                f'  Faltan {len(problemas)} datos para poder facturar:\n'
+            self.stdout.write(self.style.ERROR(
+                f'  EMITIR: faltan {len(problemas)} datos, el sistema no puede '
+                f'numerar comprobantes:\n'
                 f'  {", ".join(dict.fromkeys(problemas))}\n'))
             self.stdout.write(
                 '  Se cargan en backend\\.env y se reinicia el sistema.\n'
-                '  El detalle de dónde sacar cada uno está en\n'
-                '  docs/facturacion_electronica.md\n')
+                '  De dónde sale cada uno: docs/facturacion_electronica.md\n'
+                '  y docs/carga_final/datos_fiscales.md\n')
         else:
             self.stdout.write(self.style.SUCCESS(
-                '  Los datos fiscales están completos.\n'))
+                '  EMITIR: listo. El sistema puede numerar comprobantes\n'
+                '  (001-001-NNNNNNN), calcular el CDC y encolar el documento.\n'
+                '  Todo eso es local: no necesita internet.\n'))
+
+        if transmision:
+            self.stdout.write(self.style.WARNING(
+                f'\n  TRANSMITIR al SIFEN: faltan {len(transmision)}.\n'
+                f'  {", ".join(dict.fromkeys(transmision))}\n'))
             self.stdout.write(
-                '  Falta todavía la parte no automatizable: certificado,\n'
-                '  habilitación en la DNIT y pruebas en ambiente de test.\n')
+                '  No impiden facturar. Hacen falta para armar y firmar el XML,\n'
+                '  y solo aplican si se emite con solución propia. Con la\n'
+                '  solución gratuita del DNIT la factura se carga en el portal.\n'
+                '  Ver docs/carga_final/datos_fiscales.md\n')
+        else:
+            self.stdout.write(self.style.SUCCESS(
+                '\n  TRANSMITIR: los datos están. Falta la parte no\n'
+                '  automatizable: sidecar, worker y pruebas en ambiente test.\n'))
 
     # ── helpers de salida ────────────────────────────────────────────────
     def _titulo(self, texto):

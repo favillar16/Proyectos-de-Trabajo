@@ -13,7 +13,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   Plus, RefreshCw, FileText, Clock, Truck,
   CheckCircle, CreditCard, XCircle, ChevronRight,
-  Package, User, AlertCircle, Loader2,
+  Package, User, AlertCircle, Loader2, FileSpreadsheet,
 } from 'lucide-react'
 import Layout from '../components/layout/Layout'
 import NuevoPedidoForm from '../components/ventas/NuevoPedidoForm'
@@ -44,6 +44,75 @@ function formatFecha(iso) {
   if (diff < 60) return `hace ${diff} min`
   if (diff < 1440) return `hace ${Math.floor(diff/60)}h`
   return d.toLocaleDateString('es-PY', { day:'2-digit', month:'2-digit' })
+}
+
+// ─── Descarga de la nota diagramada para el cliente ──────────────────────────
+// El backend devuelve el archivo armado (mismo diseño que la nota que el
+// negocio ya usaba); acá solo se elige el tipo y se fuerza la descarga.
+// Presupuesto es lo que se le pasa al cliente antes de cerrar; pedido, la
+// venta ya confirmada. Es el mismo documento con otro encabezado.
+const TIPOS_NOTA = [
+  { valor:'presupuesto', label:'Presupuesto' },
+  { valor:'pedido',      label:'Pedido' },
+]
+
+function DescargasNota({ pedidoId, numero }) {
+  const [tipo, setTipo] = useState('presupuesto')
+  const [cargando, setCargando] = useState(null)
+
+  const descargar = async (formato) => {
+    setCargando(formato)
+    try {
+      const res = await ventasApi.descargarNota(pedidoId, formato, tipo)
+      const url = window.URL.createObjectURL(new Blob([res.data]))
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `nota_${tipo}_${numero}.${formato === 'pdf' ? 'pdf' : 'xlsx'}`
+      document.body.appendChild(a)
+      a.click()
+      a.remove()
+      window.URL.revokeObjectURL(url)
+    } catch {
+      toast.error(`No se pudo generar la nota en ${formato === 'pdf' ? 'PDF' : 'Excel'}`)
+    } finally {
+      setCargando(null)
+    }
+  }
+
+  const btn = (formato, Icono, label) => {
+    const activo = cargando === formato
+    const Ico = activo ? Loader2 : Icono
+    return (
+      <button onClick={() => descargar(formato)} disabled={Boolean(cargando)} style={{
+        display:'flex', alignItems:'center', gap:'6px',
+        padding:'7px 12px', borderRadius:'8px', cursor: cargando ? 'wait' : 'pointer',
+        background:C.bgTer, border:`1px solid ${C.border}`, color:C.textSec,
+        fontSize:'12.5px', fontWeight:'500',
+      }}>
+        <Ico size={14} style={activo ? { animation:'spin 1s linear infinite' } : undefined} />
+        {label}
+      </button>
+    )
+  }
+
+  return (
+    <div style={{ display:'flex', alignItems:'center', gap:'8px', marginTop:'12px', flexWrap:'wrap' }}>
+      <div style={{ display:'flex', border:`1px solid ${C.border}`, borderRadius:'8px', overflow:'hidden' }}>
+        {TIPOS_NOTA.map(t => (
+          <button key={t.valor} onClick={() => setTipo(t.valor)} style={{
+            padding:'7px 11px', border:'none', cursor:'pointer', fontSize:'12px',
+            fontWeight: tipo === t.valor ? '600' : '400',
+            background: tipo === t.valor ? C.goldMuted : 'transparent',
+            color: tipo === t.valor ? C.goldDark : C.textMuted,
+          }}>
+            {t.label}
+          </button>
+        ))}
+      </div>
+      {btn('pdf',  FileText,        'PDF')}
+      {btn('xlsx', FileSpreadsheet, 'Excel')}
+    </div>
+  )
 }
 
 // ─── Configuración visual de estados ─────────────────────────────────────────
@@ -210,6 +279,11 @@ function PanelDetalle({ pedido: pedidoResumen, rol, puedeEditarPrecio, onCerrar 
               </button>
             </div>
           </div>
+
+          {/* Nota para el cliente — depósito no la ve porque lleva precios */}
+          {rol !== 'deposito' && (
+            <DescargasNota pedidoId={pedidoResumen.id} numero={pedidoResumen.numero} />
+          )}
         </div>
 
         {/* Body */}

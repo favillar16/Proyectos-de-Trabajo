@@ -1,0 +1,46 @@
+# Revisión automática del código Python (linter).
+#
+# Se usa con:   revisar.bat        (en la raíz del proyecto)
+# o a mano:     venv/Scripts/activate && python -m ruff check .
+#
+# Las reglas elegidas buscan ERRORES, no estilo: nombres que no existen,
+# imports que sobran, variables que se pisan entre sí, métodos duplicados que
+# se tapan unos a otros. No se activan reglas de formato (largo de línea,
+# comillas, alineación) a propósito: el código de este proyecto usa columnas
+# alineadas a mano para que se lea como una tabla, y un formateador
+# automático las desarmaría sin ganar nada.
+
+target-version = "py312"
+line-length = 120
+
+exclude = [
+    "venv",
+    "*/migrations/*",   # generadas por Django, no se editan a mano
+    "node_modules",
+    "frontend/dist",
+]
+
+[lint]
+select = [
+    "F",      # errores reales: nombres indefinidos, imports sin usar, variables pisadas
+    "E9",     # errores de sintaxis y de sangría
+    "E711",   # comparar con None usando ==
+    "E712",   # comparar con True/False usando ==
+    "E713",   # "not x in y" en vez de "x not in y"
+    "E714",   # "not x is y" en vez de "x is not y"
+    "E722",   # except: pelado, se traga hasta los errores de programación
+    "B",      # trampas conocidas de Python (bugbear)
+    "PIE",    # código muerto o duplicado dentro de una clase
+]
+
+ignore = [
+    "B008",  # llamadas en valores por defecto: Django y DRF lo usan a propósito
+    "B905",  # zip() sin strict=: no aplica al código que hay
+]
+
+[lint.per-file-ignores]
+# Los tests importan atajos que a veces no usan en todas las pruebas.
+"**/tests.py" = ["F401"]
+# La configuración de pruebas hereda toda la configuración real con "*",
+# que es exactamente lo que se quiere acá.
+"**/settings_test.py" = ["F403", "F405"]

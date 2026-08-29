@@ -7,7 +7,7 @@ from rest_framework.response import Response
 from django.contrib.auth import get_user_model
 from django.shortcuts import get_object_or_404
 from django.db import transaction
-from django.db.models import Sum, Count, Q, F as models_F
+from django.db.models import Sum, Count, F as models_F
 from datetime import date, timedelta
 
 from rest_framework import serializers

@@ -1,0 +1,10 @@
+# Herramientas de desarrollo. NO hacen falta para que el sistema funcione
+# en el negocio: se instalan solo si se va a programar o revisar el codigo.
+#
+#   venv/Scripts/activate
+#   pip install -r requirements-dev.txt
+#
+# Las pruebas automaticas (probar.bat) NO necesitan nada de aca: usan el
+# corredor de pruebas que ya trae Django.
+
+ruff==0.16.4

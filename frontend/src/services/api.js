@@ -80,13 +80,6 @@ export const productosApi = {
   actualizarVariante: (varId, data)  => api.patch(`/productos/variantes/${varId}/`, data),
   eliminarVariante:   (varId)        => api.delete(`/productos/variantes/${varId}/`),
 
-  // Lector de código de barras (FTX LC123BH5).
-  // Responde siempre 200, con { encontrado, codigo, variante, producto }.
-  // Un código que no está cargado NO es un error: al dar de alta mercadería
-  // nueva es lo esperado, y la pantalla ofrece cargarlo.
-  buscarPorCodigoBarras: (codigo) =>
-    api.get('/productos/variantes/por-codigo-barras/', { params: { codigo } }),
-
   subirImagenVariante:           (varId, formData) => api.post(`/productos/variantes/${varId}/imagenes/`, formData, {
     headers: { 'Content-Type': 'multipart/form-data' },
   }),
@@ -130,6 +123,14 @@ export const ventasApi = {
   eliminarItem: (pedidoId, itemId) =>
     api.delete(`/ventas/pedidos/${pedidoId}/items/${itemId}/`),
 
+  // Nota diagramada para el cliente — descarga un archivo (PDF o Excel).
+  // `tipo` elige el encabezado: 'presupuesto' o 'pedido'.
+  descargarNota: (id, formato, tipo = 'presupuesto') =>
+    api.get(`/ventas/pedidos/${id}/nota/`, {
+      params: { formato, tipo },
+      responseType: 'blob',
+    }),
+
   // Padrón de clientes con RUC
   clientes:        (buscar = '') => api.get('/ventas/clientes/', { params: buscar ? { buscar } : {} }),
   crearCliente:    (data)        => api.post('/ventas/clientes/', data),
@@ -146,19 +147,6 @@ export const cajaApi = {
   listaPagos:      (params)    => api.get('/caja/pagos/lista/', { params }),
   reimprimir:      (id)        => api.post(`/caja/pagos/${id}/reimprimir/`),
   estadoImpresora: ()          => api.get('/caja/impresora/estado/'),
-
-  // ── Epson EcoTank L1250 (hoja A4) ──────────────────────────
-  // La L1250 no imprime comprobantes: la factura sale por su propio equipo.
-  // Lo único que sale por acá es la planilla de etiquetas de código de barras
-  // para pegar en la mercadería, que es lo que le da algo que leer al lector.
-  //
-  // Se baja como blob y NO como una URL para abrir en otra pestaña: el
-  // endpoint pide JWT en el header Authorization y una pestaña nueva no lo
-  // lleva. Mandar el token por query lo dejaría en el historial del navegador
-  // y en los logs. Ver utils/imprimirPdf.js.
-  etiquetas:       (variantes, desde = 0) => api.post('/caja/etiquetas/', {
-    variantes, desde,
-  }, { responseType: 'blob' }),
 
   // Reportes — descargan un archivo (PDF o Excel)
   descargarReporte: (tipo, formato, params = {}) =>

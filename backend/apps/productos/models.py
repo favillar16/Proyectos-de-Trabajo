@@ -14,7 +14,6 @@ Mejoras v2:
 - peso_kg_caja y UNIDAD_ML agregados
 - imagen_principal sin query extra cuando se usa prefetch_related
 """
-import os
 from django.db import models
 from django.core.validators import MinValueValidator
 from django.core.exceptions import ValidationError
@@ -463,9 +462,14 @@ class Variante(ModeloSincronizable):
 
     # ── Identificación ────────────────────────────────────────
     sku    = models.CharField(max_length=100, unique=True, blank=True, db_index=True)
-    # Código de barras que se lee con el lector (FTX LC123BH5). Es el de la caja
-    # del fabricante (EAN-13 y similares) o, para la mercadería que viene sin
-    # código, una etiqueta impresa por el negocio.
+    # Código de barras de la caja del fabricante.
+    #
+    # EL SISTEMA DE CÓDIGO DE BARRAS ESTÁ DESACTIVADO (agosto 2026). Se quitaron
+    # el lector, el generador de EAN interno, las etiquetas y toda la interfaz;
+    # la columna se conserva a propósito, sin migración destructiva, para no
+    # perder los códigos ya cargados si el negocio decide retomarlo.
+    #
+    # Hoy nada la escribe ni la lee: no sale por la API ni por el admin.
     #
     # Va en la variante y no en el producto porque la variante es la que tiene
     # caja física: el Roma Beige 60×60 y el Roma Gris 60×60 son dos cajas
@@ -477,7 +481,8 @@ class Variante(ModeloSincronizable):
     # hay código — ver save().
     codigo_barras = models.CharField(
         max_length=64, unique=True, null=True, blank=True, db_index=True,
-        help_text='Código de barras de la caja. Se completa con el lector.'
+        help_text='Código de barras de la caja. Campo en desuso: el sistema de '
+                  'código de barras está desactivado.'
     )
     activa = models.BooleanField(default=True, db_index=True)
 

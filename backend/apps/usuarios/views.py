@@ -12,7 +12,7 @@ from django.core.exceptions import ValidationError
 from django.utils import timezone
 
 from .models import Usuario
-from .permissions import EsAdmin, TodosLosRoles
+from .permissions import EsAdmin
 
 
 # ─── Serializers ──────────────────────────────────────────────────────────────
@@ -51,7 +51,7 @@ class UsuarioCreateSerializer(serializers.Serializer):
         try:
             validate_password(value)
         except ValidationError as e:
-            raise serializers.ValidationError(list(e.messages))
+            raise serializers.ValidationError(list(e.messages)) from e
         return value
 
     def create(self, validated_data):
@@ -85,7 +85,7 @@ class CambiarPasswordSerializer(serializers.Serializer):
         try:
             validate_password(attrs['password_nuevo'])
         except ValidationError as e:
-            raise serializers.ValidationError({'password_nuevo': list(e.messages)})
+            raise serializers.ValidationError({'password_nuevo': list(e.messages)}) from e
         return attrs
 
 

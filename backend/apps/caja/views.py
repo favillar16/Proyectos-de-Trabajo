@@ -13,8 +13,7 @@ Al confirmar un pago:
 """
 from rest_framework import views, status
 from rest_framework.response import Response
-from rest_framework.permissions import IsAuthenticated
-from apps.usuarios.permissions import EsAdminOCajero, EsAdmin, TodosLosRoles
+from apps.usuarios.permissions import EsAdminOCajero, EsAdmin
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from django.db import transaction, IntegrityError
@@ -26,7 +25,6 @@ logger = logging.getLogger(__name__)
 
 from .models import SesionCaja, Pago
 from .printer import imprimir_ticket, imprimir_factura, imprimir_cierre, ticket_a_texto
-from . import impresora_a4
 from apps.ventas.models import NotaPedido
 from apps.facturacion import emisor as fe_emisor
 
@@ -212,7 +210,6 @@ class CerrarCajaView(views.APIView):
         })
 
 class RegistrarPagoView(views.APIView):
-    permission_classes = [EsAdminOCajero]
     """
     POST /caja/pagos/
     Body:
@@ -530,12 +527,8 @@ class ReimprimirTicketView(views.APIView):
 class EstadoImpresora(views.APIView):
     """
     GET /caja/impresora/estado/
-    Verifica si las impresoras están disponibles.
+    Verifica si la impresora térmica está disponible.
     Útil para mostrar un indicador en la UI de caja.
-
-    Responde el estado de la térmica en el nivel de arriba (como siempre, para
-    no romper lo que ya consume este endpoint) y agrega 'a4' con el de la
-    Epson L1250.
     """
     permission_classes = [EsAdminOCajero]
 
@@ -550,8 +543,6 @@ class EstadoImpresora(views.APIView):
             'disponible':    False,
             'error':         None,
         }
-
-        resultado['a4'] = impresora_a4.estado_impresora_a4()
 
         if not resultado['configurada']:
             resultado['error'] = 'No hay impresora configurada en el .env'
@@ -688,7 +679,7 @@ def _datos_ticket(pedido, pago, sesion, tipo_comprobante='ticket',
 # ════════════════════════════════════════════════════════
 # REPORTES (PDF / Excel) — solo admin
 # ════════════════════════════════════════════════════════
-from datetime import datetime, date, timedelta
+from datetime import datetime, date
 from . import reportes as rep
 
 

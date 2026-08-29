@@ -17,7 +17,6 @@ import {
 import { ventasApi, productosApi } from '../../services/api'
 import { useDevice } from '../../hooks/useDevice'
 import { useAuthStore } from '../../store/authStore'
-import { useLectorCodigoBarras } from '../../hooks/useLectorCodigoBarras'
 import { mensajeErrorApi } from '../../utils/apiErrors'
 import toast from 'react-hot-toast'
 
@@ -238,7 +237,7 @@ function BuscadorVariante({ onAgregar, idsEnCarrito }) {
           ref={ref}
           value={q}
           onChange={e => setQ(e.target.value)}
-          placeholder="Escaneá el código o buscá por nombre..."
+          placeholder="Buscá por código, SKU o nombre..."
           autoFocus
           style={{
             width:'100%', height:'48px', padding:'0 40px 0 42px',
@@ -543,40 +542,6 @@ export default function NuevoPedidoForm({ onPedidoCreado, onCancelar }) {
     toast.success('Agregado al pedido', { duration: 1000 })
   }, [])
 
-  // ── Lector de código de barras FTX-LC123BH5 ─────────────────────────────
-  // Escanear agrega el producto al pedido de una: sin buscar, sin elegir
-  // variante. Es el flujo del mostrador — el cliente trae la caja, la
-  // vendedora la pasa por el lector.
-  const alEscanear = useCallback(async (codigo) => {
-    try {
-      const { data } = await productosApi.buscarPorCodigoBarras(codigo)
-
-      if (!data.encontrado) {
-        toast.error(`El código ${codigo} no está en el catálogo.`)
-        return
-      }
-
-      const variante = data.variante
-      const disponible = Number(variante.stock?.disponible ?? variante.stock?.cantidad ?? 0)
-      if (disponible <= 0) {
-        toast.error(`${data.producto.nombre} está sin stock.`)
-        return
-      }
-      if (!data.producto.activo) {
-        toast.error(`${data.producto.nombre} está dado de baja.`)
-        return
-      }
-
-      // La variante viene con la forma del buscador, así que se la puede
-      // pasar tal cual a agregarVariante(), que es quien conoce el tope de
-      // stock y el agrupado de repetidos.
-      agregarVariante(variante, data.producto)
-    } catch (err) {
-      toast.error(mensajeErrorApi(err, 'No se pudo leer el código escaneado.'))
-    }
-  }, [agregarVariante])
-
-  useLectorCodigoBarras({ onLectura: alEscanear })
 
   const actualizarItem = useCallback((idx, campo, valor) => {
     setItems(prev => prev.map((i, n) => n === idx ? { ...i, [campo]: valor } : i))

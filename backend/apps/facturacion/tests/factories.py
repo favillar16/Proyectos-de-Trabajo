@@ -8,7 +8,6 @@ un lugar y no diez.
 """
 from decimal import Decimal
 
-from django.utils import timezone
 
 from apps.caja.models import Pago, SesionCaja
 from apps.productos.models import Categoria, Producto, Variante

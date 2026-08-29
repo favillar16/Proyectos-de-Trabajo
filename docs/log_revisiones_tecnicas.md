@@ -370,3 +370,208 @@ próxima sesión:
 - Hay trabajo sin commitear de la sesión del 2026-08-05 (reportes A4/Oficio
   + carga de catálogo + `CLAUDE.md` nuevo) — confirmar con el usuario el
   mensaje de commit antes de tocarlo, no asumir que ya se guardó.
+
+---
+
+## 2026-08-26 — Retiro del sistema de código de barras + lote de carga final
+
+Dos trabajos independientes en la misma sesión.
+
+### 1. Se retiró el sistema de código de barras
+
+Decisión del negocio: dejar de trabajar con código de barras, **por el
+momento**. Ese "por el momento" es lo que define el alcance elegido —
+**se quitó todo el uso pero NO se tocó la base de datos**.
+
+**Se borró entero:**
+
+| Backend | Frontend | Docs |
+|---|---|---|
+| `apps/productos/codigo_barras.py` | `hooks/useLectorCodigoBarras.js` | `docs/LECTOR_CODIGO_BARRAS.md` |
+| `management/commands/asignar_codigos_barras.py` | `hooks/useLectorCodigoBarras.test.jsx` | |
+| `management/commands/imprimir_etiquetas.py` | `utils/imprimirPdf.js` | |
+| `apps/caja/impresora_a4.py` | | |
+| `apps/caja/views_a4.py` | | |
+| `apps/productos/tests/test_codigo_barras.py` (15) | | |
+| `apps/productos/tests/test_ean_interno.py` (11) | | |
+| `apps/caja/tests/test_impresora_a4.py` (8) | | |
+
+`imprimirPdf.js` no era del sistema de barras, pero la planilla de etiquetas
+era su único consumidor y quedaba muerto.
+
+**Se quitó de archivos que siguen:** el endpoint
+`GET productos/variantes/por-codigo-barras/`, el campo en los dos serializers
+de `Variante`, las columnas del admin, las tres búsquedas por código en
+`apps/inventario/views.py`, la ruta `/caja/etiquetas/`, el bloque
+`IMPRESORA_A4` de `settings.py` y del `.env.example`, la mitad L1250 de
+`diagnostico_impresora.py`, el escaneo en Inventario / Showroom /
+ConsultaStock / NuevoPedidoForm, el campo del alta en `ProductoForm.jsx` y
+`useProductoForm.js`, las dos llamadas de `services/api.js` y cinco bloques de
+la ayuda contextual.
+
+**Lo que se conservó a propósito:**
+
+`Variante.codigo_barras` **sigue siendo una columna de la base**. No se generó
+migración: si el negocio retoma el sistema, los códigos ya cargados siguen ahí.
+Hoy nada la escribe ni la lee. Deshacer esto es volver a exponer la interfaz,
+no recuperar datos — que es exactamente la propiedad que se buscaba.
+
+Ojo si alguna vez se retoma: el campo es `unique=True` **y nullable**, y
+`Variante.save()` sigue convirtiendo la cadena vacía a `NULL`. Cualquier
+consulta de "sin código" tiene que usar `__isnull=True`, nunca `=''`.
+
+**La Epson EcoTank L1250 salió por completo**, porque las etiquetas eran su
+único uso. Queda solo la térmica FTX FTXP-80W. Si mañana hace falta imprimir un
+PDF en A4, `impresora_a4.py` está en el historial de git y sirve de patrón —
+es también el patrón para la impresora de facturas si no habla ESC/POS.
+
+**Verificación:** `manage.py check` sin issues, **117 backend tests OK**
+(eran 151 — los 34 borrados son exactamente los del sistema), **22 frontend
+tests OK** (eran 38), `npm run build` limpio.
+
+### 2. Lote de carga final de productos
+
+Se procesó `docs/pdf de carga final de productos.pdf`: 30 páginas escaneadas a
+300 DPI, **sin capa de texto**, todas rotadas 180° salvo tres. Se leyeron como
+imagen, página por página.
+
+Resultado en **`docs/carga_final/`**: 184 líneas de mercadería (26 comprobantes
+de 8 proveedores, 156.953.452 Gs.), más los pendientes de verificación con
+número de página y los datos fiscales.
+
+**Control de exactitud:** 25 de las 26 facturas cierran **exacto** contra el
+total impreso. La única que no es la página 27 (Prolar Shop): 10.000 Gs. de
+diferencia, marcada para revisar contra el papel.
+
+También se extrajeron los datos fiscales de los dos PDF de la DNIT —
+**RUC 80173107-0, timbrado 18936285** — que es lo que `verificar_fiscal` venía
+marcando como faltante. Bloque listo para el `.env` en
+`docs/carga_final/datos_fiscales.md`.
+
+### Pendiente para la próxima sesión
+
+- Cargar el lote en la PC servidor (los precios del CSV son **costo**, falta
+  definir el margen de venta por rubro).
+- Resolver los 6 datos ilegibles y las 8 decisiones anotadas a mano sobre las
+  facturas — `docs/carga_final/pendientes_verificacion.md`.
+- Completar en el `.env` del servidor los códigos SIFEN de
+  departamento/distrito/ciudad y el CSC, que no están en la constancia.
+- `frontend/dist/` se reconstruyó en esta sesión: las tablets toman el cambio
+  al recargar la PWA.
+
+---
+
+## 2026-08-27 — Revisión final previa a producción
+
+Última pasada antes de llevar el sistema al local. Se corrió todo lo que se
+puede correr —117 tests contra PostgreSQL, los 22 del frontend, `check
+--deploy`, `makemigrations --check`, el build de Vite, daphne levantado de
+verdad contra la base real— y se auditó a mano lo que ninguna de esas cosas
+cubre.
+
+### Lo que salió bien y no hay que volver a mirar
+
+- **117 tests en verde** contra PostgreSQL y **22 en el frontend**. El
+  `frontend/dist/` versionado reconstruye byte por byte (mismo hash
+  `index-DUaT-YG-.js`), así que lo que corren las tablets es lo que está en
+  git.
+- **Ninguna referencia colgada** al sistema de código de barras ni a la
+  impresora A4 fuera de la documentación histórica.
+- **Autorización sólida.** Los cinco grupos de endpoints (`productos`,
+  `inventario/stock`, `ventas/pedidos`, `caja/sesiones`, `costos/gastos`)
+  responden 401 sin token; el WebSocket rechaza anónimo con 403 y las cuatro
+  vistas que no declaran `permission_classes` resuelven por `get_permissions()`.
+  Ninguna cuenta tiene contraseña de diccionario.
+- **La facturación electrónica no puede tumbar un cobro.** `emitir_para_pago()`
+  no lanza nunca y `crear_documento()` corre en su propio `atomic`, así que un
+  fallo del DE revierte hasta el número de comprobante sin dejar hueco en el
+  correlativo.
+
+### Bloqueante encontrado: no se podía crear ningún producto
+
+`productos.0005` y `0006` estaban **sin aplicar** en la base, y la columna
+`variantes.codigo_barras` existía igual pero con la forma de la *otra*
+implementación del lector, la que se descartó al unificar (commit `6f99c13`):
+`varchar(32) NOT NULL` con un índice único parcial `WHERE codigo_barras <> ''`.
+
+El modelo, en cambio, guarda `NULL` cuando no hay código. Resultado: **toda
+alta de Variante moría** con
+
+```
+IntegrityError: null value in column "codigo_barras" of relation "variantes"
+```
+
+tanto desde la pantalla de Productos como desde cualquier comando de carga. El
+sistema arrancaba, vendía y cobraba sin problema — solo fallaba el alta, que
+es justo lo primero que se iba a hacer en el local.
+
+`migrate` tampoco lo resolvía: el `AddField` de `0005` chocaba contra la
+columna existente.
+
+**Arreglo:** se reescribió `0005` como `SeparateDatabaseAndState`. El estado de
+Django sigue siendo el `AddField` de siempre; la parte de base de datos ahora
+crea la columna si no está (instalación nueva) o la reconcilia si está
+(la base del negocio): ancho a 64, `DROP NOT NULL`, `'' → NULL`, se cambia el
+índice único parcial por el que espera Django. Es idempotente y no hay pérdida
+de datos — ninguna variante tenía código cargado. Verificado en los tres
+caminos: SQLite de cero, PostgreSQL de cero y la base real de la notebook.
+
+### Otros hallazgos
+
+| Qué | Estado |
+|---|---|
+| `SIFEN_HABILITADO=True` en el `.env`, con el código y los docs asumiendo `False` | Apagado. En `True` numeraba `001-001-NNNNNNN` de verdad e imprimía un CDC que no existe en el portal del DNIT, sin certificado ni worker que transmita. |
+| `probar.bat` **siempre** avisaba «alguna prueba falló» | El test de concurrencia de numeración necesita bloqueo por fila y SQLite bloquea la tabla entera. Ahora se saltea solo con `@skipUnlessDBFeature('has_select_for_update')`; contra PostgreSQL sigue corriendo. |
+| `revisar.bat` devolvía 43 avisos de ruff | En cero. El único que era un bug real: `RegistrarPagoView` declaraba `permission_classes` dos veces (mismo valor, sin impacto de seguridad, pero anulaba el docstring). El resto, 33 imports sin usar, 5 `raise ... from`, 2 f-strings vacíos y 2 variables muertas. |
+| `checklist_entrega.md` §1.4 afirmaba que `ALLOWED_HOSTS` y CORS se autodetectan | Es falso, no hay tal detección: `settings.py` usa `*` y `CORS_ALLOW_ALL_ORIGINS=True` por defecto. Corregido. |
+| `CLAUDE.md` decía que el WebSocket va bajo `AuthMiddlewareStack` | Va bajo `JWTAuthMiddleware` (`apps/usuarios/ws_auth.py`), con el token por query param. Corregido. |
+| El `.env` conservaba la sección de la Epson L1250 | Quitada: esa impresora salió del sistema el 26/08. |
+| `DEBUG=True` | Es lo que corresponde en la notebook, pero el `.env` **no se versiona**: hay que ponerlo en `False` en la PC servidor a mano (bloque 4.1 del checklist). |
+| Solo 3 cuentas activas, ninguna de rol `cajero`, `vendedor` ni `deposito`; quedan 4 usuarios `_test_*` | Anotado en el checklist §4.3. Sin cuentas reales activas nadie puede atender el primer día. |
+
+### El lote de 184 productos no se podía cargar
+
+`docs/carga_final/productos_a_cargar.csv` tiene un formato distinto al que lee
+`cargar_referencias_productos`, y **ninguna fila trae precio de venta** — son
+todos costos. No existía forma de cargarlo con un comando.
+
+Se escribió **`cargar_lote_facturas`** (`apps/productos/management/commands/`),
+con 21 tests propios. Deriva el precio de venta del costo con `--margen` (y
+`--margen-rubro` para pisarlo por rubro), redondea al millar, agrupa las filas
+que comparten `nombre_producto` en un solo Producto con una Variante por
+color, y es idempotente: repetirlo no duplica ni vuelve a sumar stock.
+
+El `--dry-run` recorre el camino real dentro de una transacción que se deshace
+al final, así que valida de verdad. Fue lo que destapó siete filas que el
+modelo rechazaba: cuatro conjuntos de baño con una sola medida (`clean()` pide
+largo y ancho juntos) y tres cerámicos donde el m²/caja del fabricante no
+cierra con las piezas por caja. El comando las adapta y lo informa, en vez de
+perderlas.
+
+Con margen parejo de 40%: **181 variantes en 111 productos, 0 errores**, 3
+filas salteadas por decisión de negocio pendiente, 2 al catálogo con stock 0
+(el espejo ROTO y el kit devuelto) y 19 avisos de filas que comparten producto
+con distinto costo entre facturas.
+
+**Suite total: 138 tests backend.**
+
+### Lo que queda para el día del lanzamiento
+
+En la PC servidor, en este orden:
+
+1. `python manage.py migrate` y confirmar que `showmigrations` quede todo en `[X]`.
+2. `.env`: `DEBUG=False`, `SECRET_KEY` propia, `SIFEN_HABILITADO=False`,
+   `CORS`/`ALLOWED_HOSTS` acotados a la IP del servidor.
+3. `python manage.py collectstatic --noinput` (sin esto el `/admin/` da 500).
+4. Definir el margen de venta y correr `cargar_lote_facturas --margen N --dry-run`,
+   leer la salida, después sin `--dry-run`.
+5. Crear las cuentas reales del personal y borrar las `_test_*`.
+6. `python manage.py verificar_fiscal` como control final.
+
+### Lo que sigue abierto (no bloquea)
+
+- El rango de pesos del módulo 11 del CDC sigue sin verificarse contra el
+  documento de la DNIT (enlace caído). Con `SIFEN_HABILITADO=False` no se
+  ejercita.
+- Sidecar Node, worker de transmisión, QR del KuDE y nota de crédito.
+- La decisión e-Kuatia'i vs. e-Kuatia, y si la PC servidor va a tener internet.

@@ -55,3 +55,10 @@ backend/staticfiles/
 # Nunca al repositorio — el historial de git es permanente.
 *.p12
 *.pfx
+
+# La habilitacion como facturador electronico trae el Codigo de Seguridad del
+# Contribuyente (CSC) impreso. El CSC firma el QR del KuDE: quien lo tenga puede
+# emitir documentos a nombre del negocio. Vale lo mismo que el certificado.
+# El resto del contenido de ese PDF esta transcripto en
+# docs/carga_final/datos_fiscales.md, que si se versiona.
+TIMBRADO FACTURADOR ELECTRONICO*.pdf

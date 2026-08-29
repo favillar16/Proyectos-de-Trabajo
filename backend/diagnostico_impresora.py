@@ -1,21 +1,17 @@
 """
 diagnostico_impresora.py
-Diagnóstico de las DOS impresoras del local:
+Diagnóstico de la térmica del local:
 
-  · FTX FTXP-80W        — térmica de 80 mm, tickets y facturas de mostrador
-  · Epson EcoTank L1250 — A4, etiquetas de código de barras
-                          (NO imprime facturas: eso sale por su propio equipo)
+  · FTX FTXP-80W — térmica de 80 mm, tickets y facturas de mostrador
 
 Ejecutar desde la carpeta backend con el entorno virtual activado:
     python diagnostico_impresora.py
 
 Qué hace:
   1. Lista todas las impresoras disponibles en Windows
-  2. Verifica si las configuradas en el .env existen
-  3. Chequea si el .pdf tiene el verbo "printto" (lo necesita el modo auto
-     de la L1250)
-  4. Imprime un ticket de prueba en la térmica
-  5. Imprime una hoja de etiquetas de prueba en la L1250
+  2. Verifica si la configurada en el .env existe
+  3. Imprime un ticket de prueba
+  4. Prueba el envío de bytes crudos ESC/POS
 """
 import os
 import sys
@@ -45,7 +41,7 @@ django.setup()
 from django.conf import settings
 from apps.caja.printer import (
     TicketBuilder, WindowsPrinter,
-    ticket_a_texto, INIT, CUT_PARTIAL, FEED_LINES, LF,
+    ticket_a_texto, INIT, CUT_PARTIAL, FEED_LINES,
 )
 
 def separador(char='═', n=55):
@@ -96,8 +92,8 @@ def verificar_configuracion(impresoras_disponibles):
         else:
             print(f'\n  ✗ La impresora "{nombre}" NO está instalada en este equipo.')
             print(f'    Impresoras disponibles: {", ".join(impresoras_disponibles)}')
-            print(f'\n  → Para corregir: en el archivo backend/.env, cambiar:')
-            print(f'    IMPRESORA_TERMICA_NOMBRE=<nombre exacto de la lista>')
+            print('\n  → Para corregir: en el archivo backend/.env, cambiar:')
+            print('    IMPRESORA_TERMICA_NOMBRE=<nombre exacto de la lista>')
             return False
     elif puerto:
         print(f'\n  Usando puerto directo: {puerto}')
@@ -191,7 +187,7 @@ def prueba_bytes_minimos():
     try:
         import win32print
         hprinter = win32print.OpenPrinter(nombre)
-        hjob = win32print.StartDocPrinter(hprinter, 1, ('Test', None, 'RAW'))
+        win32print.StartDocPrinter(hprinter, 1, ('Test', None, 'RAW'))
         win32print.StartPagePrinter(hprinter)
         win32print.WritePrinter(hprinter, INIT + b'Test de comunicacion\n' + FEED_LINES(3) + CUT_PARTIAL)
         win32print.EndPagePrinter(hprinter)
@@ -201,170 +197,21 @@ def prueba_bytes_minimos():
     except Exception as e:
         print(f'  ✗ Error: {e}')
 
-# ─── Epson EcoTank L1250 (A4) ─────────────────────────────────────────────────
-
-def verificar_a4(impresoras_disponibles):
-    """Verifica la configuración de la L1250 contra lo instalado en Windows."""
-    from apps.caja.impresora_a4 import estado_impresora_a4
-
-    estado = estado_impresora_a4()
-    print('\n▶ Configuración actual (desde .env):\n')
-    print(f'  Modelo:     {estado["modelo"]}')
-    print(f'  Nombre:     {estado["nombre"] or "(sin configurar)"}')
-    print(f'  Modo:       {estado["modo"]}'
-          + ('  (se imprime desde el navegador)' if estado['modo'] == 'manual'
-             else '  (la manda el servidor solo)'))
-
-    if estado['disponible']:
-        print('\n  OK — la impresora está instalada en este equipo.')
-        return True
-
-    print(f'\n  FALLA — {estado["error"]}')
-    print('\n  Para solucionarlo:')
-    print('    1. Instalá la L1250 en Panel de control -> Dispositivos e impresoras.')
-    print('    2. Copiá el nombre EXACTO que aparece ahí.')
-    print('    3. Pegalo en backend\\.env como IMPRESORA_A4_NOMBRE=<nombre>')
-    print('    4. Reiniciá el sistema (iniciar.bat).')
-    return False
-
-
-def verificar_handler_pdf():
-    """
-    Chequea si el .pdf tiene registrado el verbo "printto" en Windows.
-
-    Es lo que necesita IMPRESORA_A4_MODO=auto para mandar el PDF a la cola sin
-    que nadie toque nada. Lo instala Adobe Acrobat Reader; el visor de PDF de
-    Edge NO lo registra, y sin él el trabajo se pierde en silencio — que es
-    justamente el modo de falla más difícil de diagnosticar después.
-    """
-    print('\n▶ Verbo "printto" para archivos .pdf:\n')
-    try:
-        import winreg
-    except ImportError:
-        print('  (no aplica fuera de Windows)')
-        return False
-
-    # Cuál es el ProgID que Windows va a usar de verdad. La elección del
-    # usuario en "Abrir con" vive en HKCU y le gana a lo que diga HKCR, así
-    # que se mira primero; solo si no está se cae al default de la extensión.
-    progid = ''
-    try:
-        with winreg.OpenKey(
-                winreg.HKEY_CURRENT_USER,
-                r'Software\Microsoft\Windows\CurrentVersion\Explorer'
-                r'\FileExts\.pdf\UserChoice') as k:
-            progid, _ = winreg.QueryValueEx(k, 'ProgId')
-    except OSError:
-        pass
-
-    if not progid:
-        try:
-            with winreg.OpenKey(winreg.HKEY_CLASSES_ROOT, '.pdf') as k:
-                progid, _ = winreg.QueryValueEx(k, '')
-        except OSError:
-            progid = ''
-
-    if not progid:
-        print('  FALLA — no hay ninguna aplicación asociada a los archivos .pdf.')
-        print('    El modo auto no va a funcionar. Dejá IMPRESORA_A4_MODO=manual.')
-        return False
-
-    try:
-        with winreg.OpenKey(winreg.HKEY_CLASSES_ROOT,
-                            progid + r'\shell\printto\command') as k:
-            comando, _ = winreg.QueryValueEx(k, '')
-        print(f'  OK — registrado por "{progid}".')
-        print(f'    {comando[:100]}')
-        print('    El modo auto (IMPRESORA_A4_MODO=auto) puede funcionar.')
-        return True
-    except OSError:
-        print(f'  AVISO — "{progid}" no registra el verbo "printto".')
-        print('    Pasa cuando el visor de PDF por defecto es Edge o Chrome, y')
-        print('    también cuando quedó registrado un Acrobat ya desinstalado.')
-        print('    Opciones:')
-        print('      a) Dejar IMPRESORA_A4_MODO=manual (recomendado): se')
-        print('         imprime desde el navegador y anda siempre.')
-        print('      b) Instalar Adobe Acrobat Reader y ponerlo como visor')
-        print('         predeterminado de PDF, y recién ahí usar modo auto.')
-        return False
-
-
-def prueba_a4(configurada):
-    """
-    Imprime una hoja A4 de prueba con etiquetas de código de barras.
-
-    Sirve para dos cosas a la vez: confirmar que la L1250 recibe trabajos del
-    sistema, y verificar con el lector en la mano que los códigos impresos se
-    leen. Una etiqueta que sale bien a la vista pero no se escanea es el error
-    que más tiempo hace perder.
-    """
-    if not configurada:
-        print('\n  (se saltea la prueba: la impresora no está disponible)')
-        return
-
-    respuesta = input('\n¿Imprimir una hoja A4 de etiquetas de prueba? (s/N): ').strip().lower()
-    if respuesta != 's':
-        return
-
-    from apps.caja.impresora_a4 import etiquetas_pdf, imprimir_pdf
-    from apps.productos.codigo_barras import generar_ean_interno
-
-    # Seis etiquetas de prueba: tres con EAN-13 y tres con Code128, que son
-    # las dos simbologías que el sistema imprime y el FTX-LC123BH5 lee.
-    etiquetas = []
-    for i in range(1, 4):
-        etiquetas.append({
-            'codigo':  generar_ean_interno(i),
-            'sku':     f'PRUEBA-EAN-{i}',
-            'nombre':  'Etiqueta de prueba (EAN-13 interno)',
-            'detalle': 'Escanealo para verificar el lector',
-            'precio':  0,
-        })
-    for i in range(1, 4):
-        etiquetas.append({
-            'codigo':  f'PRUEBA-CODE128-{i}',
-            'sku':     f'PRUEBA-C128-{i}',
-            'nombre':  'Etiqueta de prueba (Code128)',
-            'detalle': 'Escanealo para verificar el lector',
-            'precio':  0,
-        })
-
-    pdf = etiquetas_pdf(etiquetas)
-    resultado = imprimir_pdf(pdf, titulo='prueba_etiquetas')
-
-    if resultado['ok']:
-        print(f'  OK — enviado ({resultado["metodo"]}).')
-        if resultado.get('archivo'):
-            print(f'    PDF: {resultado["archivo"]}')
-        print('    Cuando salga la hoja, pasá el lector por cada código: los')
-        print('    seis tienen que leerse. Imprimí a escala 100%, sin "ajustar')
-        print('    a la página" — al reescalar, los códigos dejan de leerse.')
-    else:
-        print(f'  FALLA — {resultado["error"]}')
-
-
 # ─── Main ─────────────────────────────────────────────────────────────────────
 
 if __name__ == '__main__':
     separador()
-    print('  Diagnóstico de impresoras — Oga Porã')
+    print('  Diagnóstico de impresora — Oga Porã')
     separador()
 
     impresoras = listar_impresoras()
 
     print('\n' + '─' * 55)
-    print('  1) Térmica FTX FTXP-80W (tickets)')
+    print('  Térmica FTX FTXP-80W (tickets)')
     print('─' * 55)
     configurada = verificar_configuracion(impresoras)
     imprimir_prueba(configurada)
     prueba_bytes_minimos()
-
-    print('\n' + '─' * 55)
-    print('  2) Epson EcoTank L1250 (A4: etiquetas de código de barras)')
-    print('─' * 55)
-    configurada_a4 = verificar_a4(impresoras)
-    verificar_handler_pdf()
-    prueba_a4(configurada_a4)
 
     separador()
     print('\n  Diagnóstico completado.')

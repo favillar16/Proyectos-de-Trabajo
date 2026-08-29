@@ -184,7 +184,7 @@ proyecto, doble clic, pide Administrador): categoría de red privada, puertos
       `cd backend` → `venv\Scripts\activate` →
       `python manage.py changepassword admin`. Dejarle las nuevas a la
       propietaria por escrito.
-- [ ] Correr el `docs/checklist_entrega.md` (85 casos funcionales)
+- [ ] Correr el `docs/checklist_entrega.md` (76 casos funcionales)
 - [ ] Prueba de tiempo real entre dispositivos: abrir un pedido en la
       tablet, confirmar el pago en la caja, ver que la tablet cambia sola
       sin recargar (`docs/verificacion_red.md` §2, capa 5)
@@ -357,4 +357,4 @@ alto:
 | `verificacion_red.md` | Diagnóstico de red por capas |
 | `pwa_tablet.md` | Tablets |
 | `sync_notebook.md` | Espejo de la notebook |
-| `checklist_entrega.md` | 85 casos funcionales de prueba |
+| `checklist_entrega.md` | 76 casos funcionales de prueba |
