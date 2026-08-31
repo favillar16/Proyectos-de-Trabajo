@@ -48,16 +48,15 @@ function formatFecha(iso) {
 
 // ─── Descarga de la nota diagramada para el cliente ──────────────────────────
 // El backend devuelve el archivo armado (mismo diseño que la nota que el
-// negocio ya usaba); acá solo se elige el tipo y se fuerza la descarga.
-// Presupuesto es lo que se le pasa al cliente antes de cerrar; pedido, la
-// venta ya confirmada. Es el mismo documento con otro encabezado.
-const TIPOS_NOTA = [
-  { valor:'presupuesto', label:'Presupuesto' },
-  { valor:'pedido',      label:'Pedido' },
-]
-
-function DescargasNota({ pedidoId, numero }) {
-  const [tipo, setTipo] = useState('presupuesto')
+// negocio ya usaba); acá solo se fuerza la descarga. El tipo ya no se elige a
+// mano: se deriva del estado del pedido, para que no quede la posibilidad de
+// imprimir un "Presupuesto" de algo que depósito ya está preparando (o un
+// "Pedido" de algo que todavía no se confirmó como venta). Mientras el pedido
+// sigue "Pendiente" —no entró al segmento de pedidos— es Presupuesto; en
+// cuanto pasa a cualquier estado siguiente, es Pedido.
+function DescargasNota({ pedidoId, numero, estado }) {
+  const tipo  = estado === 'pendiente' ? 'presupuesto' : 'pedido'
+  const label = estado === 'pendiente' ? 'Presupuesto'  : 'Pedido'
   const [cargando, setCargando] = useState(null)
 
   const descargar = async (formato) => {
@@ -97,18 +96,12 @@ function DescargasNota({ pedidoId, numero }) {
 
   return (
     <div style={{ display:'flex', alignItems:'center', gap:'8px', marginTop:'12px', flexWrap:'wrap' }}>
-      <div style={{ display:'flex', border:`1px solid ${C.border}`, borderRadius:'8px', overflow:'hidden' }}>
-        {TIPOS_NOTA.map(t => (
-          <button key={t.valor} onClick={() => setTipo(t.valor)} style={{
-            padding:'7px 11px', border:'none', cursor:'pointer', fontSize:'12px',
-            fontWeight: tipo === t.valor ? '600' : '400',
-            background: tipo === t.valor ? C.goldMuted : 'transparent',
-            color: tipo === t.valor ? C.goldDark : C.textMuted,
-          }}>
-            {t.label}
-          </button>
-        ))}
-      </div>
+      <span style={{
+        padding:'7px 11px', borderRadius:'8px', fontSize:'12px', fontWeight:'600',
+        background:C.goldMuted, color:C.goldDark, border:`1px solid ${C.border}`,
+      }}>
+        {label}
+      </span>
       {btn('pdf',  FileText,        'PDF')}
       {btn('xlsx', FileSpreadsheet, 'Excel')}
     </div>
@@ -202,6 +195,13 @@ function PanelDetalle({ pedido: pedidoResumen, rol, puedeEditarPrecio, onCerrar 
     staleTime: 5000,
   })
 
+  // El WebSocket del pedido (más abajo) ya mantiene fresca la query
+  // ['pedido', id] en cuanto depósito/caja avanzan el estado. `pedidoResumen`
+  // en cambio es la foto que tenía la lista cuando se abrió el panel — usarla
+  // acá dejaría el encabezado y la nota mostrando un estado viejo mientras el
+  // panel sigue abierto (se vio como "Presupuesto" en un pedido ya Pagado).
+  const estadoActual = pedido?.estado ?? pedidoResumen?.estado
+
   const ajusteMut = useMutation({
     mutationFn: (valor) => ventasApi.actualizar(pedidoResumen.id, { total_ajustado: valor }).then(r => r.data),
     onSuccess: () => {
@@ -213,7 +213,13 @@ function PanelDetalle({ pedido: pedidoResumen, rol, puedeEditarPrecio, onCerrar 
     onError: (err) => toast.error(err.response?.data?.error || 'No se pudo actualizar el monto'),
   })
 
-  // WebSocket del pedido específico
+  // WebSocket del pedido específico. El backend emite el evento de cambio de
+  // estado (que dispara el toast de abajo) ANTES de devolver la respuesta
+  // HTTP de la mutación — a veces el eco llega antes que el propio
+  // onSuccess. Por eso el toast de "cambié el estado" vive acá, en un solo
+  // lugar, en vez de repetirlo también en el onSuccess de la mutación:
+  // cualquier orden de llegada muestra un único aviso, para el que hizo el
+  // cambio y para cualquier otro rol que tenga este mismo pedido abierto.
   usePedidoSocket({
     pedidoId: pedidoResumen?.id,
     onMensaje: (msg) => {
@@ -229,7 +235,6 @@ function PanelDetalle({ pedido: pedidoResumen, rol, puedeEditarPrecio, onCerrar 
     onSuccess: (pedidoActualizado) => {
       queryClient.setQueryData(['pedido', pedidoActualizado.id], pedidoActualizado)
       queryClient.invalidateQueries({ queryKey: ['pedidos'] })
-      toast.success(`Estado actualizado: ${ESTADO_CFG[pedidoActualizado.estado]?.label}`)
     },
     onError: (err) => toast.error(err.response?.data?.error || 'Error al cambiar estado'),
   })
@@ -271,7 +276,7 @@ function PanelDetalle({ pedido: pedidoResumen, rol, puedeEditarPrecio, onCerrar 
               </h2>
             </div>
             <div style={{ display:'flex', alignItems:'center', gap:'10px' }}>
-              <EstadoBadge estado={pedidoResumen.estado} />
+              <EstadoBadge estado={estadoActual} />
               <button onClick={onCerrar} style={{ background:'transparent', border:'none',
                 cursor:'pointer', color:C.textMuted, padding:'6px',
                 display:'flex', alignItems:'center', borderRadius:'8px' }}>
@@ -282,7 +287,7 @@ function PanelDetalle({ pedido: pedidoResumen, rol, puedeEditarPrecio, onCerrar 
 
           {/* Nota para el cliente — depósito no la ve porque lleva precios */}
           {rol !== 'deposito' && (
-            <DescargasNota pedidoId={pedidoResumen.id} numero={pedidoResumen.numero} />
+            <DescargasNota pedidoId={pedidoResumen.id} numero={pedidoResumen.numero} estado={estadoActual} />
           )}
         </div>
 

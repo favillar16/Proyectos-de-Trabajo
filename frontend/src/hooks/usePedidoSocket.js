@@ -35,14 +35,18 @@ export function usePedidoSocket({ pedidoId, rol, onMensaje } = {}) {
       : `${WS_BASE}/ws/pedidos/rol/${rol}/`
     const url = token ? `${base}?token=${encodeURIComponent(token)}` : base
 
-    ws.current = new WebSocket(url)
+    // Se guarda la instancia en una variable local además de en el ref: el
+    // cierre de ESTE socket en particular sólo debe reconectar si sigue
+    // siendo el socket vigente al momento de dispararse `onclose` (más abajo).
+    const socket = new WebSocket(url)
+    ws.current = socket
 
-    ws.current.onopen = () => {
+    socket.onopen = () => {
       clearTimeout(timeoutId.current)
       intentos.current = 0
     }
 
-    ws.current.onmessage = (e) => {
+    socket.onmessage = (e) => {
       try {
         const msg = JSON.parse(e.data)
         // Invalidar la query correspondiente para refrescar datos
@@ -56,7 +60,17 @@ export function usePedidoSocket({ pedidoId, rol, onMensaje } = {}) {
       } catch {/* ignorar mensajes malformados */}
     }
 
-    ws.current.onclose = () => {
+    socket.onclose = () => {
+      // Si `ws.current` ya no es ESTE socket, es porque el cleanup del
+      // efecto lo reemplazó (unmount, cambio de pedidoId/rol, o el doble
+      // montaje de React.StrictMode en dev) — no hay que reconectar: antes
+      // reconectaba igual y dejaba un socket fantasma vivo en paralelo al
+      // nuevo, duplicando cada mensaje (y con él, el toast de cada cambio
+      // de estado). Una bandera compartida no alcanza acá porque la
+      // reconexión siguiente la vuelve a poner en falso antes de que el
+      // cierre async de ESTA conexión llegue a mirarla; comparar identidad
+      // de instancia no tiene esa carrera.
+      if (ws.current !== socket) return
       // Reconexión exponencial: 2s, 4s, 8s… máx 30s
       const delay = Math.min(30000, 2000 * 2 ** intentos.current)
       timeoutId.current = setTimeout(() => {
@@ -65,8 +79,8 @@ export function usePedidoSocket({ pedidoId, rol, onMensaje } = {}) {
       }, delay)
     }
 
-    ws.current.onerror = () => {
-      ws.current?.close()
+    socket.onerror = () => {
+      socket.close()
     }
   }, [pedidoId, rol, onMensaje, queryClient])
 
@@ -75,7 +89,9 @@ export function usePedidoSocket({ pedidoId, rol, onMensaje } = {}) {
     conectar()
     return () => {
       clearTimeout(timeoutId.current)
-      ws.current?.close()
+      const socket = ws.current
+      ws.current = null
+      socket?.close()
     }
   }, [pedidoId, rol])
 
