@@ -23,6 +23,14 @@ frontend/dev-dist/
 sync_notebook/config.env
 sync_notebook/tmp/
 sync_notebook/estado/
+sync_notebook/logs/
+
+# Fotos que dejan los tests (config/settings_test.py apunta MEDIA_ROOT aca).
+backend/media_test/
+
+# Registro de cambios del sync: es estado de ESTE equipo, no del proyecto.
+# Cada notebook y el servidor tienen el suyo (ver apps/sync/routers.py).
+backend/sync.sqlite3
 
 # Respaldos del sistema (base de datos + fotos de productos). Son datos del
 # negocio, no código — ver docs/respaldo_y_migracion.md

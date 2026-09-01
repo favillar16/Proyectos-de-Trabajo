@@ -143,3 +143,45 @@ agrupan en un solo Producto con una Variante por color.
 Las fotos no se vinculan solas: se suben por variante desde la pantalla de
 Productos, usando el código de proveedor que queda guardado en «notas
 internas» de cada producto junto con la página y el número de factura.
+
+## Corrida real — 29/08/2026, notebook de la propietaria
+
+Se cargó con `--margen 40 --sin-stock`:
+
+```
+python manage.py cargar_lote_facturas --margen 40 --sin-stock
+```
+
+**180 variantes en 110 productos**, 1 ya existía, 3 salteadas, 0 errores. Da
+uno menos que las 181/111 de la corrida de referencia porque el catálogo de la
+notebook ya tenía uno de los artículos del lote.
+
+**Por qué `--sin-stock`:** la carga se hizo en la notebook, y el stock es del
+servidor — no viaja por el sync y el próximo `pg_dump` lo borraría (ver
+`docs/sync_bidireccional.md`). El catálogo sí viaja: los registros quedaron
+anotados en el registro de cambios, esperando el despliegue del servidor. **Las
+cantidades del lote hay que darlas de alta en el servidor**, con este mismo
+comando y el mismo margen, cuando el sync ya esté corriendo.
+
+Respaldo previo en `C:\Users\usuario\respaldos\carga_final_20260829\`
+(`ceramica_db_antes.dump` + `sync_antes.sqlite3`).
+
+### Un arreglo que hizo falta antes de correrlo
+
+El comando resolvía la categoría con `get_or_create(tipo=rubro)`, y
+`Categoria.tipo` **no es único**: el catálogo real del negocio tiene tres
+categorías tipo `otro` («Otros», «Adhesivos», «Pastina») y dos tipo `pastina`
+(«Pastinas» y «PASTINA»). Contra la base del servidor no se notaba; contra la
+de la notebook el comando moría con `MultipleObjectsReturned` a mitad de la
+carga. Ahora elige la que el negocio ya está usando —la que más productos
+tiene— y lo informa al final de la corrida. En esta carga eligió «Otros» y
+«PASTINA», que son las correctas.
+
+### Lo que quedó pendiente de esta corrida
+
+- **3 filas salteadas** por decisión de negocio abierta (kit Dona Beja, cuña
+  niveladora, exhibidor Cortag). Entran con `--incluir-dudosos` una vez
+  resueltas.
+- **20 filas comparten producto con otro costo** — quedó el de la primera
+  fila. Hay que repasar esos precios a mano en la pantalla de Productos.
+- **Las fotos** no se vinculan solas.

@@ -8,31 +8,34 @@
 import { useEffect, useRef, useCallback } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { useAuthStore } from '../store/authStore'
-
-const WS_BASE = (() => {
-  // Misma lógica que services/api.js: usa VITE_API_URL si está fijada,
-  // si no deriva el host actual del navegador (funciona en localhost,
-  // en la PC servidor y en tablets sin recompilar).
-  const API_PORT = import.meta.env.VITE_API_PORT || '8000'
-  const api = import.meta.env.VITE_API_URL || `http://${window.location.hostname}:${API_PORT}/api/v1`
-  const wsProtocol = window.location.protocol === 'https:' ? 'wss' : 'ws'
-  const host = api.replace(/^https?/, wsProtocol).replace('/api/v1', '')
-  return host
-})()
+import { baseUrlWs } from '../services/servidor'
 
 export function usePedidoSocket({ pedidoId, rol, onMensaje } = {}) {
   const ws          = useRef(null)
   const timeoutId   = useRef(null)
   const intentos    = useRef(0)
+  // Cada montaje del efecto se lleva su propio número de generación. La
+  // búsqueda del servidor es asíncrona y puede terminar después de que el
+  // componente se desmontó — o después de que volvió a montarse, que es lo que
+  // hace React.StrictMode en dev. Una bandera booleana compartida no alcanza:
+  // el segundo montaje la vuelve a poner en falso antes de que el `await` del
+  // primero llegue a mirarla, y ahí se abre el socket huérfano. Comparar
+  // generaciones no tiene esa carrera.
+  const generacion  = useRef(0)
   const queryClient = useQueryClient()
 
-  const conectar = useCallback(() => {
+  const conectar = useCallback(async (gen) => {
+    // El servidor se descubre por nombre de red, igual que la API REST
+    // (services/servidor.js) — así el socket sigue al servidor si cambia de IP.
+    const wsBase = await baseUrlWs()
+    if (gen !== generacion.current) return
+
     // El backend autentica el socket con el mismo JWT que la API REST (ver
     // apps/usuarios/ws_auth.py) — sin esto, la conexión se rechaza.
     const token = useAuthStore.getState().token
     const base = pedidoId
-      ? `${WS_BASE}/ws/pedidos/${pedidoId}/`
-      : `${WS_BASE}/ws/pedidos/rol/${rol}/`
+      ? `${wsBase}/ws/pedidos/${pedidoId}/`
+      : `${wsBase}/ws/pedidos/rol/${rol}/`
     const url = token ? `${base}?token=${encodeURIComponent(token)}` : base
 
     // Se guarda la instancia en una variable local además de en el ref: el
@@ -66,16 +69,13 @@ export function usePedidoSocket({ pedidoId, rol, onMensaje } = {}) {
       // montaje de React.StrictMode en dev) — no hay que reconectar: antes
       // reconectaba igual y dejaba un socket fantasma vivo en paralelo al
       // nuevo, duplicando cada mensaje (y con él, el toast de cada cambio
-      // de estado). Una bandera compartida no alcanza acá porque la
-      // reconexión siguiente la vuelve a poner en falso antes de que el
-      // cierre async de ESTA conexión llegue a mirarla; comparar identidad
-      // de instancia no tiene esa carrera.
+      // de estado).
       if (ws.current !== socket) return
       // Reconexión exponencial: 2s, 4s, 8s… máx 30s
       const delay = Math.min(30000, 2000 * 2 ** intentos.current)
       timeoutId.current = setTimeout(() => {
         intentos.current += 1
-        conectar()
+        conectar(gen)
       }, delay)
     }
 
@@ -86,8 +86,12 @@ export function usePedidoSocket({ pedidoId, rol, onMensaje } = {}) {
 
   useEffect(() => {
     if (!pedidoId && !rol) return
-    conectar()
+    const gen = (generacion.current += 1)
+    conectar(gen)
     return () => {
+      // Invalida cualquier conexión que todavía esté esperando al
+      // descubrimiento del servidor.
+      generacion.current += 1
       clearTimeout(timeoutId.current)
       const socket = ws.current
       ws.current = null

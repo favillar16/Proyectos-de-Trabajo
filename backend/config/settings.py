@@ -3,6 +3,7 @@ Configuración principal de Django
 Sistema de Gestión Comercial — Oga Porã
 """
 
+import socket
 from pathlib import Path
 from decouple import config
 from datetime import timedelta
@@ -48,6 +49,7 @@ LOCAL_APPS = [
     'apps.caja',
     'apps.costos',
     'apps.facturacion',
+    'apps.sync',
 ]
 
 INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
@@ -102,8 +104,18 @@ DATABASES = {
         'OPTIONS': {
             'connect_timeout': 10,
         },
-    }
+    },
+    # Registro de cambios de la sincronización. Va en SQLite y NO en
+    # ceramica_db a propósito: el sync servidor → notebook borra y rehace
+    # ceramica_db entera con pg_dump/psql, y se llevaría puesto justamente lo
+    # que la notebook todavía no alcanzó a empujar. Ver apps/sync/routers.py.
+    'sync': {
+        'ENGINE': 'django.db.backends.sqlite3',
+        'NAME': BASE_DIR / 'sync.sqlite3',
+    },
 }
+
+DATABASE_ROUTERS = ['apps.sync.routers.SyncRouter']
 
 # ─── Autenticación personalizada ─────────────────────────────────────────────
 
@@ -195,6 +207,31 @@ USE_TZ = True
 # ─── Configuraciones del negocio ──────────────────────────────────────────────
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
+
+# ─── Sincronización notebook ↔ servidor ──────────────────────────────────────
+# Secreto compartido entre los dos equipos. Vacío = endpoints de sync cerrados.
+# Generar uno con:  python -c "import secrets; print(secrets.token_urlsafe(32))"
+# Ver docs/sync_bidireccional.md
+SYNC = {
+    'token': config('SYNC_TOKEN', default=''),
+}
+
+# ─── Identidad del nodo (descubrimiento sin IP fija) ──────────────────────────
+# Cada equipo que corre el backend se identifica en GET /api/v1/salud/, que es
+# como los clientes lo encuentran sin depender de una dirección IP. Ver
+# config/salud.py y docs/descubrimiento_red.md.
+#   rol      → 'servidor' (la PC del local) o 'notebook' (el espejo de la
+#              propietaria). Define quién manda al resolver conflictos de sync.
+#   nombre   → nombre de red del equipo; por defecto el hostname de Windows.
+#   red_wifi → SSID de la red del local. El agente de sync lo usa para saber
+#              si está adentro del predio antes de intentar conectarse.
+NODO = {
+    'rol':      config('NODO_ROL', default='servidor'),
+    # decouple devuelve '' cuando la clave existe vacía, no el default:
+    # el 'or' es lo que hace que NODO_NOMBRE= caiga al hostname.
+    'nombre':   config('NODO_NOMBRE', default='') or socket.gethostname(),
+    'red_wifi': config('RED_WIFI_LOCAL', default='OGA PORA'),
+}
 
 # ─── Impresoras ───────────────────────────────────────────────────────────────
 

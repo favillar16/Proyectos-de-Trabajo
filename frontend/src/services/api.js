@@ -1,21 +1,19 @@
 import axios from 'axios'
+import { baseUrlApi, olvidarServidor } from './servidor'
 
-// Si VITE_API_URL está definida se respeta (útil para forzar una URL fija).
-// Si no, se deriva del host con el que el navegador cargó la página, para que
-// funcione automáticamente tanto en localhost como en la PC servidor y en
-// cualquier tablet conectada por IP en la red WiFi, sin recompilar.
-const API_PORT = import.meta.env.VITE_API_PORT || '8000'
-const BASE_URL = import.meta.env.VITE_API_URL || `http://${window.location.hostname}:${API_PORT}/api/v1`
-
+// La URL base ya no se calcula acá: la resuelve services/servidor.js buscando
+// al servidor por nombre de red (y, si hace falta, barriendo la subred), para
+// no depender de una IP que puede cambiar. Se aplica en el interceptor de
+// request porque la búsqueda es asíncrona.
 const api = axios.create({
-  baseURL: BASE_URL,
   headers: { 'Content-Type': 'application/json' },
   timeout: 15000,
 })
 
-// Inyectar token en cada request
+// Inyectar servidor y token en cada request
 api.interceptors.request.use(
-  (config) => {
+  async (config) => {
+    config.baseURL = await baseUrlApi()
     const state = JSON.parse(localStorage.getItem('ceramica-auth') || '{}')
     const token = state?.state?.token
     if (token) config.headers.Authorization = `Bearer ${token}`
@@ -35,7 +33,7 @@ api.interceptors.response.use(
         const state = JSON.parse(localStorage.getItem('ceramica-auth') || '{}')
         const refreshToken = state?.state?.refreshToken
         if (refreshToken) {
-          const res = await axios.post(`${BASE_URL}/auth/refresh/`, { refresh: refreshToken })
+          const res = await axios.post(`${await baseUrlApi()}/auth/refresh/`, { refresh: refreshToken })
           const newToken = res.data.access
           const stored = JSON.parse(localStorage.getItem('ceramica-auth') || '{}')
           if (stored?.state) {
@@ -50,6 +48,10 @@ api.interceptors.response.use(
         window.location.href = '/login'
       }
     }
+    // Sin respuesta = no llegamos al servidor: puede haberse movido de IP.
+    // Olvidamos el conocido para que el proximo request lo vuelva a buscar.
+    if (!error.response) olvidarServidor()
+
     return Promise.reject(error)
   }
 )

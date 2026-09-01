@@ -4,6 +4,7 @@ App: costos — Gastos operativos, proveedores, salarios y pedidos a proveedores
 from django.db import models
 from django.conf import settings
 from django.core.validators import MinValueValidator
+from apps.sync.mixins import ModeloSincronizable
 from decimal import Decimal
 from datetime import date
 
@@ -32,7 +33,7 @@ class CategoriaGasto(models.Model):
     def __str__(self): return f'{self.nombre} ({self.get_tipo_display()})'
 
 
-class Proveedor(models.Model):
+class Proveedor(ModeloSincronizable):
     """Proveedores del negocio para registro de pagos y pedidos."""
     nombre        = models.CharField(max_length=150)
     ruc           = models.CharField(max_length=30, blank=True)

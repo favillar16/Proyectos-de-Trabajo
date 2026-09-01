@@ -21,6 +21,11 @@ from . import factories as f
 
 class InterruptorTests(TestCase):
     """SIFEN_HABILITADO es lo que permite tener este código en producción."""
+    # El catálogo dispara el registro de cambios del sync, que vive en su
+    # propia base (ver apps/sync/routers.py). Sin declararla, Django la
+    # bloquea y el signal falla en silencio.
+    databases = {'default', 'sync'}
+
 
     @override_settings(SIFEN=f.SIFEN_APAGADO)
     def test_apagado_no_emite_y_no_toca_la_base(self):
@@ -35,6 +40,11 @@ class InterruptorTests(TestCase):
 
 
 class ValidarConfiguracionTests(TestCase):
+    # El catálogo dispara el registro de cambios del sync, que vive en su
+    # propia base (ver apps/sync/routers.py). Sin declararla, Django la
+    # bloquea y el signal falla en silencio.
+    databases = {'default', 'sync'}
+
 
     @override_settings(DATOS_FISCALES={})
     def test_sin_datos_lanza_y_dice_cuales_faltan(self):
@@ -53,6 +63,11 @@ class ValidarConfiguracionTests(TestCase):
 
 @override_settings(DATOS_FISCALES=f.DATOS_FISCALES_COMPLETOS, SIFEN=f.SIFEN_PRENDIDO)
 class CrearDocumentoTests(TestCase):
+    # El catálogo dispara el registro de cambios del sync, que vive en su
+    # propia base (ver apps/sync/routers.py). Sin declararla, Django la
+    # bloquea y el signal falla en silencio.
+    databases = {'default', 'sync'}
+
 
     def setUp(self):
         self.cajero = f.crear_usuario()
@@ -134,6 +149,11 @@ class CrearDocumentoTests(TestCase):
 @override_settings(DATOS_FISCALES=f.DATOS_FISCALES_COMPLETOS, SIFEN=f.SIFEN_PRENDIDO)
 class DesgloseDeIvaTests(TestCase):
     """El SIFEN valida que el desglose sume exactamente el total declarado."""
+    # El catálogo dispara el registro de cambios del sync, que vive en su
+    # propia base (ver apps/sync/routers.py). Sin declararla, Django la
+    # bloquea y el signal falla en silencio.
+    databases = {'default', 'sync'}
+
 
     def setUp(self):
         self.cajero = f.crear_usuario()
@@ -191,6 +211,11 @@ class EmitirNoRompeElCobroTests(TestCase):
     """
     emitir_para_pago() no puede lanzar nunca: la venta ya está hecha.
     """
+    # El catálogo dispara el registro de cambios del sync, que vive en su
+    # propia base (ver apps/sync/routers.py). Sin declararla, Django la
+    # bloquea y el signal falla en silencio.
+    databases = {'default', 'sync'}
+
 
     def setUp(self):
         self.cajero = f.crear_usuario()

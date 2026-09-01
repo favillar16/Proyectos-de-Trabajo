@@ -55,6 +55,10 @@ function Invoke-Nativo([scriptblock] $bloque) {
     try { & $bloque } finally { $ErrorActionPreference = $previo }
 }
 
+# Resolver del servidor: SSID/BSSID de la red y busqueda por nombre (ver
+# resolver_servidor.ps1). Sin esto el sync quedaria atado a una IP fija.
+. (Join-Path $carpeta 'resolver_servidor.ps1')
+
 # Funciones de copia de fotos por HTTP (ver fotos_http.ps1)
 $fotosLib = Join-Path $carpeta 'fotos_http.ps1'
 if (Test-Path $fotosLib) {
@@ -96,25 +100,93 @@ try {
     $pgDump = if ($pgBin) { Join-Path $pgBin 'pg_dump.exe' } else { 'pg_dump' }
     $psql   = if ($pgBin) { Join-Path $pgBin 'psql.exe' }   else { 'psql' }
 
-    # ─── ¿Estamos en el local? (servidor alcanzable) ─────────────────────────
-    $host_ = $cfg['SERVIDOR_HOST']
+    # ─── ¿Estamos en el local? ────────────────────────────────────────────────
+    # Primero la red: si la notebook está afuera, no hay nada que intentar y
+    # nos ahorramos el barrido. El BSSID es la MAC de la antena del router y se
+    # lee del propio adaptador WiFi, sin entrar al panel del router.
     $puertoDb = $cfg['SERVIDOR_DB_PUERTO']
+    $ssid  = $cfg['RED_WIFI_SSID']
+    $bssid = $cfg['RED_WIFI_BSSID']
 
-    $ping = Test-Connection -ComputerName $host_ -Count 1 -Quiet -ErrorAction SilentlyContinue
-    if (-not $ping) {
-        Log "Servidor $host_ no responde — notebook fuera del local, se omite sync."
-        Escribir-Estado 'omitido' "Servidor $host_ no responde"
+    if ($ssid -and -not (Test-EnRedDelLocal -SsidEsperado $ssid -BssidEsperado $bssid)) {
+        $actual = Get-RedWifiActual
+        $donde = if ($actual) { "en '$($actual.SSID)'" } else { 'sin WiFi' }
+        Log "Notebook fuera del local ($donde, se esperaba '$ssid') — se omite sync."
+        Escribir-Estado 'omitido' "Fuera de la red del local ($donde)"
         exit 0
     }
 
+    # ─── ¿Dónde está el servidor? ─────────────────────────────────────────────
+    # Nunca por IP fija: se busca por nombre de red, por el último conocido, y
+    # si hace falta barriendo la subred. Ver docs/descubrimiento_red.md.
+    $nombres = @()
+    if ($cfg['SERVIDOR_NOMBRES']) {
+        $nombres = $cfg['SERVIDOR_NOMBRES'].Split(',') | ForEach-Object { $_.Trim() } | Where-Object { $_ }
+    }
+    $puertoApi = if ($cfg['SERVIDOR_API_PUERTO']) { [int]$cfg['SERVIDOR_API_PUERTO'] } else { 8000 }
+
+    $encontrado = Find-Servidor `
+        -HostFijo     $cfg['SERVIDOR_HOST'] `
+        -Nombres      $nombres `
+        -Puerto       $puertoApi `
+        -ArchivoCache (Join-Path $estadoDir 'servidor.json') `
+        -RolEsperado  'servidor'
+
+    if (-not $encontrado) {
+        Log "No se encontró la PC servidor en la red — se omite sync."
+        Escribir-Estado 'omitido' 'Servidor no encontrado en la red'
+        exit 0
+    }
+
+    $host_ = $encontrado.Host
+    Log "Servidor '$($encontrado.Identidad.nombre)' en $host_ (via $($encontrado.Via)) — verificando Postgres."
+
     $puertoAbierto = Test-NetConnection -ComputerName $host_ -Port $puertoDb -WarningAction SilentlyContinue -InformationLevel Quiet
     if (-not $puertoAbierto) {
-        Log "Servidor $host_ responde ping pero no el puerto Postgres $puertoDb — se omite sync."
+        Log "Servidor $host_ responde la API pero no el puerto Postgres $puertoDb — se omite sync."
         Escribir-Estado 'omitido' "Puerto $puertoDb cerrado en $host_"
         exit 0
     }
 
     Log "Servidor $host_ alcanzable — arrancando sync."
+
+    # ─── 0) EMPUJAR lo que se editó acá ──────────────────────────────────────
+    # Va PRIMERO, y el orden no es negociable: el paso siguiente borra
+    # ceramica_db entera y la rehace con el dump del servidor. Lo que la
+    # propietaria cargó o corrigió estando fuera del local vive en esta base
+    # hasta que se manda; empujarlo después del restore sería empujar lo que el
+    # restore ya pisó.
+    #
+    # El registro de cambios está en sync.sqlite3, aparte, justamente para
+    # sobrevivir a ese borrado (ver apps/sync/routers.py).
+    #
+    # Si esto falla, el sync se corta acá a propósito: es preferible quedarse
+    # con la base vieja un rato más que perder ediciones que nunca llegaron al
+    # servidor.
+    $backend = Join-Path (Split-Path -Parent $carpeta) 'backend'
+    $python  = Join-Path $backend 'venv\Scripts\python.exe'
+
+    if (-not (Test-Path $python)) {
+        Log "ERROR: no se encontró $python — no se puede empujar lo editado acá. Se aborta."
+        Escribir-Estado 'error' 'Falta el entorno de Python del backend'
+        exit 1
+    }
+
+    Log "Empujando al servidor lo editado en esta notebook..."
+    $salidaEmpuje = & $python (Join-Path $backend 'manage.py') 'sync_empujar' `
+        '--servidor' $host_ '--puerto' $puertoApi 2>&1
+    $codigoEmpuje = $LASTEXITCODE
+
+    foreach ($linea in $salidaEmpuje) {
+        $texto = "$linea".Trim()
+        if ($texto) { Log "  [empuje] $texto" }
+    }
+
+    if ($codigoEmpuje -ne 0) {
+        Log "ERROR: falló el empuje de los cambios locales (codigo $codigoEmpuje). NO se restaura la base: se reintenta en la próxima corrida."
+        Escribir-Estado 'error' 'No se pudieron mandar los cambios locales al servidor'
+        exit 1
+    }
 
     # ─── 1) Dump desde el servidor ────────────────────────────────────────────
     $archivoDump = Join-Path $tmpDir "dump_$(Get-Date -Format 'yyyyMMdd_HHmmss').sql"
@@ -199,7 +271,7 @@ try {
     $mediaLocal   = Join-Path (Split-Path -Parent $carpeta) 'backend\media'
     $mediaUnc     = $cfg['SERVIDOR_MEDIA_UNC']
     $mediaUrl     = $cfg['SERVIDOR_MEDIA_URL']
-    if (-not $mediaUrl) { $mediaUrl = "http://${host_}:8000/media/" }
+    if (-not $mediaUrl) { $mediaUrl = "http://${host_}:${puertoApi}/media/" }
     $detalleMedia = 'sin fotos'
 
     try {

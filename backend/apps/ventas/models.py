@@ -14,11 +14,12 @@ from django.db import models, transaction
 from django.core.validators import MinValueValidator
 from django.conf import settings
 import logging
+from apps.sync.mixins import ModeloSincronizable
 
 logger = logging.getLogger(__name__)
 
 
-class Cliente(models.Model):
+class Cliente(ModeloSincronizable):
     """
     Padrón de clientes con RUC. Permite buscar y autocompletar los datos
     fiscales al armar una nota de pedido o facturar, sin reescribirlos.

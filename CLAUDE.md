@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-Sistema de gestión comercial for a flooring/ceramics/sanitary-ware store in Paraguay ("Oga Porã"). Runs on a local WiFi network with **no internet dependency** — one PC acts as the server, sales staff use tablets, and the owner's notebook keeps a read-only mirror. Stack: Django 4.2 + DRF + Channels (ASGI/WebSocket) + PostgreSQL 15, React 18 + Vite frontend, PWA-installable on Android tablets.
+Sistema de gestión comercial for a flooring/ceramics/sanitary-ware store in Paraguay ("Oga Porã"). Runs on a local WiFi network with **no internet dependency** — one PC acts as the server, sales staff use tablets, and the owner's notebook keeps a mirror that is read-only for stock/sales/caja but can edit the catalogue and push it back (see `docs/sync_bidireccional.md`). Stack: Django 4.2 + DRF + Channels (ASGI/WebSocket) + PostgreSQL 15, React 18 + Vite frontend, PWA-installable on Android tablets.
 
 All user-facing text, model fields, and comments are in Spanish — keep new code consistent with that.
 
@@ -14,8 +14,8 @@ All user-facing text, model fields, and comments are in Spanish — keep new cod
 ```
 venv\Scripts\activate
 python manage.py runserver              # HTTP only — no WebSocket support
-daphne -b 0.0.0.0 -p 8000 config.asgi:application   # full app (HTTP+WS), what production/demo actually uses
-python manage.py makemigrations usuarios productos inventario ventas caja costos facturacion
+daphne -e tcp:8000:interface=0.0.0.0 -e tcp6:8000:interface=\:\: config.asgi:application   # full app (HTTP+WS). Los dos endpoints hacen falta: los nombres de red resuelven primero a IPv6
+python manage.py makemigrations usuarios productos inventario ventas caja costos facturacion sync
 # las etiquetas de app son cortas ("productos"), no "apps.productos"
 python manage.py migrate
 python manage.py loaddata initial_data.json   # demo fixture
@@ -23,17 +23,21 @@ python manage.py seed_categorias              # seeds CategoriaGasto for apps.co
 python manage.py createsuperuser
 python cargar_demo.py                         # loads demo catalog/stock data
 python diagnostico_impresora.py               # standalone check of the thermal printer
-python manage.py test apps                    # 151 tests (facturación, productos, caja, nota de presupuesto/pedido)
+python manage.py test apps                    # facturación, productos, caja, nota de presupuesto/pedido, sync
 python manage.py test --settings=config.settings_test   # los mismos sin Postgres (SQLite; saltea 1 de concurrencia)
 python manage.py cargar_lote_facturas --margen 40 --dry-run   # lote de agosto 2026 (docs/carga_final/)
+python manage.py migrate --database=sync      # la base del registro de cambios del sync (SQLite aparte)
+python manage.py sync_estado                  # diagnóstico de la sincronización
+python manage.py sync_empujar --servidor ogapora.local   # manda al servidor lo editado acá
+python manage.py sync_comparar --servidor ogapora.local  # diferencias de catálogo entre los dos equipos
 python manage.py verificar_fiscal             # diagnóstico de la configuración fiscal
 ```
 
-Test coverage is **partial**: 151 backend tests (`apps/facturacion/` full suite, plus `apps/productos/tests/` and `apps/ventas/tests/`) and 22 frontend tests (`cd frontend && npm test`, vitest + jsdom — contextual help). Everything else has no automated tests — verify those changes manually against `docs/checklist_entrega.md`.
+Test coverage is **partial**: 151 backend tests (`apps/facturacion/` full suite, plus `apps/productos/tests/`, `apps/ventas/tests/` and `apps/sync/tests/` for the bidirectional sync) and 22 frontend tests (`cd frontend && npm test`, vitest + jsdom — contextual help). Everything else has no automated tests — verify those changes manually against `docs/checklist_entrega.md`.
 
 ### Frontend (from `frontend/`)
 ```
-npm run dev       # Vite dev server, binds 0.0.0.0:5173 so tablets can reach it over WiFi
+npm run dev       # Vite dev server, binds :: (IPv4+IPv6) on 5173 so tablets and hostnames both reach it
 npm run build
 npm run preview
 npm test          # vitest run — ayuda contextual
@@ -57,6 +61,7 @@ No lint script is configured in `package.json`.
 
   `nota_pedido_doc.py` renders a pedido as the customer-facing note — PDF (reportlab canvas) and Excel (openpyxl), served from `GET /api/v1/ventas/pedidos/<pk>/nota/?formato=pdf|xlsx&tipo=presupuesto|pedido`. `tipo` only swaps the heading (`TITULOS`); `presupuesto` is the default because that is what the store hands a customer before the sale closes. The PDF geometry (`COLS`, `TABLA_TOP`, `FOOTER_H`, …) was measured off the document the store already used (`docs/Ejemplos Nota de Pedido/`) — those constants are not free parameters. The two *formats* are deliberately different documents: the PDF matches the original four-column layout, the Excel splits the unit into its own column and leaves TOTAL as a formula plus blank rows so it stays editable. Brand assets live in `apps/ventas/assets/`, both tinted `#B99C74` (the brand brown, sampled off the original note and the same accent the React UI uses): `logo_oga_pora.png` for the header and `logo_marca.png` — the monogram alone — for the footer watermark. Regenerate them from `docs/Ejemplos Nota de Pedido/OP NEGRO.jpeg` if the logo ever changes. The footer contact comes from `settings.CONTACTO_COMERCIAL`, **not** from `DATOS_FISCALES` — the phone/address given to a customer on a quote differ from the ones registered with the DNIT.
 - **caja** — `SesionCaja` (one open session per cajero, enforced by a `UniqueConstraint`) and `Pago`. Confirming a `Pago` is what triggers `NotaPedido.descontar_stock()` and ticket printing. `printer.py` builds raw ESC/POS byte sequences (`TicketBuilder`, `FacturaBuilder`, `TicketCierreBuilder`) and sends them via `win32print` (Windows-only; falls back to a "simulado" no-op off Windows) — see the file's own architecture notes when touching ticket formatting. The Epson EcoTank L1250 that used to print the barcode label sheets was removed along with the barcode system — the thermal printer is the only one wired up, and the fiscal document will get its own. See `docs/perifericos.md`.
+- **sync** — sincronización bidireccional del catálogo con la notebook. Sus tablas viven en una SQLite aparte (`sync.sqlite3`, router en `apps/sync/routers.py`) porque el restore del `pg_dump` borra `ceramica_db` entera. Los modelos sincronizables heredan de `ModeloSincronizable` (`uid` UUID + `actualizado_en` + `nodo_origen`); las PK siguen siendo enteras y el `uid` es identidad **aparte**, solo para el sync. Al agregar un modelo al alcance hay que sumarlo a `apps/sync/registro.py` **en orden de dependencias** (la categoría antes que el producto) y decidir en `apps/sync/conciliacion.py` si un choque de unicidad se fusiona o se regenera. Ver `docs/sync_bidireccional.md`.
 - **costos** — gastos operativos, proveedores, empleados, pedidos a proveedores. Independent of the sales/stock flow; admin-only in the frontend.
 
 ### WebSocket wiring
@@ -72,10 +77,15 @@ JWT via `djangorestframework-simplejwt`, 8h access / 7d refresh, rotating refres
 - `hooks/usePedidoSocket.js` — WebSocket hook with exponential backoff reconnect (2s→30s cap); invalidates/updates the matching React Query cache entries on message.
 - PWA: `vite-plugin-pwa` in `vite.config.js` caches the app shell but **never** caches `/api/*` (`NetworkOnly`) — stock/pedidos/caja data must always be live; `/media/*` images use `StaleWhileRevalidate`. Keep this split when touching the Workbox config.
 
+### Descubrimiento de red
+Nada guarda una IP: el servidor se busca por nombre (`ogapora.local` / `ogapora`), por el último conocido, y si hace falta barriendo la subred, confirmando siempre con `GET /api/v1/salud/`. Dos trampas ya resueltas que conviene no reintroducir: los nombres resuelven **primero a IPv6**, así que daphne arranca con dos endpoints (`-e tcp:...` y `-e tcp6:...`) y Vite usa `host: '::'`; y Vite 5.4.12+ rechaza los hostnames con 403 salvo `server.allowedHosts`. Ver `docs/descubrimiento_red.md`.
+
 ### Multi-machine deployment model
 Three roles, documented in `docs/pwa_tablet.md` and `docs/sync_notebook.md`:
 1. **Server PC** — runs Postgres + daphne + Vite dev server; `ALLOWED_HOSTS=*` and `CORS_ALLOW_ALL_ORIGINS` are intentionally permissive (LAN-only appliance, not internet-facing).
 2. **Tablets** — install the frontend as a PWA over `http://<server-ip>:5173`; always call the live API.
-3. **Owner's notebook** — runs its own local Postgres, one-way mirrored from the server every 5 min via `pg_dump`/`psql` + Windows Task Scheduler (`sync_notebook/`). It is read-only in practice: anything written there is overwritten on the next sync, never pushed back.
+3. **Owner's notebook** — runs its own local Postgres. Every 5 min (`sync_notebook/` + Windows Task Scheduler) it **first pushes** the catalogue edits made there (`manage.py sync_empujar` → the server's `/api/v1/sync/` endpoints) and **then** pulls the whole server DB with `pg_dump`/`psql`, which replaces `ceramica_db` wholesale. That order is not negotiable: the restore wipes the DB, so pushing afterwards would push what the restore already overwrote.
+   Only the catalogue is bidirectional. Stock, ventas, caja and facturación stay server-authoritative — a running balance and a comprobante sequence cannot be merged (`docs/sync_bidireccional.md` explains why).
+   The change log lives in `backend/sync.sqlite3`, **outside** `ceramica_db` on purpose, so it survives the restore (`apps/sync/routers.py`).
 
 Keep this asymmetry in mind — code should never assume every client can write to a single shared DB.
