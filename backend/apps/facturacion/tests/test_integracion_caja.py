@@ -183,6 +183,9 @@ class DatosFacturaPersistidosTests(TestCase):
     _datos_ticket directo) para cubrir el camino completo: registrar el
     pago, listarlo/buscarlo, y reimprimirlo.
     """
+    # Igual que BaseCaja: registrar/cobrar un pedido dispara el registro de
+    # cambios del sync (apps/sync/signals.py), que vive en su propia base.
+    databases = {'default', 'sync'}
 
     def setUp(self):
         from rest_framework.test import APIClient
