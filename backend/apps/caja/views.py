@@ -73,6 +73,7 @@ class PagoSerializer(serializers.ModelSerializer):
             'cajero_nombre', 'medio_pago', 'medio_display',
             'monto', 'monto_recibido', 'vuelto',
             'estado', 'referencia_externa', 'fecha',
+            'tipo_comprobante', 'cliente_ruc', 'cliente_razon_social',
         ]
 
 
@@ -364,6 +365,15 @@ class RegistrarPagoView(views.APIView):
             monto_recibido   = monto_recibido,
             referencia_externa = ref_externa,
             estado           = Pago.ESTADO_CONFIRMADO,
+            # Sin esto, reimprimir un pago viejo (o buscarlo por RUC) no
+            # tenía de dónde sacar los datos de la factura — ver el
+            # comentario en el modelo.
+            tipo_comprobante     = tipo_comprobante,
+            cliente_ruc          = cliente_ruc if tipo_comprobante == 'factura' else '',
+            cliente_razon_social = cliente_razon_social if tipo_comprobante == 'factura' else '',
+            cliente_telefono     = cliente_telefono if tipo_comprobante == 'factura' else '',
+            cliente_direccion    = cliente_direccion if tipo_comprobante == 'factura' else '',
+            condicion_venta      = condicion_venta if tipo_comprobante == 'factura' else 'Contado',
         )
         pago.save()
 
@@ -452,8 +462,11 @@ class RegistrarPagoView(views.APIView):
 
 class ListaPagosView(views.APIView):
     """
-    GET /caja/pagos/lista/?sesion=<id>
+    GET /caja/pagos/lista/?sesion=<id>&ruc=<texto>
     Lista los pagos de la sesión activa o de una sesión específica.
+    `ruc` filtra por el RUC/CI cargado al facturar (búsqueda parcial) —
+    solo tiene resultado en pagos cobrados como factura, un ticket normal
+    no tiene RUC.
     """
     permission_classes = [EsAdminOCajero]
 
@@ -466,6 +479,10 @@ class ListaPagosView(views.APIView):
         else:
             sesion = _sesion_activa(request.user)
             qs = Pago.objects.filter(sesion_caja=sesion) if sesion else Pago.objects.none()
+
+        ruc = (request.query_params.get('ruc') or '').strip()
+        if ruc:
+            qs = qs.filter(cliente_ruc__icontains=ruc)
 
         qs = qs.select_related('pedido', 'cajero').order_by('-fecha')
         return Response({
@@ -498,9 +515,10 @@ class ReimprimirTicketView(views.APIView):
 
         documento = getattr(pago, 'documento_electronico', None)
         if documento is not None:
+            tipo_comprobante = 'factura'
             datos_ticket = _datos_ticket(
                 pago.pedido, pago, pago.sesion_caja,
-                tipo_comprobante='factura',
+                tipo_comprobante=tipo_comprobante,
                 cliente_ruc=documento.receptor_ruc,
                 cliente_razon_social=documento.receptor_razon_social,
                 cliente_telefono=documento.receptor_telefono,
@@ -508,7 +526,23 @@ class ReimprimirTicketView(views.APIView):
                 documento=documento,
             )
             resultado = imprimir_factura(datos_ticket)
+        elif pago.tipo_comprobante == Pago.COMPROBANTE_FACTURA:
+            # Sin DE real (Solución Gratuita / e-Kuatia'i, el caso de hoy)
+            # los datos del cliente no salen de un documento fiscal sino de
+            # lo que se guardó en el propio pago al cobrar.
+            tipo_comprobante = 'factura'
+            datos_ticket = _datos_ticket(
+                pago.pedido, pago, pago.sesion_caja,
+                tipo_comprobante=tipo_comprobante,
+                cliente_ruc=pago.cliente_ruc,
+                cliente_razon_social=pago.cliente_razon_social,
+                cliente_telefono=pago.cliente_telefono,
+                cliente_direccion=pago.cliente_direccion,
+                condicion_venta=pago.condicion_venta or 'Contado',
+            )
+            resultado = imprimir_factura(datos_ticket)
         else:
+            tipo_comprobante = 'ticket'
             datos_ticket = _datos_ticket(pago.pedido, pago, pago.sesion_caja)
             resultado    = imprimir_ticket(datos_ticket)
         texto = ticket_a_texto(datos_ticket)
@@ -520,7 +554,7 @@ class ReimprimirTicketView(views.APIView):
             'ticket':       datos_ticket,
             # Qué se imprimió realmente. Sin esto el frontend no puede saber
             # si salió un ticket o una factura, y avisaría cualquier cosa.
-            'tipo_comprobante': 'factura' if documento is not None else 'ticket',
+            'tipo_comprobante': tipo_comprobante,
         })
 
 

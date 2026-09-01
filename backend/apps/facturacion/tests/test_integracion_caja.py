@@ -165,3 +165,106 @@ class ReimpresionTests(BaseCaja):
         self.assertEqual(d['factura_numero'], de.numero_completo)
         self.assertEqual(d['timbrado'], de.emisor_timbrado)
         self.assertIn(b'CDC:', FacturaBuilder(d).build())
+
+
+@override_settings(SIFEN=f.SIFEN_APAGADO)
+class DatosFacturaPersistidosTests(TestCase):
+    """
+    Antes de esto, cobrar como factura no dejaba rastro del RUC en el Pago:
+    vivía de paso en la request (ConfirmarPago) y se perdía apenas se
+    imprimía el papel. Sin eso, reimprimir un pago viejo salía siempre como
+    ticket liso —perdiendo el valor de factura— y no había forma de buscar
+    cobros por RUC. Estos tests pegan contra la API real (no contra
+    _datos_ticket directo) para cubrir el camino completo: registrar el
+    pago, listarlo/buscarlo, y reimprimirlo.
+    """
+
+    def setUp(self):
+        from rest_framework.test import APIClient
+
+        self.cajero = f.crear_usuario()
+        self.variante = f.crear_variante(precio=Decimal('110000'))
+        self.variante.stock.cantidad = Decimal('10')
+        self.variante.stock.save(update_fields=['cantidad'])
+        self.pedido = f.crear_pedido(self.cajero, [(self.variante, 1, '110000')])
+        self.sesion = f.crear_sesion(self.cajero)
+        self.client = APIClient()
+        self.client.force_authenticate(self.cajero)
+
+    def _cobrar_como_factura(self):
+        return self.client.post('/api/v1/caja/pagos/', {
+            'pedido_id':            self.pedido.id,
+            'medio_pago':           'efectivo',
+            'monto_recibido':       '110000',
+            'tipo_comprobante':     'factura',
+            'cliente_ruc':          f.RUC_RECEPTOR,
+            'cliente_razon_social': 'CONSTRUCTORA X SA',
+            'condicion_venta':      'Contado',
+        }, format='json')
+
+    def test_el_pago_guarda_el_ruc_y_el_tipo_de_comprobante(self):
+        from apps.caja.models import Pago
+        resp = self._cobrar_como_factura()
+        self.assertEqual(resp.status_code, 201, resp.data)
+        pago = Pago.objects.get(pedido=self.pedido)
+        self.assertEqual(pago.tipo_comprobante, Pago.COMPROBANTE_FACTURA)
+        self.assertEqual(pago.cliente_ruc, f.RUC_RECEPTOR)
+        self.assertEqual(pago.cliente_razon_social, 'CONSTRUCTORA X SA')
+
+    def test_un_ticket_normal_no_guarda_ruc(self):
+        from apps.caja.models import Pago
+        resp = self.client.post('/api/v1/caja/pagos/', {
+            'pedido_id':      self.pedido.id,
+            'medio_pago':     'efectivo',
+            'monto_recibido': '110000',
+        }, format='json')
+        self.assertEqual(resp.status_code, 201, resp.data)
+        pago = Pago.objects.get(pedido=self.pedido)
+        self.assertEqual(pago.tipo_comprobante, Pago.COMPROBANTE_TICKET)
+        self.assertEqual(pago.cliente_ruc, '')
+
+    def test_la_lista_de_pagos_se_puede_filtrar_por_ruc(self):
+        self._cobrar_como_factura()
+        resp = self.client.get('/api/v1/caja/pagos/lista/', {
+            'sesion': self.sesion.id, 'ruc': f.RUC_RECEPTOR[:6],
+        })
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.data['count'], 1)
+        self.assertEqual(resp.data['results'][0]['cliente_ruc'], f.RUC_RECEPTOR)
+
+    def test_un_ruc_que_no_coincide_no_devuelve_nada(self):
+        self._cobrar_como_factura()
+        resp = self.client.get('/api/v1/caja/pagos/lista/', {
+            'sesion': self.sesion.id, 'ruc': '99999999',
+        })
+        self.assertEqual(resp.data['count'], 0)
+
+    def test_reimprimir_un_pago_facturado_sin_documento_sigue_siendo_factura(self):
+        """
+        Regresión: antes de persistir estos datos en el Pago, reimprimir un
+        pago cobrado como factura (sin DE real detrás, el caso de hoy con
+        SIFEN apagado) volvía a salir como 'ticket' liso, sin RUC ni razón
+        social en el papel reimpreso.
+        """
+        from apps.caja.models import Pago
+        self._cobrar_como_factura()
+        pago = Pago.objects.get(pedido=self.pedido)
+
+        resp = self.client.post(f'/api/v1/caja/pagos/{pago.id}/reimprimir/')
+        self.assertEqual(resp.status_code, 200, resp.data)
+        self.assertEqual(resp.data['tipo_comprobante'], 'factura')
+        self.assertEqual(resp.data['ticket']['cliente_ruc'], f.RUC_RECEPTOR)
+        self.assertEqual(resp.data['ticket']['cliente_razon_social'], 'CONSTRUCTORA X SA')
+
+    def test_reimprimir_un_ticket_normal_sigue_siendo_ticket(self):
+        from apps.caja.models import Pago
+        self.client.post('/api/v1/caja/pagos/', {
+            'pedido_id':      self.pedido.id,
+            'medio_pago':     'efectivo',
+            'monto_recibido': '110000',
+        }, format='json')
+        pago = Pago.objects.get(pedido=self.pedido)
+
+        resp = self.client.post(f'/api/v1/caja/pagos/{pago.id}/reimprimir/')
+        self.assertEqual(resp.status_code, 200, resp.data)
+        self.assertEqual(resp.data['tipo_comprobante'], 'ticket')

@@ -116,6 +116,30 @@ class Pago(models.Model):
         help_text='Nro de autorización de tarjeta, nro de transferencia, etc.'
     )
 
+    # ── Datos del comprobante ──────────────────────────────────
+    # Antes de esto, "ticket" vs "factura" y los datos del cliente (RUC,
+    # razón social...) solo vivían de paso en la request de ConfirmarPago:
+    # se usaban para armar el papel impreso en el momento y se perdían. Sin
+    # DocumentoElectronico real (SIFEN_HABILITADO=False, el caso de hoy),
+    # reimprimir un pago viejo no tenía de dónde sacar esos datos — salía
+    # siempre como ticket, aunque se hubiera cobrado como factura. Quedan
+    # acá para que ReimprimirTicketView pueda reconstruir el comprobante
+    # correcto y para poder buscar cobros por RUC.
+    COMPROBANTE_TICKET = 'ticket'
+    COMPROBANTE_FACTURA = 'factura'
+    TIPOS_COMPROBANTE = [
+        (COMPROBANTE_TICKET, 'Ticket'),
+        (COMPROBANTE_FACTURA, 'Factura'),
+    ]
+    tipo_comprobante = models.CharField(
+        max_length=10, choices=TIPOS_COMPROBANTE, default=COMPROBANTE_TICKET,
+    )
+    cliente_ruc = models.CharField(max_length=30, blank=True, db_index=True)
+    cliente_razon_social = models.CharField(max_length=200, blank=True)
+    cliente_telefono = models.CharField(max_length=30, blank=True)
+    cliente_direccion = models.CharField(max_length=255, blank=True)
+    condicion_venta = models.CharField(max_length=20, blank=True, default='Contado')
+
     fecha = models.DateTimeField(auto_now_add=True)
 
     class Meta:

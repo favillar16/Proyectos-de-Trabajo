@@ -1215,6 +1215,7 @@ export default function CajaPage() {
   const [pedidoActivo,  setPedidoActivo]  = useState(null)
   const [ticketDatos,   setTicketDatos]   = useState(null)
   const [mostraCierre,  setMostraCierre]  = useState(false)
+  const [buscarRuc,     setBuscarRuc]     = useState('')
 
   // Estado de la impresora
   const { data: impresora } = useQuery({
@@ -1244,14 +1245,31 @@ export default function CajaPage() {
   })
   const pedidosListos = pedidosData?.results || []
 
-  // Pagos de la sesión actual
+  // Pagos de la sesión actual — filtrables por RUC (solo tiene resultado en
+  // los cobrados como factura; un ticket normal no tiene RUC cargado)
+  const rucBuscado = buscarRuc.trim()
   const { data: pagosData } = useQuery({
-    queryKey: ['pagos-sesion', sesion?.id],
-    queryFn:  () => cajaApi.listaPagos({ sesion: sesion.id }).then(r => r.data),
+    queryKey: ['pagos-sesion', sesion?.id, rucBuscado],
+    queryFn:  () => cajaApi.listaPagos({
+      sesion: sesion.id,
+      ...(rucBuscado ? { ruc: rucBuscado } : {}),
+    }).then(r => r.data),
     enabled:  Boolean(sesion?.id),
     staleTime: 10_000,
   })
   const pagos = pagosData?.results || []
+
+  const reimprimirMut = useMutation({
+    mutationFn: (pagoId) => cajaApi.reimprimir(pagoId).then(r => r.data),
+    onSuccess: (data) => {
+      if (data.ok) {
+        toast.success(`${data.tipo_comprobante === 'factura' ? 'Factura' : 'Ticket'} reimpreso`)
+      } else {
+        toast.error(data.impresion?.error || 'La impresora no pudo reimprimir')
+      }
+    },
+    onError: (err) => toast.error(err.response?.data?.error || 'No se pudo reimprimir'),
+  })
 
   // WebSocket — nuevos pedidos listos
   usePedidoSocket({
@@ -1403,34 +1421,77 @@ export default function CajaPage() {
               ))
             )}
 
-            {/* Historial de pagos del día */}
-            {pagos.length > 0 && (
-              <div style={{ marginTop:'16px' }}>
-                <p style={{ fontSize:'11px', fontWeight:'500', color:C.textMuted,
-                  textTransform:'uppercase', letterSpacing:'0.06em',
-                  marginBottom:'8px' }}>
-                  Cobros del turno
+            {/* Historial de pagos del día — buscable por RUC, con reimpresión */}
+            <div style={{ marginTop:'16px' }}>
+              <p style={{ fontSize:'11px', fontWeight:'500', color:C.textMuted,
+                textTransform:'uppercase', letterSpacing:'0.06em',
+                marginBottom:'8px' }}>
+                Cobros del turno
+              </p>
+
+              <div style={{ position:'relative', marginBottom:'8px' }}>
+                <Search size={13} style={{ position:'absolute', left:'9px', top:'50%',
+                  transform:'translateY(-50%)', color:C.textMuted }} />
+                <input
+                  value={buscarRuc}
+                  onChange={e => setBuscarRuc(e.target.value)}
+                  placeholder="Buscar factura por RUC/CI..."
+                  style={{ width:'100%', height:'30px', padding:'0 10px 0 28px',
+                    borderRadius:'7px', border:`1px solid ${C.border}`,
+                    fontSize:'12px', color:C.text, background:C.bg, outline:'none' }}
+                  onFocus={e=>e.target.style.borderColor=C.gold}
+                  onBlur={e=>e.target.style.borderColor=C.border}
+                />
+              </div>
+
+              {pagos.length === 0 ? (
+                <p style={{ fontSize:'11.5px', color:C.textMuted, padding:'4px 2px' }}>
+                  {rucBuscado
+                    ? `Sin cobros con RUC/CI "${rucBuscado}" en este turno`
+                    : 'Todavía no hay cobros en este turno'}
                 </p>
-                {pagos.map(p => (
-                  <div key={p.id} style={{ display:'flex', justifyContent:'space-between',
-                    alignItems:'center', padding:'8px 10px', marginBottom:'4px',
-                    background:C.bg, borderRadius:'8px', border:`1px solid ${C.border}` }}>
-                    <div>
-                      <p style={{ fontSize:'12px', fontWeight:'500', color:C.text,
-                        fontFamily:'monospace' }}>
-                        {p.numero_ticket}
+              ) : pagos.map(p => (
+                <div key={p.id} style={{ display:'flex', justifyContent:'space-between',
+                  alignItems:'center', gap:'8px', padding:'8px 10px', marginBottom:'4px',
+                  background:C.bg, borderRadius:'8px', border:`1px solid ${C.border}` }}>
+                  <div style={{ minWidth:0 }}>
+                    <p style={{ fontSize:'12px', fontWeight:'500', color:C.text,
+                      fontFamily:'monospace', display:'flex', alignItems:'center', gap:'6px' }}>
+                      {p.numero_ticket}
+                      {p.tipo_comprobante === 'factura' && (
+                        <span style={{ fontSize:'9.5px', fontWeight:'600', padding:'1px 5px',
+                          borderRadius:'4px', background:C.goldMuted, color:C.goldDark,
+                          fontFamily:'inherit', letterSpacing:'0.02em' }}>
+                          FACTURA
+                        </span>
+                      )}
+                    </p>
+                    <p style={{ fontSize:'11px', color:C.textMuted }}>
+                      {p.medio_display} · {p.pedido_cliente || '—'}
+                    </p>
+                    {p.cliente_ruc && (
+                      <p style={{ fontSize:'10.5px', color:C.textMuted, fontFamily:'monospace' }}>
+                        RUC: {p.cliente_ruc}
                       </p>
-                      <p style={{ fontSize:'11px', color:C.textMuted }}>
-                        {p.medio_display} · {p.pedido_cliente || '—'}
-                      </p>
-                    </div>
+                    )}
+                  </div>
+                  <div style={{ display:'flex', alignItems:'center', gap:'8px', flexShrink:0 }}>
                     <p style={{ fontSize:'13px', fontWeight:'600', color:C.goldDark }}>
                       {formatGs(p.monto)}
                     </p>
+                    <button onClick={() => reimprimirMut.mutate(p.id)}
+                      disabled={reimprimirMut.isPending} title="Reimprimir"
+                      style={{ display:'flex', alignItems:'center', justifyContent:'center',
+                        width:'26px', height:'26px', borderRadius:'6px',
+                        border:`1px solid ${C.border}`, background:C.bgSec,
+                        color:C.textSec, cursor: reimprimirMut.isPending ? 'default' : 'pointer',
+                        opacity: reimprimirMut.isPending ? 0.5 : 1 }}>
+                      <Printer size={13}/>
+                    </button>
                   </div>
-                ))}
-              </div>
-            )}
+                </div>
+              ))}
+            </div>
           </div>
         </div>
 
