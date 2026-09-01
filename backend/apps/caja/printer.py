@@ -216,9 +216,14 @@ class TicketBuilder:
 
 class FacturaBuilder:
     """
-    Construye los bytes ESC/POS de una FACTURA (comprobante legal).
-    A diferencia del ticket, incluye: timbrado, RUC del cliente,
+    Construye los bytes ESC/POS del comprobante con RUC del cliente,
     condición de venta y desglose de IVA (régimen paraguayo: 10% / 5% / exento).
+
+    Solo se presenta como "FACTURA / COMPROBANTE LEGAL" con timbrado cuando
+    `datos['timbrado']` viene poblado, es decir cuando hay un
+    DocumentoElectronico real detrás (ver _datos_ticket en apps/caja/views.py).
+    Sin eso imprime "COMPROBANTE DE VENTA": bajo Solución Gratuita / e-Kuatia'i
+    la factura legal la emite el portal del DNIT, no esta PC.
     """
 
     def __init__(self, datos: dict):
@@ -248,17 +253,25 @@ class FacturaBuilder:
         buf += LF
 
         # ── Datos del comprobante fiscal ─────────────────────
+        # 'timbrado' solo llega poblado cuando hay un DocumentoElectronico
+        # real detrás (ver _datos_ticket en apps/caja/views.py). Sin eso,
+        # este papel no es la factura legal — la factura la emite el
+        # portal del DNIT — y no puede presentarse como tal.
+        con_timbrado = bool(d.get('timbrado'))
         buf += ALIGN_CENTER
         buf += DOUBLE_ON
-        buf += self._l('FACTURA')
+        buf += self._l('FACTURA' if con_timbrado else 'COMPROBANTE DE VENTA')
         buf += DOUBLE_OFF
-        buf += self._e('* COMPROBANTE LEGAL *') + LF
+        if con_timbrado:
+            buf += self._e('* COMPROBANTE LEGAL *') + LF
         buf += ALIGN_LEFT
         buf += self._sep('=')
-        if d.get('timbrado'):
+        if con_timbrado:
             buf += self._2col('Timbrado N:', str(d.get('timbrado', '')))
             buf += self._2col('Vto. timbrado:', str(d.get('timbrado_vto', '')))
-        buf += self._2col('Factura Nro:', d.get('factura_numero', d.get('numero_ticket', '')))
+        buf += self._2col(
+            'Factura Nro:' if con_timbrado else 'Comprobante Nro:',
+            d.get('factura_numero', d.get('numero_ticket', '')))
         buf += self._2col('Fecha:', d.get('fecha', ''))
         buf += self._2col('Condicion:', d.get('condicion_venta', 'Contado'))
         buf += self._sep('-')
@@ -347,8 +360,7 @@ class FacturaBuilder:
             # sidecar Node (facturacionelectronicapy-qrgen). Ver
             # docs/facturacion_electronica.md §5.4.
         else:
-            buf += self._l('Documento no válido como')
-            buf += self._l('comprobante fiscal sin timbrado')
+            buf += self._l('No es una factura electrónica válida.')
 
         buf += self._l('Oga Porã — Acabados de Construcción')
         buf += FEED_LINES(4)

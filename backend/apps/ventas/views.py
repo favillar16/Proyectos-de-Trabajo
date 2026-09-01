@@ -53,7 +53,10 @@ def _emitir_evento(pedido, tipo_evento, request=None):
 
     # Rooms por rol según el tipo de evento
     roles_destino = {
-        'pedido_creado':      ['deposito', 'cajero', 'admin'],
+        # Depósito ya no participa del flujo de venta: el pedido nace
+        # directo en "listo" (ver NotaPedidoCreateSerializer.create) y solo
+        # caja tiene algo que hacer con él.
+        'pedido_creado':      ['cajero', 'admin'],
         'pedido_preparando':  ['vendedor', 'cajero', 'admin'],
         'pedido_listo':       ['cajero', 'vendedor', 'admin'],
         'pedido_pagado':      ['vendedor', 'admin'],
@@ -124,6 +127,9 @@ class NotaPedidoListCreateView(views.APIView):
 
         pedido = serializer.save()
         _emitir_evento(pedido, 'pedido_creado', request)
+        # El pedido ya nace "listo" (sin paso de depósito) — avisar también
+        # con este evento para que caja lo vea aparecer al instante.
+        _emitir_evento(pedido, 'pedido_listo', request)
 
         return Response(
             NotaPedidoReadSerializer(pedido, context={'request': request}).data,

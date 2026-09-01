@@ -18,7 +18,7 @@ import {
   CheckCircle, XCircle, Printer, Lock, Unlock,
   ChevronRight, Package, Clock, AlertCircle,
   RefreshCw, Receipt, X, Loader2, TrendingUp,
-  Wifi, WifiOff, Search, User,
+  Wifi, WifiOff, Search, User, Copy, ClipboardCheck, ExternalLink,
 } from 'lucide-react'
 import Layout from '../components/layout/Layout'
 import { cajaApi, ventasApi } from '../services/api'
@@ -49,6 +49,13 @@ const MEDIOS = [
 ]
 
 function formatGs(v) { return `Gs. ${Number(v||0).toLocaleString('es-PY')}` }
+
+function etiquetaTasaIva(tasa) {
+  if (tasa === 5) return '5%'
+  if (tasa === 0) return 'Exento'
+  return '10%'
+}
+
 function formatFecha(iso) {
   if (!iso) return ''
   return new Date(iso).toLocaleString('es-PY', {
@@ -434,7 +441,7 @@ function PanelCobro({ pedido: pedidoResumen, sesion, onPagado, onCancelar }) {
           marginBottom:'16px' }}>
           {[
             { key:'ticket',  label:'Ticket',  desc:'Comprobante simple' },
-            { key:'factura', label:'Factura', desc:'Con timbrado e IVA' },
+            { key:'factura', label:'Factura', desc:'Con RUC y desglose de IVA' },
           ].map(t => (
             <button key={t.key} onClick={() => setTipoComprobante(t.key)}
               style={{
@@ -707,6 +714,138 @@ function PanelCobro({ pedido: pedidoResumen, sesion, onPagado, onCancelar }) {
   )
 }
 
+// Bajo Solución Gratuita / e-Kuatia'í la factura legal se carga a mano en
+// el portal e-Kuatia'í (ver docs/facturacion_electronica_manual_operativo.md)
+// — no hay API, así que lo máximo que puede hacer el sistema es llevar a la
+// cajera directo ahí en una pestaña nueva.
+const URL_EKUATIAI = 'https://ekuatia.set.gov.py/ekuatiai/'
+
+// Copia UN valor individual al portapapeles. Reemplaza el viejo "Copiar
+// todo" en una sola plantilla: e-Kuatia'i pide cada dato en un campo
+// separado del formulario (cliente, RUC, código/cantidad/precio de cada
+// ítem, desglose de IVA...), así que copiar de a un campo evita que la
+// cajera tenga que recortar a mano un bloque de texto para pegarlo en el
+// lugar correcto — clic, pegar, siguiente campo.
+//
+// `mostrarValor` hace que el valor se vea escrito adentro del botón (para
+// valores cortos como un código o un monto, donde sirve como referencia
+// visual); sin eso queda como un ícono solo, para no romper el texto de al
+// lado cuando el valor es largo (una razón social, por ejemplo).
+function BotonCopiar({ valor, titulo, mostrarValor }) {
+  const [copiado, setCopiado] = useState(false)
+
+  const copiar = async () => {
+    try {
+      await navigator.clipboard.writeText(String(valor))
+      setCopiado(true)
+      setTimeout(() => setCopiado(false), 1500)
+    } catch {
+      toast.error('No se pudo copiar. Revisá los permisos del navegador.')
+    }
+  }
+
+  const estilo = {
+    display:'inline-flex', alignItems:'center', justifyContent:'center',
+    gap: mostrarValor ? '4px' : 0,
+    height:'20px', padding: mostrarValor ? '0 6px' : 0,
+    width: mostrarValor ? 'auto' : '20px',
+    marginLeft:'6px', borderRadius:'5px', cursor:'pointer',
+    border:`1px solid ${copiado ? C.success : C.border}`,
+    background: copiado ? C.successBg : C.bg,
+    color: copiado ? C.success : C.textSec,
+    fontSize:'10.5px', fontFamily: mostrarValor ? 'monospace' : 'inherit',
+  }
+
+  return (
+    <button onClick={copiar} title={titulo || 'Copiar'} style={estilo}>
+      {copiado ? <ClipboardCheck size={11}/> : <Copy size={11}/>}
+      {mostrarValor && valor}
+    </button>
+  )
+}
+
+// ─── Ayudante de carga: datos listos para copiar al portal DNIT ───────────────
+// Solo tiene sentido cuando la factura NO tiene timbrado real (o sea, hoy
+// siempre): bajo Solución Gratuita / e-Kuatia'i la factura legal la emite
+// el portal, cargada a mano — esto le ahorra a la cajera transcribir del
+// papel. No se imprime junto al comprobante: es una herramienta interna.
+function AyudanteCargaPortal({ ticket }) {
+  return (
+    <div style={{ marginTop:'16px', padding:'14px', background:C.bgSec,
+      border:`1px solid ${C.border}`, borderRadius:'10px' }}>
+      <p style={{ fontSize:'12.5px', fontWeight:'600', color:C.text, marginBottom:'10px' }}>
+        Datos para cargar en e-Kuatia'í (portal DNIT)
+      </p>
+
+      <div style={{ fontSize:'11.5px', color:C.textSec, lineHeight:1.8 }}>
+        <p>
+          <b>Cliente:</b> {ticket.cliente_razon_social || ticket.cliente}
+          <BotonCopiar valor={ticket.cliente_razon_social || ticket.cliente} titulo="Copiar cliente" />
+        </p>
+        <p>
+          <b>RUC/CI:</b> {ticket.cliente_ruc || 'Sin especificar'}
+          {ticket.cliente_ruc && <BotonCopiar valor={ticket.cliente_ruc} titulo="Copiar RUC/CI" />}
+        </p>
+        <p>
+          <b>Condición de venta:</b> {ticket.condicion_venta}
+          <BotonCopiar valor={ticket.condicion_venta} titulo="Copiar condición de venta" />
+        </p>
+
+        <p style={{ marginTop:'8px' }}><b>Ítems:</b></p>
+        {ticket.items.map((it, i) => (
+          <div key={i} style={{ paddingLeft:'8px', marginBottom:'8px' }}>
+            <p>
+              {it.cantidad} × {it.descripcion} — {formatGs(it.subtotal)} (IVA {etiquetaTasaIva(it.tasa_iva)})
+            </p>
+            <p style={{ display:'flex', alignItems:'center', flexWrap:'wrap',
+              gap:'4px', marginTop:'3px' }}>
+              <span style={{ color:C.textMuted }}>SKU:</span>
+              {it.codigo
+                ? <BotonCopiar valor={it.codigo} titulo="Copiar código interno (SKU)" mostrarValor />
+                : <span style={{ color:C.textMuted, fontStyle:'italic' }}>sin código</span>}
+              <span style={{ color:C.textMuted, marginLeft:'6px' }}>Cant:</span>
+              <BotonCopiar valor={it.cantidad} titulo="Copiar cantidad" mostrarValor />
+              <span style={{ color:C.textMuted, marginLeft:'6px' }}>P.Unit:</span>
+              <BotonCopiar valor={it.precio_unit} titulo="Copiar precio unitario" mostrarValor />
+            </p>
+          </div>
+        ))}
+
+        <p style={{ marginTop:'8px' }}>
+          <b>Base 10%:</b> {formatGs(ticket.base_gravada_10)}
+          <BotonCopiar valor={ticket.base_gravada_10} titulo="Copiar base gravada 10%" />
+          <span style={{ marginLeft:'10px' }}><b>IVA 10%:</b> {formatGs(ticket.iva_10)}</span>
+          <BotonCopiar valor={ticket.iva_10} titulo="Copiar IVA 10%" />
+        </p>
+        <p>
+          <b>Base 5%:</b> {formatGs(ticket.base_gravada_5)}
+          <BotonCopiar valor={ticket.base_gravada_5} titulo="Copiar base gravada 5%" />
+          <span style={{ marginLeft:'10px' }}><b>IVA 5%:</b> {formatGs(ticket.iva_5)}</span>
+          <BotonCopiar valor={ticket.iva_5} titulo="Copiar IVA 5%" />
+        </p>
+        <p>
+          <b>Exento:</b> {formatGs(ticket.exento)}
+          <BotonCopiar valor={ticket.exento} titulo="Copiar exento" />
+        </p>
+        <p>
+          <b>Total:</b> {formatGs(ticket.total)}
+          <BotonCopiar valor={ticket.total} titulo="Copiar total" />
+          <span style={{ marginLeft:'10px' }}><b>Medio de pago:</b> {ticket.medio_pago}</span>
+        </p>
+      </div>
+
+      <a href={URL_EKUATIAI} target="_blank" rel="noopener noreferrer"
+        style={{ marginTop:'12px', height:'38px', borderRadius:'8px',
+          background:C.gold, border:`1px solid ${C.gold}`,
+          color:'#fff', fontSize:'12.5px', fontWeight:'500',
+          textDecoration:'none', cursor:'pointer',
+          display:'flex', alignItems:'center', justifyContent:'center', gap:'7px' }}>
+        <ExternalLink size={14}/> Generar factura electrónica
+      </a>
+    </div>
+  )
+}
+
 // ─── Ticket térmico (imprimible) ──────────────────────────────────────────────
 function Ticket({ datos, onNuevo, onImprimir }) {
   const ticketRef = useRef()
@@ -738,18 +877,20 @@ function Ticket({ datos, onNuevo, onImprimir }) {
           </p>
         </div>
 
-        {/* Comprobante simulado (se imprime con window.print) */}
+        {/* Comprobante simulado (se imprime con window.print). Sin color: la
+            impresora térmica de la tienda es blanco y negro, así que ningún
+            sombreado/color acá se refleja en el papel — solo agrega ruido
+            en pantalla. */}
         <div ref={ticketRef} className="ticket-imprimible" style={{
           background:C.bg,
-          border: datos.tipo_comprobante === 'factura'
-            ? `2px solid ${C.goldDark}` : `1px solid ${C.border}`,
+          border: `1px solid ${C.border}`,
           borderRadius:'12px', padding:'20px',
           fontFamily:'monospace', fontSize:'12px',
           marginBottom:'16px',
         }}>
           {/* Cabecera — distinta para factura y ticket */}
           {datos.tipo_comprobante === 'factura' ? (
-            <div style={{ textAlign:'center', borderBottom:`2px solid ${C.goldDark}`,
+            <div style={{ textAlign:'center', borderBottom:`2px solid ${C.text}`,
               paddingBottom:'10px', marginBottom:'10px' }}>
               <p style={{ fontSize:'16px', fontWeight:'700', color:C.text }}>
                 {datos.ticket.negocio}
@@ -760,13 +901,13 @@ function Ticket({ datos, onNuevo, onImprimir }) {
               {datos.ticket.direccion && (
                 <p style={{ color:C.textMuted, fontSize:'11px' }}>{datos.ticket.direccion}</p>
               )}
-              <div style={{ marginTop:'8px', padding:'4px 0',
-                background:C.goldMuted, borderRadius:'6px' }}>
-                <p style={{ fontSize:'15px', fontWeight:'700', color:C.goldDark, letterSpacing:'0.08em' }}>
-                  FACTURA
-                </p>
-                <p style={{ fontSize:'9px', color:C.goldDark }}>COMPROBANTE LEGAL</p>
-              </div>
+              <p style={{ fontSize:'15px', fontWeight:'700', color:C.text,
+                letterSpacing:'0.08em', marginTop:'8px' }}>
+                {datos.ticket.timbrado ? 'FACTURA' : 'COMPROBANTE DE VENTA'}
+              </p>
+              {datos.ticket.timbrado && (
+                <p style={{ fontSize:'9px', color:C.textMuted }}>COMPROBANTE LEGAL</p>
+              )}
               {datos.ticket.timbrado && (
                 <p style={{ color:C.textMuted, fontSize:'10px', marginTop:'4px' }}>
                   Timbrado {datos.ticket.timbrado} · Vto {datos.ticket.timbrado_vto}
@@ -774,7 +915,7 @@ function Ticket({ datos, onNuevo, onImprimir }) {
               )}
               <p style={{ color:C.textMuted, fontSize:'11px', marginTop:'2px' }}>{datos.ticket.fecha}</p>
               <p style={{ color:C.textMuted, fontSize:'11px' }}>
-                Factura Nro: {datos.ticket.numero_ticket}
+                {datos.ticket.timbrado ? 'Factura Nro:' : 'Comprobante Nro:'} {datos.ticket.numero_ticket}
               </p>
             </div>
           ) : (
@@ -877,6 +1018,12 @@ function Ticket({ datos, onNuevo, onImprimir }) {
             {datos.ticket.pie}
           </p>
         </div>
+
+        {/* Ayudante de carga al portal — solo cuando la factura no tiene
+            timbrado real, es decir, siempre bajo Solución Gratuita */}
+        {datos.tipo_comprobante === 'factura' && !datos.ticket.timbrado && (
+          <AyudanteCargaPortal ticket={datos.ticket} />
+        )}
 
         {/* Acciones */}
         <div style={{ display:'flex', gap:'10px' }}>

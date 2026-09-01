@@ -128,11 +128,10 @@ export const AYUDA_POR_RUTA = {
       {
         titulo: 'Los estados, en orden',
         items: [
-          'PENDIENTE — recién armado. Al crearlo, el sistema ya reservó el material.',
-          'EN PREPARACIÓN — el depósito lo está juntando.',
-          'LISTO — preparado, esperando que el cliente pase por caja.',
+          'El pedido nace directo en LISTO: al crearlo, el sistema ya reservó el material y no hace falta que depósito lo confirme aparte — caja puede cobrarlo enseguida.',
           'PAGADO — se cobró. Recién en este momento el stock se descuenta de verdad.',
           'CANCELADO — se liberó la reserva y el material volvió a estar disponible.',
+          '(PENDIENTE y EN PREPARACIÓN siguen existiendo en el sistema por pedidos viejos, pero ningún pedido nuevo pasa por ahí.)',
         ],
       },
       {
