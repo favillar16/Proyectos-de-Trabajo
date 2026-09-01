@@ -52,9 +52,24 @@ class SifenApagadoTests(BaseCaja):
     def test_la_factura_sigue_imprimiendo(self):
         papel = FacturaBuilder(self.datos()).build()
         self.assertGreater(len(papel), 0)
-        self.assertIn(b'Documento no', papel,
-                      'Debe conservar la leyenda de "no válido sin timbrado"')
+        self.assertIn(b'No es una factura electr', papel,
+                      'Debe avisar que no es una factura electrónica válida')
         self.assertNotIn(b'CDC:', papel)
+
+    def test_la_factura_sin_documento_no_lleva_timbrado_ni_se_dice_legal(self):
+        """
+        Regresión: con SIFEN apagado no puede haber un DocumentoElectronico,
+        así que este papel no puede imprimir el timbrado real de la DNIT ni
+        decir "COMPROBANTE LEGAL" — ese timbrado es del portal, no de esta PC.
+        Antes de esta corrección el papel llegaba a mostrar el timbrado real
+        en la cabecera y "no válido" en el pie, contradiciéndose.
+        """
+        d = self.datos()
+        self.assertFalse(d.get('timbrado'))
+        papel = FacturaBuilder(d).build()
+        self.assertNotIn(b'COMPROBANTE LEGAL', papel)
+        self.assertNotIn(b'Timbrado N:', papel)
+        self.assertIn(b'COMPROBANTE DE VENTA', papel)
 
     def test_el_ticket_sigue_imprimiendo(self):
         d = _datos_ticket(self.pedido, self.pago, self.sesion)

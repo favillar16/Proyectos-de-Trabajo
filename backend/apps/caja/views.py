@@ -594,11 +594,10 @@ def _datos_ticket(pedido, pago, sesion, tipo_comprobante='ticket',
             'cantidad':      float(item.cantidad),
             'precio_unit':   float(item.precio_unitario),
             'subtotal':      float(item.subtotal),
+            'tasa_iva':      getattr(item.variante.producto, 'tasa_iva', 10),
         })
 
     total = float(pago.monto)   # monto efectivamente cobrado (ya con descuento de caja)
-    # IVA incluido al 10% (régimen general en Paraguay): iva = total / 11
-    iva_10 = round(total / 11, 0)
 
     # Si hubo precio negociado en el pedido, o descuento porcentual en caja, registrarlo
     hubo_ajuste = pedido.total_ajustado is not None and float(pedido.total_ajustado) != float(pedido.total)
@@ -632,21 +631,37 @@ def _datos_ticket(pedido, pago, sesion, tipo_comprobante='ticket',
     # Datos extra solo para factura
     if tipo_comprobante == 'factura':
         fiscal = getattr(dj_settings, 'DATOS_FISCALES', {})
+
+        # Desglose real de IVA por tasa (10% / 5% / exento), ítem por ítem
+        # — la misma cuenta que usa apps/facturacion/emisor.py para el DE.
+        # No depende de que el SIFEN esté prendido: es aritmética pura sobre
+        # el pedido, y es la que necesita el ayudante de carga para que la
+        # cajera no transcriba "10% para todo" cuando hay ítems al 5% o
+        # exentos.
+        totales_iva = fe_emisor.calcular_totales_iva(pedido, total)
+
         datos.update({
             'factura_numero':  pago.numero_ticket,
             'ruc_negocio':     fiscal.get('ruc', ''),
             'direccion':       fiscal.get('direccion', ''),
             'telefono':        fiscal.get('telefono', ''),
-            'timbrado':        fiscal.get('timbrado', ''),
-            'timbrado_vto':    fiscal.get('timbrado_vto', ''),
+            # OJO: 'timbrado' NO sale de fiscal.get() acá a propósito. Ese
+            # timbrado es el que la DNIT habilitó para los documentos que
+            # emite el PORTAL (Solución Gratuita / e-Kuatia'i), no este
+            # papel. Imprimirlo sin que exista un DocumentoElectronico real
+            # detrás sería un papel que se hace pasar por la factura legal
+            # sin serlo. Por eso solo se completa más abajo, desde el
+            # snapshot del DE, cuando ese DE existe de verdad.
             'cliente_ruc':     cliente_ruc or 'Sin especificar',
             'cliente_razon_social': nombre_cliente,
             'cliente_telefono': cliente_telefono or '',
             'cliente_direccion': cliente_direccion or '',
             'condicion_venta': condicion_venta,
-            'iva_10':          iva_10,
-            'iva_5':           0,
-            'exento':          0,
+            'iva_10':          float(totales_iva['iva_10']),
+            'iva_5':           float(totales_iva['iva_5']),
+            'exento':          float(totales_iva['total_exento']),
+            'base_gravada_10': float(totales_iva['total_gravado_10']),
+            'base_gravada_5':  float(totales_iva['total_gravado_5']),
         })
 
         # Con documento electrónico, todo lo fiscal se pisa con el snapshot
@@ -665,12 +680,14 @@ def _datos_ticket(pedido, pago, sesion, tipo_comprobante='ticket',
                 'cdc':             documento.cdc,
                 'cdc_legible':     cdc_mod.formatear_legible(documento.cdc),
                 'url_consulta_qr': documento.url_consulta_qr,
-                # El desglose por tasa ya viene calculado y cuadrado desde
-                # apps/facturacion/emisor.py; el iva_10 de arriba era una
-                # aproximación global (total/11) que no sirve para un DE.
+                # El snapshot del DE pisa el desglose recién calculado: es
+                # el mismo cálculo (calcular_totales_iva), pero el que
+                # efectivamente quedó registrado al emitir.
                 'iva_10':          float(documento.iva_10),
                 'iva_5':           float(documento.iva_5),
                 'exento':          float(documento.total_exento),
+                'base_gravada_10': float(documento.total_gravado_10),
+                'base_gravada_5':  float(documento.total_gravado_5),
             })
 
     return datos

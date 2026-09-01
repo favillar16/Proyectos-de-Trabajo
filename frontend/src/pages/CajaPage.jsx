@@ -18,7 +18,7 @@ import {
   CheckCircle, XCircle, Printer, Lock, Unlock,
   ChevronRight, Package, Clock, AlertCircle,
   RefreshCw, Receipt, X, Loader2, TrendingUp,
-  Wifi, WifiOff, Search, User,
+  Wifi, WifiOff, Search, User, Copy, ClipboardCheck,
 } from 'lucide-react'
 import Layout from '../components/layout/Layout'
 import { cajaApi, ventasApi } from '../services/api'
@@ -49,6 +49,53 @@ const MEDIOS = [
 ]
 
 function formatGs(v) { return `Gs. ${Number(v||0).toLocaleString('es-PY')}` }
+
+function etiquetaTasaIva(tasa) {
+  if (tasa === 5) return '5%'
+  if (tasa === 0) return 'Exento'
+  return '10%'
+}
+
+// Arma el texto plano con todo lo que pide el portal Marangatú / e-Kuatia'i
+// al cargar una factura a mano, en el mismo orden en que aparece el
+// formulario: emisor, cliente, ítems con su tasa, y el desglose de IVA.
+// Ver docs/carga_final/datos_fiscales.md — bajo Solución Gratuita el
+// sistema no puede emitir solo, así que esto es lo que reduce la
+// transcripción manual de la cajera.
+function armarTextoPortal(t) {
+  const lineas = [
+    `EMISOR: ${t.negocio}  RUC ${t.ruc_negocio}`,
+    `${t.direccion}  Tel: ${t.telefono}`,
+    '',
+    `CLIENTE: ${t.cliente_razon_social || t.cliente}`,
+    `RUC/CI: ${t.cliente_ruc || 'Sin especificar'}`,
+  ]
+  if (t.cliente_telefono) lineas.push(`Teléfono: ${t.cliente_telefono}`)
+  if (t.cliente_direccion) lineas.push(`Dirección: ${t.cliente_direccion}`)
+  lineas.push(
+    `Condición de venta: ${t.condicion_venta}`,
+    `Fecha: ${t.fecha}`,
+    '',
+    'ÍTEMS:',
+  )
+  ;(t.items || []).forEach(it => {
+    lineas.push(
+      `- ${it.descripcion} | Cant: ${it.cantidad} | `
+      + `P.Unit: ${formatGs(it.precio_unit)} | Subtotal: ${formatGs(it.subtotal)} | `
+      + `IVA: ${etiquetaTasaIva(it.tasa_iva)}`
+    )
+  })
+  lineas.push(
+    '',
+    'DESGLOSE IVA:',
+    `Base gravada 10%: ${formatGs(t.base_gravada_10)}  IVA 10%: ${formatGs(t.iva_10)}`,
+    `Base gravada 5%: ${formatGs(t.base_gravada_5)}  IVA 5%: ${formatGs(t.iva_5)}`,
+    `Exento: ${formatGs(t.exento)}`,
+    `TOTAL: ${formatGs(t.total)}`,
+    `Medio de pago: ${t.medio_pago}`,
+  )
+  return lineas.join('\n')
+}
 function formatFecha(iso) {
   if (!iso) return ''
   return new Date(iso).toLocaleString('es-PY', {
@@ -434,7 +481,7 @@ function PanelCobro({ pedido: pedidoResumen, sesion, onPagado, onCancelar }) {
           marginBottom:'16px' }}>
           {[
             { key:'ticket',  label:'Ticket',  desc:'Comprobante simple' },
-            { key:'factura', label:'Factura', desc:'Con timbrado e IVA' },
+            { key:'factura', label:'Factura', desc:'Con RUC y desglose de IVA' },
           ].map(t => (
             <button key={t.key} onClick={() => setTipoComprobante(t.key)}
               style={{
@@ -707,6 +754,68 @@ function PanelCobro({ pedido: pedidoResumen, sesion, onPagado, onCancelar }) {
   )
 }
 
+// ─── Ayudante de carga: datos listos para copiar al portal DNIT ───────────────
+// Solo tiene sentido cuando la factura NO tiene timbrado real (o sea, hoy
+// siempre): bajo Solución Gratuita / e-Kuatia'i la factura legal la emite
+// el portal, cargada a mano — esto le ahorra a la cajera transcribir del
+// papel. No se imprime junto al comprobante: es una herramienta interna.
+function AyudanteCargaPortal({ ticket }) {
+  const [copiado, setCopiado] = useState(false)
+
+  const copiar = async () => {
+    const texto = armarTextoPortal(ticket)
+    try {
+      await navigator.clipboard.writeText(texto)
+      setCopiado(true)
+      toast.success('Datos copiados')
+      setTimeout(() => setCopiado(false), 2000)
+    } catch {
+      toast.error('No se pudo copiar. Revisá los permisos del navegador.')
+    }
+  }
+
+  return (
+    <div style={{ marginTop:'16px', padding:'14px', background:C.bgSec,
+      border:`1px solid ${C.border}`, borderRadius:'10px' }}>
+      <div style={{ display:'flex', justifyContent:'space-between',
+        alignItems:'center', marginBottom:'10px' }}>
+        <p style={{ fontSize:'12.5px', fontWeight:'600', color:C.text }}>
+          Datos para cargar en el portal DNIT (Marangatú)
+        </p>
+        <button onClick={copiar}
+          style={{ height:'32px', padding:'0 12px', borderRadius:'8px',
+            background: copiado ? C.successBg : C.sidebar,
+            border:`1px solid ${copiado ? C.success : C.gold}`,
+            color: copiado ? C.success : C.gold,
+            fontSize:'12px', cursor:'pointer',
+            display:'flex', alignItems:'center', gap:'6px' }}>
+          {copiado ? <ClipboardCheck size={14}/> : <Copy size={14}/>}
+          {copiado ? 'Copiado' : 'Copiar todo'}
+        </button>
+      </div>
+
+      <div style={{ fontSize:'11.5px', color:C.textSec, lineHeight:1.6 }}>
+        <p><b>Cliente:</b> {ticket.cliente_razon_social || ticket.cliente} — RUC/CI: {ticket.cliente_ruc || 'Sin especificar'}</p>
+        <p><b>Condición de venta:</b> {ticket.condicion_venta}</p>
+        <p style={{ marginTop:'6px' }}><b>Ítems:</b></p>
+        {ticket.items.map((it, i) => (
+          <p key={i} style={{ paddingLeft:'8px' }}>
+            {it.cantidad} × {it.descripcion} — {formatGs(it.subtotal)} (IVA {etiquetaTasaIva(it.tasa_iva)})
+          </p>
+        ))}
+        <p style={{ marginTop:'6px' }}>
+          <b>Base 10%:</b> {formatGs(ticket.base_gravada_10)} · <b>IVA 10%:</b> {formatGs(ticket.iva_10)}
+        </p>
+        <p>
+          <b>Base 5%:</b> {formatGs(ticket.base_gravada_5)} · <b>IVA 5%:</b> {formatGs(ticket.iva_5)}
+        </p>
+        <p><b>Exento:</b> {formatGs(ticket.exento)}</p>
+        <p><b>Total:</b> {formatGs(ticket.total)} · <b>Medio de pago:</b> {ticket.medio_pago}</p>
+      </div>
+    </div>
+  )
+}
+
 // ─── Ticket térmico (imprimible) ──────────────────────────────────────────────
 function Ticket({ datos, onNuevo, onImprimir }) {
   const ticketRef = useRef()
@@ -763,9 +872,11 @@ function Ticket({ datos, onNuevo, onImprimir }) {
               <div style={{ marginTop:'8px', padding:'4px 0',
                 background:C.goldMuted, borderRadius:'6px' }}>
                 <p style={{ fontSize:'15px', fontWeight:'700', color:C.goldDark, letterSpacing:'0.08em' }}>
-                  FACTURA
+                  {datos.ticket.timbrado ? 'FACTURA' : 'COMPROBANTE DE VENTA'}
                 </p>
-                <p style={{ fontSize:'9px', color:C.goldDark }}>COMPROBANTE LEGAL</p>
+                <p style={{ fontSize:'9px', color:C.goldDark }}>
+                  {datos.ticket.timbrado ? 'COMPROBANTE LEGAL' : 'No es factura electrónica'}
+                </p>
               </div>
               {datos.ticket.timbrado && (
                 <p style={{ color:C.textMuted, fontSize:'10px', marginTop:'4px' }}>
@@ -774,7 +885,7 @@ function Ticket({ datos, onNuevo, onImprimir }) {
               )}
               <p style={{ color:C.textMuted, fontSize:'11px', marginTop:'2px' }}>{datos.ticket.fecha}</p>
               <p style={{ color:C.textMuted, fontSize:'11px' }}>
-                Factura Nro: {datos.ticket.numero_ticket}
+                {datos.ticket.timbrado ? 'Factura Nro:' : 'Comprobante Nro:'} {datos.ticket.numero_ticket}
               </p>
             </div>
           ) : (
@@ -877,6 +988,12 @@ function Ticket({ datos, onNuevo, onImprimir }) {
             {datos.ticket.pie}
           </p>
         </div>
+
+        {/* Ayudante de carga al portal — solo cuando la factura no tiene
+            timbrado real, es decir, siempre bajo Solución Gratuita */}
+        {datos.tipo_comprobante === 'factura' && !datos.ticket.timbrado && (
+          <AyudanteCargaPortal ticket={datos.ticket} />
+        )}
 
         {/* Acciones */}
         <div style={{ display:'flex', gap:'10px' }}>
