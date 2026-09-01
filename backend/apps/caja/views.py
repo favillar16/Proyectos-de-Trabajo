@@ -562,6 +562,25 @@ class EstadoImpresora(views.APIView):
                     f'Impresora "{nombre}" no encontrada. '
                     f'Disponibles: {", ".join(impresoras)}'
                 )
+            else:
+                # Que Windows la liste no significa que vaya a imprimir: si
+                # está en "Usar impresora sin conexión", win32print igual
+                # acepta el trabajo sin error — se apila en la cola y nunca
+                # sale nada físicamente. Chequear el bit de atributo, no solo
+                # la presencia en EnumPrinters.
+                PRINTER_ATTRIBUTE_WORK_OFFLINE = 0x400
+                hprinter = win32print.OpenPrinter(nombre)
+                try:
+                    info = win32print.GetPrinter(hprinter, 2)
+                finally:
+                    win32print.ClosePrinter(hprinter)
+                if info['Attributes'] & PRINTER_ATTRIBUTE_WORK_OFFLINE:
+                    resultado['disponible'] = False
+                    resultado['error'] = (
+                        f'Impresora "{nombre}" está en modo "sin conexión" en Windows — '
+                        f'los tickets se acumulan en la cola pero no salen. '
+                        f'Clic derecho sobre la impresora → destildar "Usar impresora sin conexión".'
+                    )
         except ImportError:
             resultado['disponible'] = True   # En desarrollo no hay win32print
             resultado['error'] = 'win32print no disponible (entorno no-Windows)'
@@ -591,6 +610,12 @@ def _datos_ticket(pedido, pago, sesion, tipo_comprobante='ticket',
         items.append({
             'descripcion':   item.variante.producto.nombre,
             'detalle':       str(item.variante),
+            # SKU de la variante: es el mismo "Código Interno del Producto"
+            # con el que se cargó el catálogo en e-Kuatia'i (ver manage.py
+            # exportar_catalogo_ekuatiai), así que sirve para pegarlo tal
+            # cual en el buscador de ítems del portal en vez de escribir la
+            # descripción a mano.
+            'codigo':        item.variante.sku,
             'cantidad':      float(item.cantidad),
             'precio_unit':   float(item.precio_unitario),
             'subtotal':      float(item.subtotal),

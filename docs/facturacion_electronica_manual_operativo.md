@@ -41,17 +41,24 @@ Es lo que se conoce como **e-Kuatia'i**. Consecuencia práctica, sin vuelta:
    impresora térmica de la tienda es blanco y negro, así que el papel no lleva
    sombreados ni colores.
 5. En la pantalla, debajo del comprobante, aparece un cuadro
-   **"Datos para cargar en e-Kuatia'í (portal DNIT)"** con un botón
-   **Copiar todo**. Trae cliente, RUC, ítems y el desglose de IVA por tasa
-   (10% / 5% / exento) ya calculado.
+   **"Datos para cargar en e-Kuatia'í (portal DNIT)"** con cliente, RUC,
+   condición de venta, cada ítem (con su **código interno/SKU**, cantidad y
+   precio unitario) y el desglose de IVA por tasa (10% / 5% / exento) ya
+   calculado. Cada dato tiene su **propio botón de copiar** al lado — no hay
+   un solo bloque de texto para recortar: se copia un campo, se pega en el
+   campo correspondiente del formulario de e-Kuatia'í, y se sigue con el
+   siguiente. El código interno de cada ítem es el mismo con el que está
+   cargado el catálogo en e-Kuatia'í (`Catálogo de Productos`), así que sirve
+   para pegarlo directo en el buscador de ítems del portal en vez de escribir
+   la descripción a mano.
 6. Debajo, el botón **"Generar factura electrónica"** abre e-Kuatia'í
    (`https://ekuatia.set.gov.py/ekuatiai/`) en una pestaña nueva del navegador
    o la tablet — ahorra escribir la dirección a mano. El sistema no inicia
    sesión ni envía nada: solo abre la página, el usuario y contraseña los
    pone quien factura.
-7. Con eso copiado, entrar a e-Kuatia'í (ya abierto) y cargar la factura
-   electrónica ahí, pegando/completando con esos datos. Reemplaza
-   transcribir todo a mano desde el papel.
+7. Con e-Kuatia'í ya abierto, ir copiando y pegando cada dato del cuadro en
+   el campo que corresponda del formulario del portal. Reemplaza transcribir
+   todo a mano desde el papel.
 
 ---
 
@@ -107,9 +114,10 @@ Probar una vez en la PC real de la tienda (no en la máquina de desarrollo):
 
 1. Cobrar una venta de prueba eligiendo **"Factura"**.
 2. Confirmar que el "COMPROBANTE DE VENTA" sale bien en la impresora térmica.
-3. Probar el botón **"Copiar todo"** en el navegador o tablet que realmente
-   usa la cajera — la primera vez, el navegador puede pedir permiso para
-   copiar al portapapeles.
+3. Probar los botones de copiar de al menos un par de campos (por ejemplo el
+   RUC del cliente y el código de un ítem) en el navegador o tablet que
+   realmente usa la cajera — la primera vez, el navegador puede pedir permiso
+   para copiar al portapapeles.
 4. Probar el botón **"Generar factura electrónica"**: debe abrir
    `https://ekuatia.set.gov.py/ekuatiai/` en una pestaña nueva. En la tablet,
    confirmar que el navegador no bloquea la pestaña emergente.

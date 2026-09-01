@@ -56,46 +56,6 @@ function etiquetaTasaIva(tasa) {
   return '10%'
 }
 
-// Arma el texto plano con todo lo que pide el portal Marangatú / e-Kuatia'i
-// al cargar una factura a mano, en el mismo orden en que aparece el
-// formulario: emisor, cliente, ítems con su tasa, y el desglose de IVA.
-// Ver docs/carga_final/datos_fiscales.md — bajo Solución Gratuita el
-// sistema no puede emitir solo, así que esto es lo que reduce la
-// transcripción manual de la cajera.
-function armarTextoPortal(t) {
-  const lineas = [
-    `EMISOR: ${t.negocio}  RUC ${t.ruc_negocio}`,
-    `${t.direccion}  Tel: ${t.telefono}`,
-    '',
-    `CLIENTE: ${t.cliente_razon_social || t.cliente}`,
-    `RUC/CI: ${t.cliente_ruc || 'Sin especificar'}`,
-  ]
-  if (t.cliente_telefono) lineas.push(`Teléfono: ${t.cliente_telefono}`)
-  if (t.cliente_direccion) lineas.push(`Dirección: ${t.cliente_direccion}`)
-  lineas.push(
-    `Condición de venta: ${t.condicion_venta}`,
-    `Fecha: ${t.fecha}`,
-    '',
-    'ÍTEMS:',
-  )
-  ;(t.items || []).forEach(it => {
-    lineas.push(
-      `- ${it.descripcion} | Cant: ${it.cantidad} | `
-      + `P.Unit: ${formatGs(it.precio_unit)} | Subtotal: ${formatGs(it.subtotal)} | `
-      + `IVA: ${etiquetaTasaIva(it.tasa_iva)}`
-    )
-  })
-  lineas.push(
-    '',
-    'DESGLOSE IVA:',
-    `Base gravada 10%: ${formatGs(t.base_gravada_10)}  IVA 10%: ${formatGs(t.iva_10)}`,
-    `Base gravada 5%: ${formatGs(t.base_gravada_5)}  IVA 5%: ${formatGs(t.iva_5)}`,
-    `Exento: ${formatGs(t.exento)}`,
-    `TOTAL: ${formatGs(t.total)}`,
-    `Medio de pago: ${t.medio_pago}`,
-  )
-  return lineas.join('\n')
-}
 function formatFecha(iso) {
   if (!iso) return ''
   return new Date(iso).toLocaleString('es-PY', {
@@ -760,63 +720,118 @@ function PanelCobro({ pedido: pedidoResumen, sesion, onPagado, onCancelar }) {
 // cajera directo ahí en una pestaña nueva.
 const URL_EKUATIAI = 'https://ekuatia.set.gov.py/ekuatiai/'
 
+// Copia UN valor individual al portapapeles. Reemplaza el viejo "Copiar
+// todo" en una sola plantilla: e-Kuatia'i pide cada dato en un campo
+// separado del formulario (cliente, RUC, código/cantidad/precio de cada
+// ítem, desglose de IVA...), así que copiar de a un campo evita que la
+// cajera tenga que recortar a mano un bloque de texto para pegarlo en el
+// lugar correcto — clic, pegar, siguiente campo.
+//
+// `mostrarValor` hace que el valor se vea escrito adentro del botón (para
+// valores cortos como un código o un monto, donde sirve como referencia
+// visual); sin eso queda como un ícono solo, para no romper el texto de al
+// lado cuando el valor es largo (una razón social, por ejemplo).
+function BotonCopiar({ valor, titulo, mostrarValor }) {
+  const [copiado, setCopiado] = useState(false)
+
+  const copiar = async () => {
+    try {
+      await navigator.clipboard.writeText(String(valor))
+      setCopiado(true)
+      setTimeout(() => setCopiado(false), 1500)
+    } catch {
+      toast.error('No se pudo copiar. Revisá los permisos del navegador.')
+    }
+  }
+
+  const estilo = {
+    display:'inline-flex', alignItems:'center', justifyContent:'center',
+    gap: mostrarValor ? '4px' : 0,
+    height:'20px', padding: mostrarValor ? '0 6px' : 0,
+    width: mostrarValor ? 'auto' : '20px',
+    marginLeft:'6px', borderRadius:'5px', cursor:'pointer',
+    border:`1px solid ${copiado ? C.success : C.border}`,
+    background: copiado ? C.successBg : C.bg,
+    color: copiado ? C.success : C.textSec,
+    fontSize:'10.5px', fontFamily: mostrarValor ? 'monospace' : 'inherit',
+  }
+
+  return (
+    <button onClick={copiar} title={titulo || 'Copiar'} style={estilo}>
+      {copiado ? <ClipboardCheck size={11}/> : <Copy size={11}/>}
+      {mostrarValor && valor}
+    </button>
+  )
+}
+
 // ─── Ayudante de carga: datos listos para copiar al portal DNIT ───────────────
 // Solo tiene sentido cuando la factura NO tiene timbrado real (o sea, hoy
 // siempre): bajo Solución Gratuita / e-Kuatia'i la factura legal la emite
 // el portal, cargada a mano — esto le ahorra a la cajera transcribir del
 // papel. No se imprime junto al comprobante: es una herramienta interna.
 function AyudanteCargaPortal({ ticket }) {
-  const [copiado, setCopiado] = useState(false)
-
-  const copiar = async () => {
-    const texto = armarTextoPortal(ticket)
-    try {
-      await navigator.clipboard.writeText(texto)
-      setCopiado(true)
-      toast.success('Datos copiados')
-      setTimeout(() => setCopiado(false), 2000)
-    } catch {
-      toast.error('No se pudo copiar. Revisá los permisos del navegador.')
-    }
-  }
-
   return (
     <div style={{ marginTop:'16px', padding:'14px', background:C.bgSec,
       border:`1px solid ${C.border}`, borderRadius:'10px' }}>
-      <div style={{ display:'flex', justifyContent:'space-between',
-        alignItems:'center', marginBottom:'10px' }}>
-        <p style={{ fontSize:'12.5px', fontWeight:'600', color:C.text }}>
-          Datos para cargar en e-Kuatia'í (portal DNIT)
-        </p>
-        <button onClick={copiar}
-          style={{ height:'32px', padding:'0 12px', borderRadius:'8px',
-            background: copiado ? C.successBg : C.sidebar,
-            border:`1px solid ${copiado ? C.success : C.gold}`,
-            color: copiado ? C.success : C.gold,
-            fontSize:'12px', cursor:'pointer',
-            display:'flex', alignItems:'center', gap:'6px' }}>
-          {copiado ? <ClipboardCheck size={14}/> : <Copy size={14}/>}
-          {copiado ? 'Copiado' : 'Copiar todo'}
-        </button>
-      </div>
+      <p style={{ fontSize:'12.5px', fontWeight:'600', color:C.text, marginBottom:'10px' }}>
+        Datos para cargar en e-Kuatia'í (portal DNIT)
+      </p>
 
-      <div style={{ fontSize:'11.5px', color:C.textSec, lineHeight:1.6 }}>
-        <p><b>Cliente:</b> {ticket.cliente_razon_social || ticket.cliente} — RUC/CI: {ticket.cliente_ruc || 'Sin especificar'}</p>
-        <p><b>Condición de venta:</b> {ticket.condicion_venta}</p>
-        <p style={{ marginTop:'6px' }}><b>Ítems:</b></p>
-        {ticket.items.map((it, i) => (
-          <p key={i} style={{ paddingLeft:'8px' }}>
-            {it.cantidad} × {it.descripcion} — {formatGs(it.subtotal)} (IVA {etiquetaTasaIva(it.tasa_iva)})
-          </p>
-        ))}
-        <p style={{ marginTop:'6px' }}>
-          <b>Base 10%:</b> {formatGs(ticket.base_gravada_10)} · <b>IVA 10%:</b> {formatGs(ticket.iva_10)}
+      <div style={{ fontSize:'11.5px', color:C.textSec, lineHeight:1.8 }}>
+        <p>
+          <b>Cliente:</b> {ticket.cliente_razon_social || ticket.cliente}
+          <BotonCopiar valor={ticket.cliente_razon_social || ticket.cliente} titulo="Copiar cliente" />
         </p>
         <p>
-          <b>Base 5%:</b> {formatGs(ticket.base_gravada_5)} · <b>IVA 5%:</b> {formatGs(ticket.iva_5)}
+          <b>RUC/CI:</b> {ticket.cliente_ruc || 'Sin especificar'}
+          {ticket.cliente_ruc && <BotonCopiar valor={ticket.cliente_ruc} titulo="Copiar RUC/CI" />}
         </p>
-        <p><b>Exento:</b> {formatGs(ticket.exento)}</p>
-        <p><b>Total:</b> {formatGs(ticket.total)} · <b>Medio de pago:</b> {ticket.medio_pago}</p>
+        <p>
+          <b>Condición de venta:</b> {ticket.condicion_venta}
+          <BotonCopiar valor={ticket.condicion_venta} titulo="Copiar condición de venta" />
+        </p>
+
+        <p style={{ marginTop:'8px' }}><b>Ítems:</b></p>
+        {ticket.items.map((it, i) => (
+          <div key={i} style={{ paddingLeft:'8px', marginBottom:'8px' }}>
+            <p>
+              {it.cantidad} × {it.descripcion} — {formatGs(it.subtotal)} (IVA {etiquetaTasaIva(it.tasa_iva)})
+            </p>
+            <p style={{ display:'flex', alignItems:'center', flexWrap:'wrap',
+              gap:'4px', marginTop:'3px' }}>
+              <span style={{ color:C.textMuted }}>SKU:</span>
+              {it.codigo
+                ? <BotonCopiar valor={it.codigo} titulo="Copiar código interno (SKU)" mostrarValor />
+                : <span style={{ color:C.textMuted, fontStyle:'italic' }}>sin código</span>}
+              <span style={{ color:C.textMuted, marginLeft:'6px' }}>Cant:</span>
+              <BotonCopiar valor={it.cantidad} titulo="Copiar cantidad" mostrarValor />
+              <span style={{ color:C.textMuted, marginLeft:'6px' }}>P.Unit:</span>
+              <BotonCopiar valor={it.precio_unit} titulo="Copiar precio unitario" mostrarValor />
+            </p>
+          </div>
+        ))}
+
+        <p style={{ marginTop:'8px' }}>
+          <b>Base 10%:</b> {formatGs(ticket.base_gravada_10)}
+          <BotonCopiar valor={ticket.base_gravada_10} titulo="Copiar base gravada 10%" />
+          <span style={{ marginLeft:'10px' }}><b>IVA 10%:</b> {formatGs(ticket.iva_10)}</span>
+          <BotonCopiar valor={ticket.iva_10} titulo="Copiar IVA 10%" />
+        </p>
+        <p>
+          <b>Base 5%:</b> {formatGs(ticket.base_gravada_5)}
+          <BotonCopiar valor={ticket.base_gravada_5} titulo="Copiar base gravada 5%" />
+          <span style={{ marginLeft:'10px' }}><b>IVA 5%:</b> {formatGs(ticket.iva_5)}</span>
+          <BotonCopiar valor={ticket.iva_5} titulo="Copiar IVA 5%" />
+        </p>
+        <p>
+          <b>Exento:</b> {formatGs(ticket.exento)}
+          <BotonCopiar valor={ticket.exento} titulo="Copiar exento" />
+        </p>
+        <p>
+          <b>Total:</b> {formatGs(ticket.total)}
+          <BotonCopiar valor={ticket.total} titulo="Copiar total" />
+          <span style={{ marginLeft:'10px' }}><b>Medio de pago:</b> {ticket.medio_pago}</span>
+        </p>
       </div>
 
       <a href={URL_EKUATIAI} target="_blank" rel="noopener noreferrer"

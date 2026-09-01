@@ -42,6 +42,13 @@ sync_notebook/credenciales_sync.txt
 # Estaticos recolectados por collectstatic: se regeneran, no son fuente
 backend/staticfiles/
 
+# Exportacion del catalogo para e-Kuatia'i (manage.py exportar_catalogo_ekuatiai):
+# se regenera del catalogo real en cualquier momento, no es fuente de datos
+catalogo_ekuatiai.csv
+# Reporte de excepciones que descarga el propio portal e-Kuatia'i si el
+# import falla — no es un archivo que genere este repo
+catalogo-productos-excepciones.csv
+
 # Certificado cualificado de firma electronica del DNIT. Es la identidad
 # fiscal del negocio: quien lo tenga puede emitir facturas a su nombre.
 # Nunca al repositorio — el historial de git es permanente.
