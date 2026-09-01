@@ -337,10 +337,12 @@ class Command(BaseCommand):
     @transaction.atomic
     def _cargar_fila(self, fila, *, nombre, color, rubro, costo, precio_base,
                      cantidad, usuario, sin_stock, origen):
-        categoria, _ = Categoria.objects.get_or_create(
-            tipo=rubro,
-            defaults={'nombre': NOMBRE_CATEGORIA.get(rubro, rubro.title())},
-        )
+        categoria = Categoria.objects.filter(tipo=rubro).order_by('id').first()
+        if categoria is None:
+            categoria = Categoria.objects.create(
+                tipo=rubro,
+                nombre=NOMBRE_CATEGORIA.get(rubro, rubro.title()),
+            )
 
         marca = None
         nombre_marca = (fila.get('marca') or '').strip()
