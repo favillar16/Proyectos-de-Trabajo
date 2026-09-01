@@ -2,7 +2,7 @@
 Serializers de ventas — Nota de Pedido
 """
 from rest_framework import serializers
-from django.db import transaction
+from django.db import transaction, models
 from .models import NotaPedido, ItemPedido, Cliente
 from apps.productos.models import Variante
 
@@ -256,6 +256,13 @@ class NotaPedidoCreateSerializer(serializers.Serializer):
                     f'{err["sku"]}: {err["error"]}' for err in e.errores
                 ]
             }) from e
+
+        # El pedido pasa directo a "listo": el vendedor ya vio el stock
+        # disponible en el Showroom al armarlo, así que no hace falta que
+        # depósito lo vuelva a confirmar antes de que caja pueda cobrar.
+        pedido.items.update(preparado=True, cantidad_preparada=models.F('cantidad'))
+        pedido.estado = NotaPedido.ESTADO_LISTO
+        pedido.save(update_fields=['estado'])
 
         return pedido
 

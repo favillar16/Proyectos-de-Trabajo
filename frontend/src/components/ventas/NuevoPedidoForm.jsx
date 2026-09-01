@@ -570,7 +570,7 @@ export default function NuevoPedidoForm({ onPedidoCreado, onCancelar }) {
     }).then(r => r.data),
     onSuccess: (pedido) => {
       queryClient.invalidateQueries({ queryKey: ['pedidos'] })
-      toast.success(`Nota ${pedido.numero} enviada al depósito y caja`)
+      toast.success(`Nota ${pedido.numero} enviada a caja`)
       onPedidoCreado?.(pedido)
     },
     onError: (err) => {
@@ -824,7 +824,7 @@ export default function NuevoPedidoForm({ onPedidoCreado, onCancelar }) {
         >
           {mutation.isPending
             ? <><Loader2 size={17} style={{ animation:'spin 1s linear infinite' }} /> Enviando...</>
-            : <><CheckCircle size={17} /> Enviar al depósito y caja</>
+            : <><CheckCircle size={17} /> Enviar a caja</>
           }
         </button>
       </div>

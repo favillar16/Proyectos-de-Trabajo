@@ -747,7 +747,7 @@ function CarritoShowroom({ items, onCambiarCantidad, onEliminar, onVaciar, onCer
     }).then(r => r.data),
     onSuccess: (pedido) => {
       queryClient.invalidateQueries({ queryKey: ['pedidos'] })
-      toast.success(`Nota ${pedido.numero} enviada al depósito y caja`)
+      toast.success(`Nota ${pedido.numero} enviada a caja`)
       onVaciar()
       onCerrar()
     },
@@ -889,7 +889,7 @@ function CarritoShowroom({ items, onCambiarCantidad, onEliminar, onVaciar, onCer
                   WebkitTapHighlightColor:'transparent' }}>
                 {mutation.isPending
                   ? <><Loader2 size={17} style={{ animation:'spin 1s linear infinite' }} /> Enviando...</>
-                  : <><Send size={17} /> Enviar al depósito y caja</>}
+                  : <><Send size={17} /> Enviar a caja</>}
               </button>
             </div>
           </div>
