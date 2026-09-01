@@ -34,26 +34,32 @@ Es lo que se conoce como **e-Kuatia'i**. Consecuencia práctica, sin vuelta:
 1. En caja, elegir **"Factura"** en vez de "Ticket".
 2. Cargar RUC y razón social del cliente (obligatorio para poder cobrar así).
 3. Confirmar el pago.
-4. Sale un papel que dice **"COMPROBANTE DE VENTA"** — a propósito no dice
-   "factura legal" ni trae timbrado: esa factura legal todavía no existe hasta
-   que se carga en el portal. Es información para el cliente y control interno,
-   no el documento fiscal.
+4. Sale un papel que dice únicamente **"COMPROBANTE DE VENTA"** — sin ninguna
+   otra leyenda: a propósito no dice "factura legal" ni trae timbrado, esa
+   factura legal todavía no existe hasta que se carga en el portal. Es
+   información para el cliente y control interno, no el documento fiscal. La
+   impresora térmica de la tienda es blanco y negro, así que el papel no lleva
+   sombreados ni colores.
 5. En la pantalla, debajo del comprobante, aparece un cuadro
-   **"Datos para cargar en el portal DNIT (Marangatú)"** con un botón
+   **"Datos para cargar en e-Kuatia'í (portal DNIT)"** con un botón
    **Copiar todo**. Trae cliente, RUC, ítems y el desglose de IVA por tasa
    (10% / 5% / exento) ya calculado.
-6. Con eso copiado, entrar a Marangatú y cargar la factura electrónica ahí,
-   pegando/completando con esos datos. Reemplaza transcribir todo a mano
-   desde el papel.
+6. Debajo, el botón **"Generar factura electrónica"** abre e-Kuatia'í
+   (`https://ekuatia.set.gov.py/ekuatiai/`) en una pestaña nueva del navegador
+   o la tablet — ahorra escribir la dirección a mano. El sistema no inicia
+   sesión ni envía nada: solo abre la página, el usuario y contraseña los
+   pone quien factura.
+7. Con eso copiado, entrar a e-Kuatia'í (ya abierto) y cargar la factura
+   electrónica ahí, pegando/completando con esos datos. Reemplaza
+   transcribir todo a mano desde el papel.
 
 ---
 
-## 3. Las credenciales del portal Marangatú
+## 3. Las credenciales del portal e-Kuatia'í / Marangatú
 
-El usuario y la contraseña de Marangatú (RUC + Clave de Acceso) **no van a
-ningún archivo del sistema** — el software no los usa ni los guarda, porque
-no hay ninguna llamada automática al portal. Quedan a cargo de quien cargue
-las facturas.
+El usuario y la contraseña (RUC + Clave de Acceso) **no van a ningún archivo
+del sistema** — el software no los usa ni los guarda, porque no hay ninguna
+llamada automática al portal. Quedan a cargo de quien cargue las facturas.
 
 Guardarlos en un lugar seguro (gestor de contraseñas), nunca en un papel a la
 vista en el mostrador.
@@ -104,7 +110,10 @@ Probar una vez en la PC real de la tienda (no en la máquina de desarrollo):
 3. Probar el botón **"Copiar todo"** en el navegador o tablet que realmente
    usa la cajera — la primera vez, el navegador puede pedir permiso para
    copiar al portapapeles.
-4. Cargar esa venta de prueba en Marangatú siguiendo los datos copiados, para
+4. Probar el botón **"Generar factura electrónica"**: debe abrir
+   `https://ekuatia.set.gov.py/ekuatiai/` en una pestaña nueva. En la tablet,
+   confirmar que el navegador no bloquea la pestaña emergente.
+5. Cargar esa venta de prueba en e-Kuatia'í siguiendo los datos copiados, para
    confirmar que alcanzan y están en el orden que pide el portal.
 
 ---
@@ -113,5 +122,6 @@ Probar una vez en la PC real de la tienda (no en la máquina de desarrollo):
 
 - `docs/facturacion_electronica.md` — estado técnico completo del proyecto.
 - `docs/carga_final/datos_fiscales.md` — de dónde salió cada dato fiscal cargado.
+- Portal e-Kuatia'í (carga de la factura): <https://ekuatia.set.gov.py/ekuatiai/>
 - Portal Marangatú: <https://marangatu.set.gov.py>
-- Portal e-Kuatia: <https://www.dnit.gov.py/en/web/e-kuatia>
+- Portal e-Kuatia (información general): <https://www.dnit.gov.py/en/web/e-kuatia>

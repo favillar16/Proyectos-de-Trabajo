@@ -18,7 +18,7 @@ import {
   CheckCircle, XCircle, Printer, Lock, Unlock,
   ChevronRight, Package, Clock, AlertCircle,
   RefreshCw, Receipt, X, Loader2, TrendingUp,
-  Wifi, WifiOff, Search, User, Copy, ClipboardCheck,
+  Wifi, WifiOff, Search, User, Copy, ClipboardCheck, ExternalLink,
 } from 'lucide-react'
 import Layout from '../components/layout/Layout'
 import { cajaApi, ventasApi } from '../services/api'
@@ -754,6 +754,12 @@ function PanelCobro({ pedido: pedidoResumen, sesion, onPagado, onCancelar }) {
   )
 }
 
+// Bajo Solución Gratuita / e-Kuatia'í la factura legal se carga a mano en
+// el portal e-Kuatia'í (ver docs/facturacion_electronica_manual_operativo.md)
+// — no hay API, así que lo máximo que puede hacer el sistema es llevar a la
+// cajera directo ahí en una pestaña nueva.
+const URL_EKUATIAI = 'https://ekuatia.set.gov.py/ekuatiai/'
+
 // ─── Ayudante de carga: datos listos para copiar al portal DNIT ───────────────
 // Solo tiene sentido cuando la factura NO tiene timbrado real (o sea, hoy
 // siempre): bajo Solución Gratuita / e-Kuatia'i la factura legal la emite
@@ -780,7 +786,7 @@ function AyudanteCargaPortal({ ticket }) {
       <div style={{ display:'flex', justifyContent:'space-between',
         alignItems:'center', marginBottom:'10px' }}>
         <p style={{ fontSize:'12.5px', fontWeight:'600', color:C.text }}>
-          Datos para cargar en el portal DNIT (Marangatú)
+          Datos para cargar en e-Kuatia'í (portal DNIT)
         </p>
         <button onClick={copiar}
           style={{ height:'32px', padding:'0 12px', borderRadius:'8px',
@@ -812,6 +818,15 @@ function AyudanteCargaPortal({ ticket }) {
         <p><b>Exento:</b> {formatGs(ticket.exento)}</p>
         <p><b>Total:</b> {formatGs(ticket.total)} · <b>Medio de pago:</b> {ticket.medio_pago}</p>
       </div>
+
+      <a href={URL_EKUATIAI} target="_blank" rel="noopener noreferrer"
+        style={{ marginTop:'12px', height:'38px', borderRadius:'8px',
+          background:C.gold, border:`1px solid ${C.gold}`,
+          color:'#fff', fontSize:'12.5px', fontWeight:'500',
+          textDecoration:'none', cursor:'pointer',
+          display:'flex', alignItems:'center', justifyContent:'center', gap:'7px' }}>
+        <ExternalLink size={14}/> Generar factura electrónica
+      </a>
     </div>
   )
 }
@@ -847,18 +862,20 @@ function Ticket({ datos, onNuevo, onImprimir }) {
           </p>
         </div>
 
-        {/* Comprobante simulado (se imprime con window.print) */}
+        {/* Comprobante simulado (se imprime con window.print). Sin color: la
+            impresora térmica de la tienda es blanco y negro, así que ningún
+            sombreado/color acá se refleja en el papel — solo agrega ruido
+            en pantalla. */}
         <div ref={ticketRef} className="ticket-imprimible" style={{
           background:C.bg,
-          border: datos.tipo_comprobante === 'factura'
-            ? `2px solid ${C.goldDark}` : `1px solid ${C.border}`,
+          border: `1px solid ${C.border}`,
           borderRadius:'12px', padding:'20px',
           fontFamily:'monospace', fontSize:'12px',
           marginBottom:'16px',
         }}>
           {/* Cabecera — distinta para factura y ticket */}
           {datos.tipo_comprobante === 'factura' ? (
-            <div style={{ textAlign:'center', borderBottom:`2px solid ${C.goldDark}`,
+            <div style={{ textAlign:'center', borderBottom:`2px solid ${C.text}`,
               paddingBottom:'10px', marginBottom:'10px' }}>
               <p style={{ fontSize:'16px', fontWeight:'700', color:C.text }}>
                 {datos.ticket.negocio}
@@ -869,15 +886,13 @@ function Ticket({ datos, onNuevo, onImprimir }) {
               {datos.ticket.direccion && (
                 <p style={{ color:C.textMuted, fontSize:'11px' }}>{datos.ticket.direccion}</p>
               )}
-              <div style={{ marginTop:'8px', padding:'4px 0',
-                background:C.goldMuted, borderRadius:'6px' }}>
-                <p style={{ fontSize:'15px', fontWeight:'700', color:C.goldDark, letterSpacing:'0.08em' }}>
-                  {datos.ticket.timbrado ? 'FACTURA' : 'COMPROBANTE DE VENTA'}
-                </p>
-                <p style={{ fontSize:'9px', color:C.goldDark }}>
-                  {datos.ticket.timbrado ? 'COMPROBANTE LEGAL' : 'No es factura electrónica'}
-                </p>
-              </div>
+              <p style={{ fontSize:'15px', fontWeight:'700', color:C.text,
+                letterSpacing:'0.08em', marginTop:'8px' }}>
+                {datos.ticket.timbrado ? 'FACTURA' : 'COMPROBANTE DE VENTA'}
+              </p>
+              {datos.ticket.timbrado && (
+                <p style={{ fontSize:'9px', color:C.textMuted }}>COMPROBANTE LEGAL</p>
+              )}
               {datos.ticket.timbrado && (
                 <p style={{ color:C.textMuted, fontSize:'10px', marginTop:'4px' }}>
                   Timbrado {datos.ticket.timbrado} · Vto {datos.ticket.timbrado_vto}

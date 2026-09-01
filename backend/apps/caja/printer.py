@@ -264,8 +264,6 @@ class FacturaBuilder:
         buf += DOUBLE_OFF
         if con_timbrado:
             buf += self._e('* COMPROBANTE LEGAL *') + LF
-        else:
-            buf += self._e('No es factura electrónica') + LF
         buf += ALIGN_LEFT
         buf += self._sep('=')
         if con_timbrado:
