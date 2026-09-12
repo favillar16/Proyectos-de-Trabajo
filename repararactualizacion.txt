@@ -61,7 +61,7 @@
  B.0 - Respaldo y codigo
 --------------------------------------------------------------------------------
 
-      cd C:\ceramica_final
+      cd C:\Users\Usuario\ogapora_sistema\Proyectos-de-Trabajo
       respaldo\respaldo.bat D:\        :: o sin argumento, va a ..\respaldos\
       git pull
 
@@ -77,7 +77,7 @@
   los veria como "ya existe" y se saltearia las cantidades (es lo que venia
   trabando esta carga desde agosto).
 
-      cd C:\ceramica_final\backend
+      cd C:\Users\Usuario\ogapora_sistema\Proyectos-de-Trabajo\backend
       venv\Scripts\activate
       python manage.py cargar_lote_facturas --margen 40 --dry-run
       python manage.py cargar_lote_facturas --margen 40
@@ -141,7 +141,7 @@
  B.5 - Reiniciar
 --------------------------------------------------------------------------------
 
-      cd C:\ceramica_final
+      cd C:\Users\Usuario\ogapora_sistema\Proyectos-de-Trabajo
       detener.bat
       iniciar.bat
 
@@ -189,3 +189,25 @@
 
 
 ================================================================================
+
+================================================================================
+ LO QUE EL SERVIDOR YA REPORTO (commit 31f0d86, 12/09/2026 15:32)
+================================================================================
+
+  Respondido sobre la version anterior de este archivo, antes del empuje.
+  Se conserva porque tiene datos que siguen valiendo:
+
+  - Respaldo previo: respaldos\respaldo_20260912_153007 (54,2 MB, base + 528
+    fotos).
+  - La ruta del proyecto en el servidor NO es C:\ceramica_final: es
+    C:\Users\Usuario\ogapora_sistema\Proyectos-de-Trabajo. Este archivo ya
+    quedo corregido con esa ruta.
+  - El token no coincidia porque OTRA sesion de Claude le habia generado al
+    servidor un token nuevo de cero (empezaba con "2uXD"), sin saber que la
+    notebook ya tenia uno en uso. Se reemplazo por el de la notebook.
+  - migrate y migrate --database=sync: "No migrations to apply", ya estaban
+    al dia.
+  - Working tree limpio salvo fotos de catalogo sin trackear en
+    backend/media/productos/, que no tienen que ver con esto.
+  - /api/v1/sync/estado/ contra localhost: 200.
+
