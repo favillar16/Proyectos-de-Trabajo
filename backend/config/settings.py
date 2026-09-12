@@ -297,9 +297,9 @@ DATOS_FISCALES = {
 # devuelve '' y nunca llega a aplicar el default — y el pie quedaría en blanco.
 CONTACTO_COMERCIAL = {
     'email':     config('CONTACTO_EMAIL', default='') or 'ogapora26@gmail.com',
-    'telefono':  config('CONTACTO_TELEFONO', default='') or '+595 975 792195',
+    'telefono':  config('CONTACTO_TELEFONO', default='') or '0971451936',
     'direccion': (config('CONTACTO_DIRECCION', default='')
-                  or 'Lida P. Benítez y Dr. Luis M. Argaña, Cnel. Oviedo'),
+                  or 'Lidia Peralta de Benítez e/ Josefina Plas, Coronel Oviedo - Paraguay'),
 }
 
 # ─── SIFEN / e-Kuatia ─────────────────────────────────────────────────────────

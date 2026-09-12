@@ -666,6 +666,12 @@ def _datos_ticket(pedido, pago, sesion, tipo_comprobante='ticket',
     # factura (razón social), luego el del pedido, y por último el genérico.
     nombre_cliente = (cliente_razon_social or pedido.cliente_nombre or 'Consumidor Final')
 
+    # Dirección/teléfono/email de contacto del negocio (no los fiscales: ver
+    # CONTACTO_COMERCIAL en settings). En la factura, direccion/telefono se
+    # pisan más abajo con los datos de la DNIT — el email no tiene
+    # equivalente fiscal y queda igual en los dos tipos de comprobante.
+    contacto = getattr(dj_settings, 'CONTACTO_COMERCIAL', {})
+
     datos = {
         'numero_ticket':   pago.numero_ticket,
         'fecha':           pago.fecha.strftime('%d/%m/%Y %H:%M'),
@@ -684,6 +690,9 @@ def _datos_ticket(pedido, pago, sesion, tipo_comprobante='ticket',
         'monto_recibido':  float(pago.monto_recibido) if pago.monto_recibido else None,
         'vuelto':          float(pago.vuelto),
         'negocio':         'Oga Porã',
+        'direccion':       contacto.get('direccion', ''),
+        'telefono':        contacto.get('telefono', ''),
+        'email':           contacto.get('email', ''),
         'pie':             'Gracias por su compra',
     }
 

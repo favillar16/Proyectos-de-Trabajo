@@ -19,6 +19,7 @@ ESC/POS Reference:
     LF      — avance de línea
 """
 import logging
+import textwrap
 from datetime import datetime
 
 from django.conf import settings
@@ -114,6 +115,10 @@ class TicketBuilder:
     def _2col(self, izq, der):
         return _dos_columnas(izq, der, self.cols)
 
+    def _wrap(self, texto):
+        """Línea larga (p.ej. la dirección) partida por palabra al ancho del papel."""
+        return b''.join(self._l(linea) for linea in (textwrap.wrap(texto, self.cols) or ['']))
+
     def build(self) -> bytes:
         d = self.datos
         buf = bytearray()
@@ -128,8 +133,9 @@ class TicketBuilder:
         buf += self._l(d.get('negocio', 'Oga Porã'))
         buf += BOLD_OFF
         buf += self._l(d.get('ruc', ''))
-        buf += self._l(d.get('direccion', ''))
+        buf += self._wrap(d.get('direccion', ''))
         buf += self._l(d.get('telefono', ''))
+        buf += self._l(d.get('email', ''))
         buf += LF
 
         # ── Datos del comprobante ────────────────────────────
@@ -236,6 +242,10 @@ class FacturaBuilder:
     def _sep(self, char='-'): return self._e(char * self.cols) + LF
     def _2col(self, izq, der): return _dos_columnas(izq, der, self.cols)
 
+    def _wrap(self, texto):
+        """Línea larga (p.ej. la dirección) partida por palabra al ancho del papel."""
+        return b''.join(self._l(linea) for linea in (textwrap.wrap(texto, self.cols) or ['']))
+
     def build(self) -> bytes:
         d = self.datos
         buf = bytearray()
@@ -247,8 +257,9 @@ class FacturaBuilder:
         buf += BOLD_ON
         buf += self._l(d.get('negocio', 'Oga Porã'))
         buf += BOLD_OFF
-        buf += self._l(d.get('direccion', ''))
+        buf += self._wrap(d.get('direccion', ''))
         buf += self._l('Tel: ' + str(d.get('telefono', '')))
+        buf += self._l('Email: ' + str(d.get('email', '')))
         buf += self._l('RUC: ' + str(d.get('ruc_negocio', '')))
         buf += LF
 
