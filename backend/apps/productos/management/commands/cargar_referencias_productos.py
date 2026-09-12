@@ -107,9 +107,16 @@ class Command(BaseCommand):
                 continue
 
             with transaction.atomic():
+                # Buscar tambien por nombre, no solo por tipo: el catalogo ya
+                # tiene mas de una categoria compartiendo el mismo tipo
+                # generico (ej. "Pisos" y "Retificado" son las dos tipo=piso),
+                # asi que get_or_create(tipo=...) solo devuelve
+                # MultipleObjectsReturned en vez de la categoria generica de
+                # este comando.
+                nombre_categoria = NOMBRE_CATEGORIA.get(fila['categoria_tipo'], fila['categoria_tipo'].title())
                 categoria, _ = Categoria.objects.get_or_create(
                     tipo=fila['categoria_tipo'],
-                    defaults={'nombre': NOMBRE_CATEGORIA.get(fila['categoria_tipo'], fila['categoria_tipo'].title())},
+                    nombre=nombre_categoria,
                 )
 
                 marca = None
