@@ -2,220 +2,166 @@
   REPARAR LA ACTUALIZACION - INSTRUCCIONES PARA LA PC SERVIDOR (OGAPORA)
 ================================================================================
 
-  Escrito el: 12/09/2026, desde la notebook de la propietaria (DESKTOP-UAIGET9)
-  Para:       la consola de Claude que corra EN LA PC SERVIDOR (OGAPORA)
-  Objetivo:   destrabar el sync del catalogo. Hay 918 cambios de productos
-              esperando desde el 27/08 que no pueden viajar.
+  Actualizado: 12/09/2026 ~19:00, desde la notebook (DESKTOP-UAIGET9)
+  Para:        la consola de Claude que corra EN LA PC SERVIDOR (OGAPORA)
 
-  Este archivo es el canal entre las dos consolas. Al final hay una seccion
-  "RESPUESTA DEL SERVIDOR" para anotar lo que se encontro; despues se commitea
-  y la notebook lo lee.
+  >> EL TOKEN YA ESTA ARREGLADO Y EL EMPUJE YA SE HIZO. <<
+  Los pasos 0 a 5 de la version anterior estan CUMPLIDOS. Lo que queda es la
+  PARTE B, mas abajo: dos cargas desde CSV y el stock de 29 variantes.
 
 
 --------------------------------------------------------------------------------
- 0. SITUACION - leer antes de tocar nada
+ A. LO QUE YA PASO - contexto, no hay que ejecutar nada de esto
 --------------------------------------------------------------------------------
 
-  Dos equipos: la PC del local (OGAPORA, servidor, manda en stock/ventas/caja)
-  y la notebook de la propietaria (espejo, solo edita el catalogo y lo empuja).
-  El diseno completo esta en docs/sync_bidireccional.md.
+  El SYNC_TOKEN quedo igual en los dos equipos y el canal funciona
+  (/api/v1/sync/estado/ devuelve 200).
 
-  Lo verificado EN VIVO desde la notebook el 12/09/2026:
+  Al comparar los catalogos aparecio que NO COMPARTIAN NI UN uid: cada maquina
+  genero los suyos al correr la migracion del sync sobre un catalogo que ya
+  existia. Para el sync eran dos catalogos ajenos. Empujar los 918 cambios
+  pendientes habria creado 564 productos duplicados en el servidor.
 
-    OK     ogapora.local responde y resuelve (IPv6 fe80::8a22:c43:3903:cbc9)
-    OK     GET /api/v1/salud/ devuelve rol=servidor, nombre=OGAPORA
-           (esto antes daba 404 - o sea que el servidor YA tiene codigo nuevo)
-    OK     /api/v1/sync/estado/, /catalogo/ y /cambios/ existen (dan 403, no 404)
-    FALLA  los tres dan 403 "Token de sincronizacion ausente o invalido",
-           incluso mandando el X-Sync-Token de la notebook
+  Lo medido el 12/09/2026:
 
-  Diagnostico: el SYNC_TOKEN del servidor NO es el mismo que el de la notebook.
+    Servidor antes : 601 productos / 712 variantes
+    Notebook       : 564 productos / 666 variantes
+    uid en comun   : 0 de 1730 filas
+    De la notebook : 487 ya existian alla, 77 eran genuinamente nuevos
 
-  Sabemos que el servidor tiene *alguno* configurado y que no esta vacio,
-  porque apps/sync/permissions.py usa un mensaje distinto cuando falta:
-  "La sincronizacion esta deshabilitada: falta SYNC_TOKEN en el .env". Nos
-  devuelve el otro mensaje. Asi que o son dos tokens distintos, o alla se
-  edito el .env y nunca se reinicio daphne (decouple lee el .env al arrancar).
+  DECISION DE LA PROPIETARIA: **manda el servidor**. El catalogo del servidor
+  es el bueno; se descartan las 131 diferencias de precio que tenia la
+  notebook. Solo viajan los productos que el servidor no tenia.
 
-  ESE ES EL UNICO BLOQUEO. Todo lo demas, del lado de la notebook, esta sano:
-  564 productos / 666 variantes / 666 filas de stock, 0 variantes huerfanas,
-  las 89 fotos de referencia ya vinculadas, 212 tests en verde.
+  Lo que se hizo en la notebook:
+
+    - Se neutralizaron 839 cambios (marcados como empujados sin mandarlos), los
+      de productos que ya existian alla o que los recrea un CSV. Nunca van a
+      viajar, ni en la corrida automatica.
+    - Se empujaron 101 cambios: 31 productos que existian SOLO en la notebook
+      (cargados a mano antes de que el registro de cambios existiera), sus 31
+      variantes, sus 22 fotos, y las 9 categorias / 7 marcas / 1 acabado que
+      referencian. Resultado: 101 aplicados, 0 en conflicto.
+
+    Servidor despues: 632 productos / 743 variantes / 540 imagenes.
+
+  Los SKU de 12 de esas variantes se REGENERARON al entrar (chocaban con SKU
+  que el servidor ya usaba). Es el comportamiento de diseno de
+  apps/sync/conciliacion.py, no un error. Importa para el paso B.3: el stock se
+  empareja por uid, NO por SKU.
+
+  Respaldos previos de la notebook en C:\Users\usuario\respaldos\sync_20260912\
+  (ceramica_db_antes.dump + sync_antes.sqlite3).
 
 
+================================================================================
+ B. LO QUE FALTA HACER EN EL SERVIDOR
+================================================================================
+
+ B.0 - Respaldo y codigo
 --------------------------------------------------------------------------------
- 1. RESPALDO - no saltear
---------------------------------------------------------------------------------
-
-  Se puede correr con el sistema andando:
 
       cd C:\ceramica_final
-      respaldo\respaldo.bat D:\        :: si hay pendrive
-      respaldo\respaldo.bat            :: sin pendrive, va a ..\respaldos\
-
-  Anotar la carpeta que crea (respaldo_AAAAMMDD_HHMMSS) en la seccion de
-  respuesta del final. Si algo sale mal: respaldo\restaurar.bat
-
-
---------------------------------------------------------------------------------
- 2. TRAER EL CODIGO
---------------------------------------------------------------------------------
-
-      cd C:\ceramica_final
-      git status
+      respaldo\respaldo.bat D:\        :: o sin argumento, va a ..\respaldos\
       git pull
 
-  La notebook esta en 8420d61 ("Revierte el salto automatico a listo en
-  Pedidos, reconstruye dist"), que ya incluye:
-    - iniciar_servicios.ps1 / detener.bat (daphne y Vite arrancan ocultos)
-    - el ticket impreso con direccion, telefono y correo
-    - el contacto comercial corregido en settings.py
-
-  Si git status muestra cambios locales sin commitear en el servidor, PARAR y
-  anotarlos abajo: puede haber trabajo hecho ahi que nadie subio. No hacer
-  checkout ni stash sin avisar.
+  El pull trae el comando nuevo cargar_stock_por_uid y el CSV que usa.
+  Anotar la carpeta del respaldo en la seccion de respuesta del final.
 
 
---------------------------------------------------------------------------------
- 3. EL TOKEN - esto es lo que arregla el problema
+ B.1 - Los 42 productos del lote de agosto, CON sus cantidades
 --------------------------------------------------------------------------------
 
-  El token NO va escrito en este archivo a proposito: el archivo viaja por
-  GitHub y el token es un secreto compartido. Hay que pasarlo a mano.
-
-  a) En la NOTEBOOK, la propietaria lo saca con:
-
-         type C:\Users\usuario\ceramica_final\backend\.env | findstr SYNC_TOKEN
-
-     Son 43 caracteres (secrets.token_urlsafe(32)). El de la notebook es el
-     que manda: es el que ya esta en el .env de alla y el que va a usar la
-     tarea programada.
-
-  b) En el SERVIDOR, ver que hay hoy:
-
-         type C:\ceramica_final\backend\.env | findstr "SYNC_TOKEN NODO_ROL"
-
-     Tiene que quedar:
-
-         NODO_ROL=servidor
-         SYNC_TOKEN=<los mismos 43 caracteres que la notebook>
-
-     Sin comillas, sin espacios alrededor del "=", sin espacio al final de la
-     linea. La comparacion es hmac.compare_digest: un solo caracter distinto y
-     sigue dando 403.
-
-  c) Para comparar los dos sin mostrarlos enteros, correr esto en CADA equipo
-     y comparar las dos salidas (largo + los primeros 4 caracteres):
-
-         powershell -Command "$t=(Get-Content C:\ceramica_final\backend\.env | Select-String '^SYNC_TOKEN=').ToString().Split('=')[1].Trim(); Write-Host $t.Length 'caracteres, empieza' $t.Substring(0,4)"
-
-     En la notebook la ruta es C:\Users\usuario\ceramica_final\backend\.env
-     (alla ya se verifico que son 43 caracteres).
-
-
---------------------------------------------------------------------------------
- 4. MIGRACIONES Y REINICIO
---------------------------------------------------------------------------------
+  Estos 42 NO se empujaron a proposito, justamente para que los cree este
+  comando y entren con su stock. Si se hubieran empujado primero, el comando
+  los veria como "ya existe" y se saltearia las cantidades (es lo que venia
+  trabando esta carga desde agosto).
 
       cd C:\ceramica_final\backend
       venv\Scripts\activate
-      python manage.py migrate
-      python manage.py migrate --database=sync
+      python manage.py cargar_lote_facturas --margen 40 --dry-run
+      python manage.py cargar_lote_facturas --margen 40
 
-  La segunda es la del registro de cambios del sync, que vive en un SQLite
-  aparte (sync.sqlite3) porque el pg_dump borra ceramica_db entera.
+  IMPORTANTE: **sin** --sin-stock. El margen 40 lo eligio la propietaria y es
+  el mismo que se uso en la corrida de la notebook: no cambiarlo.
 
-  Despues, reiniciar SI O SI - el .env se lee al arrancar:
+  Esperado: ~42 productos nuevos y el resto informado como "= ya existe".
+  Si dice que crea muchos mas de 42, PARAR y avisar.
+
+
+ B.2 - Los 4 productos del CSV de referencias
+--------------------------------------------------------------------------------
+
+      python manage.py cargar_referencias_productos
+      python manage.py vincular_imagenes_referencia
+
+  El segundo engancha las fotos de la carpeta "Referencias de Productos" (raiz
+  del repo) con los productos. Es idempotente: lo ya vinculado lo informa y no
+  lo vuelve a subir.
+
+
+ B.3 - El stock de las 29 variantes que vinieron de la notebook
+--------------------------------------------------------------------------------
+
+  Los 31 productos que se empujaron entraron con stock 0, porque el stock no
+  viaja por el sync (es del servidor por diseno). 29 de ellos tienen cantidades
+  que la propietaria habia cargado a mano en la notebook, y hay que traerlas.
+
+      python manage.py cargar_stock_por_uid --dry-run
+      python manage.py cargar_stock_por_uid
+
+  Lee backend\data_carga\stock_31_notebook.csv, que viene en el repo, y
+  empareja por uid (no por SKU: ver la nota del final de la parte A).
+  Es idempotente: si una variante ya tiene stock distinto de cero, la saltea.
+
+  Esperado: "29 cargadas, 0 salteadas, 0 con error".
+  Si dice "no existe aca la variante <uid>", el empuje no llego completo:
+  PARAR y avisar.
+
+
+ B.4 - Verificacion final
+--------------------------------------------------------------------------------
+
+      python manage.py shell -c "from apps.productos.models import Producto, Variante; from apps.inventario.models import Stock; print('productos', Producto.objects.count()); print('variantes', Variante.objects.count()); print('variantes sin fila de stock', Variante.objects.filter(stock__isnull=True).count())"
+
+  Esperado, aproximado: ~678 productos, ~800 variantes, 0 variantes sin fila
+  de stock. Los numeros exactos dependen de cuantas filas del lote agrupo el
+  comando; lo que importa es que no haya variantes sin stock y que no se haya
+  duplicado nada.
+
+  Para descartar duplicados, contar nombres repetidos:
+
+      python manage.py shell -c "from apps.productos.models import Producto; from collections import Counter; c=Counter(p.nombre.strip().lower() for p in Producto.objects.all()); d={k:v for k,v in c.items() if v>1}; print(len(d),'nombres repetidos'); [print(' ',v,k[:60]) for k,v in list(d.items())[:15]]"
+
+  Antes de empezar habia 4 nombres repetidos conocidos y legitimos (bacha
+  ceramica sobreponer x2, conjunto icasa 4x3 piezas, mingitorio icasa con
+  sifon). Si aparecen muchos mas, algo se duplico: avisar antes de seguir.
+
+
+ B.5 - Reiniciar
+--------------------------------------------------------------------------------
 
       cd C:\ceramica_final
       detener.bat
       iniciar.bat
 
-  Desde 8420d61 los dos arrancan ocultos, sin ventana. Los registros quedan en
-  logs\daphne.log y logs\vite.log, y el PID en logs\*.pid.
-
 
 --------------------------------------------------------------------------------
- 5. VERIFICAR (en el servidor, contra si mismo)
+ C. LO QUE NO HAY QUE HACER
 --------------------------------------------------------------------------------
 
-      curl -s http://localhost:8000/api/v1/salud/
+  - NO correr `sync_comparar --marcar` en la notebook. Con los catalogos como
+    estaban marcaba las 1730 filas para empujar y reproducia la duplicacion.
+    Despues del pg_dump de la notebook deja de ser peligroso, pero por ahora no.
 
-  Tiene que decir "rol": "servidor". Y con el token:
+  - NO volver a correr cargar_lote_facturas DESPUES de que la notebook haya
+    hecho su pg_dump, esperando que cargue stock: para entonces los productos
+    ya existen y el comando saltea las cantidades.
 
-      powershell -Command "$t=(Get-Content C:\ceramica_final\backend\.env | Select-String '^SYNC_TOKEN=').ToString().Split('=')[1].Trim(); (Invoke-WebRequest -Uri 'http://localhost:8000/api/v1/sync/estado/' -Headers @{'X-Sync-Token'=$t} -UseBasicParsing).StatusCode"
-
-  Tiene que dar 200. Si da 403 contra si mismo, el .env no se releyo: repetir
-  detener.bat + iniciar.bat.
-
-  Avisar a la notebook cuando de 200. Desde alla se confirma y se empuja con:
-
-      python manage.py sync_comparar --servidor ogapora.local
-      python manage.py sync_empujar  --servidor ogapora.local --simular
-      python manage.py sync_empujar  --servidor ogapora.local
-
-  El empuje lo corre la NOTEBOOK, no el servidor. Va de a lotes de 500, y si se
-  corta el WiFi lo ya confirmado queda marcado y el proximo intento sigue desde
-  ahi.
-
-
-================================================================================
- 6. !! ATENCION - NO CORRER cargar_lote_facturas EN EL SERVIDOR !!
-================================================================================
-
-  En docs/carga_final/README.md y en las notas viejas quedo escrito que las
-  cantidades del lote de agosto habia que darlas de alta en el servidor con:
-
-      python manage.py cargar_lote_facturas --margen 40     (sin --sin-stock)
-
-  ESA INSTRUCCION QUEDO MAL y no hay que ejecutarla. El problema es de orden, y
-  se verifico leyendo el codigo el 12/09/2026:
-
-  - Si se corre ANTES del empuje: crea en el servidor 110 productos con sus
-    propios uid. Despues llega el empuje con los 110 de la notebook y
-    apps/sync/conciliacion.py NO los fusiona, porque Producto no tiene clave
-    natural en CLAVES_NATURALES (solo la tienen Marca, Acabado, Categoria y
-    Variante). Producto esta en CAMPOS_REGENERABLES, o sea que al chocar el
-    codigo se le genera uno nuevo. Resultado: el catalogo queda DUPLICADO.
-
-  - Si se corre DESPUES del empuje: no duplica, pero tampoco carga el stock.
-    En cargar_lote_facturas.py:304-310, si ya existe una Variante con ese
-    (producto__nombre, color) escribe "= ya existe" y hace continue: se saltea
-    la fila entera, el movimiento de stock incluido.
-
-  Ninguno de los dos ordenes da el resultado buscado. Las cantidades del lote
-  de agosto (180 variantes en 110 productos) necesitan otra via: un comando que
-  recorra el mismo CSV, busque cada variante por (nombre_producto, color) y le
-  registre el stock con Stock.registrar_movimiento(). Ese comando NO EXISTE
-  todavia.
-
-  QUE HACER: hacer el empuje del catalogo (pasos 1 a 5) y PARAR AHI. El stock
-  es una decision aparte, que la propietaria tiene que ver con la consola de la
-  notebook. No improvisar una carga de stock desde el servidor.
-
-
---------------------------------------------------------------------------------
- 7. SI ALGO SALE MAL
---------------------------------------------------------------------------------
-
-  403 despues de cambiar el token
-      -> no se reinicio daphne, o hay un espacio o comilla de mas en el .env
-
-  404 en /api/v1/sync/...
-      -> el git pull no entro; revisar config/urls.py linea 34
-
-  "La sincronizacion esta deshabilitada"
-      -> el SYNC_TOKEN del servidor quedo vacio
-
-  daphne no levanta
-      -> mirar logs\daphne.log. Necesita los DOS endpoints, tcp y tcp6: los
-         nombres de red resuelven primero a IPv6
-
-  las tablets no entran
-      -> Vite necesita host '::' y el hostname en server.allowedHosts
-         (Vite 5.4.12+ rechaza hostnames con 403)
-
-  volver todo atras
-      -> respaldo\restaurar.bat con la carpeta del paso 1
+  - Los 134 "conflictos sin ver" que muestra /api/v1/sync/estado/ son del
+    primer intento de empuje, que fallo con NO_EXISTE porque las categorias
+    todavia no habian viajado. Son basura historica, ya resuelta: el segundo
+    intento aplico los 101 cambios sin conflicto. Se pueden ignorar.
 
 
 ================================================================================
@@ -224,19 +170,19 @@
 
   Fecha y hora:
 
-  [ ] Paso 1 - respaldo hecho, carpeta:
+  [ ] B.0 - respaldo, carpeta:
+      git pull, commit en el que quedo:
 
-  [ ] Paso 2 - git pull. Commit en el que quedo:
-      Habia cambios locales sin commitear? (si/no, cuales):
+  [ ] B.1 - cargar_lote_facturas --margen 40, resumen de la corrida:
 
-  [ ] Paso 3 - el SYNC_TOKEN del servidor: coincidia / no coincidia / vacio
-      (no escribir el token aca)
+  [ ] B.2 - cargar_referencias_productos / vincular_imagenes_referencia:
 
-  [ ] Paso 4 - migrate y migrate --database=sync, salida:
+  [ ] B.3 - cargar_stock_por_uid, resumen (se esperan 29 cargadas):
 
-  [ ] Paso 4 - detener.bat + iniciar.bat, ok?
+  [ ] B.4 - productos: ____  variantes: ____  sin stock: ____
+      nombres repetidos: ____ (habia 4 antes)
 
-  [ ] Paso 5 - /api/v1/sync/estado/ contra localhost devolvio: ____ (se busca 200)
+  [ ] B.5 - detener.bat + iniciar.bat, ok?
 
   Otras cosas que aparecieron:
 
