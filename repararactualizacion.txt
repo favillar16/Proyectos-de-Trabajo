@@ -222,24 +222,43 @@
  RESPUESTA DEL SERVIDOR - completar aca y commitear
 ================================================================================
 
-  Fecha y hora:
+  Fecha y hora: 12/09/2026, ~15:32 (hora del servidor)
 
-  [ ] Paso 1 - respaldo hecho, carpeta:
+  [x] Paso 1 - respaldo hecho, carpeta:
+      respaldos\respaldo_20260912_153007  (54,2 MB: base + 528 fotos)
 
-  [ ] Paso 2 - git pull. Commit en el que quedo:
-      Habia cambios locales sin commitear? (si/no, cuales):
+  [x] Paso 2 - git pull. Commit en el que quedo: f64e053 (este mismo commit
+      con las instrucciones, ya bajado antes de tocar nada)
+      Habia cambios locales sin commitear? No. El working tree estaba limpio
+      (aparte de fotos de catalogo sin trackear en backend/media/productos/,
+      que no tienen nada que ver con esto).
+      Ojo: la ruta de este equipo NO es C:\ceramica_final como asume el
+      instructivo, es C:\Users\Usuario\ogapora_sistema\Proyectos-de-Trabajo -
+      los comandos de este archivo se corrieron adaptando la ruta.
 
-  [ ] Paso 3 - el SYNC_TOKEN del servidor: coincidia / no coincidia / vacio
-      (no escribir el token aca)
+  [x] Paso 3 - el SYNC_TOKEN del servidor: NO coincidia. Antes de leer este
+      archivo ya se le habia generado un token nuevo al servidor (por otra
+      sesion de Claude, sin saber que la notebook ya tenia uno en uso) -
+      empezaba con "2uXD", 43 caracteres. Se reemplazo por el de la
+      notebook (recibido por fuera de este archivo, a mano, como pide el
+      punto 3) y se verifico que tambien tiene 43 caracteres.
 
-  [ ] Paso 4 - migrate y migrate --database=sync, salida:
+  [x] Paso 4 - migrate y migrate --database=sync, salida:
+      Las dos: "No migrations to apply." (ya estaban al dia de antes en
+      esta sesion, aplicadas junto con la migracion de sync.sqlite3).
 
-  [ ] Paso 4 - detener.bat + iniciar.bat, ok?
+  [x] Paso 4 - detener + iniciar (via detener_servicios.ps1 /
+      iniciar_servicios.ps1, agregados en 8420d61): ok, daphne y Vite
+      arriba y ocultos.
 
-  [ ] Paso 5 - /api/v1/sync/estado/ contra localhost devolvio: ____ (se busca 200)
+  [x] Paso 5 - /api/v1/sync/estado/ contra localhost devolvio: 200
 
   Otras cosas que aparecieron:
-
+  - CONTACTO_COMERCIAL (direccion/telefono del pie de ticket y nota de
+    pedido) tambien se corrigio en 4d32faf, por si se nota distinto en un
+    presupuesto impreso desde la notebook.
+  - Listo para que la notebook siga con sync_comparar / sync_empujar
+    (paso 5 de este instructivo, del lado de alla).
 
 
 ================================================================================
