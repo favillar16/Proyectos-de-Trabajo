@@ -173,8 +173,15 @@ try {
     }
 
     Log "Empujando al servidor lo editado en esta notebook..."
-    $salidaEmpuje = & $python (Join-Path $backend 'manage.py') 'sync_empujar' `
-        '--servidor' $host_ '--puerto' $puertoApi 2>&1
+    # Invoke-Nativo y no una llamada suelta: Django escribe por stderr avisos
+    # inofensivos (el UserWarning de DRF sobre min_value, por ejemplo) y con
+    # $ErrorActionPreference = 'Stop' cada uno de esos renglones cortaba el
+    # sync acá mismo, antes de intentar siquiera el dump. El control de errores
+    # real es el $LASTEXITCODE de la línea siguiente, igual que en pg_dump.
+    $salidaEmpuje = Invoke-Nativo {
+        & $python (Join-Path $backend 'manage.py') 'sync_empujar' `
+            '--servidor' $host_ '--puerto' $puertoApi 2>&1
+    }
     $codigoEmpuje = $LASTEXITCODE
 
     foreach ($linea in $salidaEmpuje) {
