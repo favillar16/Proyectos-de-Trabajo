@@ -15,17 +15,16 @@ if not exist "backend\venv\Scripts\activate.bat" (
     exit /b 1
 )
 
-rem  Dos endpoints, IPv4 e IPv6: los nombres de red (OGAPORA, ogapora.local)
-rem  resuelven PRIMERO a IPv6, asi que escuchando solo en 0.0.0.0 el navegador
-rem  intenta IPv6, no encuentra a nadie y da timeout. Los "\:\:" van escapados
-rem  porque twisted usa ":" para separar los campos del endpoint.
+rem  Los dos arrancan ocultos, sin ventana propia: si quedaran visibles el
+rem  personal del local podria cerrarlos por accidente creyendo que son una
+rem  ventana cualquiera, y el sistema se cae para todas las tablets a la vez.
+rem  La logica vive en iniciar_servicios.ps1 (ahi esta tambien la nota sobre
+rem  IPv4/IPv6). El PID de cada uno queda en logs\*.pid para que detener.bat
+rem  sepa a cual parar.
 echo  [1/2] Iniciando el servidor (backend)...
-start "Oga Pora - Servidor" cmd /k "cd /d %~dp0backend && venv\Scripts\activate && daphne -e tcp:8000:interface=0.0.0.0 -e tcp6:8000:interface=\:\: config.asgi:application"
-timeout /t 4 /nobreak >nul
-
 echo  [2/2] Iniciando la interfaz (frontend)...
-start "Oga Pora - Interfaz" cmd /k "cd /d %~dp0frontend && npm run dev"
-timeout /t 5 /nobreak >nul
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0iniciar_servicios.ps1"
+timeout /t 6 /nobreak >nul
 
 echo.
 echo ===========================================================
@@ -42,9 +41,9 @@ echo.
 echo   Para saber la IP, abrir otra ventana y escribir: ipconfig
 echo   (buscar "Direccion IPv4", ej: 192.168.0.10)
 echo.
-echo   NO CERRAR las dos ventanas negras que se abrieron:
-echo   son el servidor y la interfaz. Si las cierra, el
-echo   sistema deja de funcionar.
+echo   El servidor y la interfaz corren ocultos, sin ventana visible, para
+echo   que no se puedan cerrar por accidente. Para pararlos: detener.bat
+echo   Registros: logs\daphne.log y logs\vite.log
 echo ===========================================================
 echo.
 echo  Abriendo el navegador...

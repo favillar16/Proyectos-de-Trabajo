@@ -16,6 +16,10 @@ Thumbs.db
 # Registros y logs
 *.log
 
+# PID de daphne/Vite corriendo ocultos (iniciar.bat / detener.bat) — estado
+# de ESTA maquina, no del proyecto
+logs/*.pid
+
 # Artefacto generado por Vite/PWA en modo desarrollo, se regenera solo
 frontend/dev-dist/
 
