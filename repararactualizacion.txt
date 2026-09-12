@@ -168,23 +168,74 @@
  RESPUESTA DEL SERVIDOR - completar aca y commitear
 ================================================================================
 
-  Fecha y hora:
+  Fecha y hora: 12/09/2026, ~15:30 a 16:10 (hora del servidor)
 
-  [ ] B.0 - respaldo, carpeta:
-      git pull, commit en el que quedo:
+  [x] B.0 - respaldo, carpeta:
+      respaldos\respaldo_20260912_153007 (antes del token, 54,2 MB) -- OJO:
+      el respaldo especifico de esta Parte B se hizo RECIEN AL FINAL, no antes
+      de B.1 (se salteo por error al arrancar). Carpeta:
+      respaldos\respaldo_20260912_160941 (54,4 MB), tomado despues de B.1-B.5
+      ya aplicados. Si algo de esta tanda necesita revertirse, el punto de
+      vuelta limpio es el respaldo de las 15:30, no el de las 16:09.
+      git pull, commit en el que quedo: 022e680 (el que trae esta version del
+      instructivo + cargar_stock_por_uid + el CSV).
 
-  [ ] B.1 - cargar_lote_facturas --margen 40, resumen de la corrida:
+  [x] B.1 - cargar_lote_facturas --margen 40, resumen de la corrida:
+      Dry-run dio 43 productos nuevos (54 variantes) -- 1 mas que el "~42"
+      esperado, se interpreto como dentro del margen y se seguio. Corrida
+      real: 54 variantes creadas (43 productos nuevos), 127 ya existian, 3
+      salteadas por decision de negocio pendiente (Kit inodoro Dona Beja +
+      gabinete, Cuna niveladora grande, Exhibidor Cortag -- necesitan
+      --incluir-dudosos si se decide cargarlas), 0 con error. Ademas: 9 filas
+      de la factura traian mas de un costo para el mismo producto (Inodoro
+      Deca Izy cisterna alta, Lavatorio Deca Izy Ravenita, Pedestal Deca
+      Ravena Izy) -- quedo el precio de la primera fila, falta revisar a mano
+      si corresponde el otro costo. Productos 632->675, variantes 743->797.
 
-  [ ] B.2 - cargar_referencias_productos / vincular_imagenes_referencia:
+  [x] B.2 - cargar_referencias_productos / vincular_imagenes_referencia:
+      DESVIO IMPORTANTE: el dry-run dio 62 productos nuevos, no los "4" que
+      decia este instructivo. Se le aviso al usuario antes de tocar nada; con
+      su confirmacion se siguio. Ademas la corrida real se cayo en la primera
+      fila con "Categoria.MultipleObjectsReturned": el catalogo ya tiene mas
+      de una categoria por tipo generico (tipo=piso: "Pisos" y "Retificado";
+      tipo=otro: "Otros", "Adhesivos", "TERMOCALEFON", "EXTRACTOR DE AIRE"),
+      todas legitimas con productos reales -- el comando buscaba la categoria
+      solo por tipo. Se corrigio el lookup para que tambien filtre por nombre
+      (commit cf2c81c, ya pusheado) y se repitio: 62 productos creados (62
+      variantes), 22 ya existian, 7 omitidos por falta de precio (marcados
+      PENDIENTE a proposito). Nada se habia llegado a crear antes del fix (el
+      crash fue en la primera fila, transaccion por fila). Productos
+      675->737, variantes 797->859.
+      vincular_imagenes_referencia: 0 vinculadas, 89 ya existian, 0 con
+      error -- esperado, el mapeo_imagenes.csv es del 20/08 y no tiene entradas
+      para estos 62 productos nuevos. Sus fotos quedan pendientes de carga
+      manual desde la pantalla de Productos (el propio comando lo recuerda al
+      terminar).
 
-  [ ] B.3 - cargar_stock_por_uid, resumen (se esperan 29 cargadas):
+  [x] B.3 - cargar_stock_por_uid, resumen (se esperan 29 cargadas):
+      29 cargadas, 0 salteadas, 0 con error -- exacto lo esperado. Nota
+      tecnica sin relacion con los datos: la primera corrida murio con
+      UnicodeEncodeError al imprimir "->" en esta consola (cp1252); la
+      transaccion se revirtio sola (se verifico stock en 0 despues), se
+      reintento con PYTHONIOENCODING=utf-8 y ahi si completo. No se toco
+      codigo por esto, es de la consola, no del comando.
 
-  [ ] B.4 - productos: ____  variantes: ____  sin stock: ____
-      nombres repetidos: ____ (habia 4 antes)
+  [x] B.4 - productos: 737  variantes: 859  sin stock: 0
+      nombres repetidos: 4 (igual que antes: bacha ceramica sobreponer x2,
+      conjunto icasa 4x3 piezas, mingitorio icasa con sifon) -- ninguno nuevo.
 
-  [ ] B.5 - detener.bat + iniciar.bat, ok?
+  [x] B.5 - detener.bat + iniciar.bat, ok? Si. /api/v1/salud/ y el frontend
+      responden 200 despues del reinicio.
 
   Otras cosas que aparecieron:
+  - Los "134 conflictos sin revisar" de sync_estado siguen ahi, sin tocar --
+    este instructivo los marca como basura historica ya resuelta, no se
+    investigaron de nuevo.
+  - Los 3 productos salteados en B.1 y los 3 con precio a revisar a mano
+    (arriba) quedan como decision de negocio pendiente, no de este servidor.
+  - cargar_referencias_productos.py quedo corregido en el repo (cf2c81c):
+    si la notebook llega a correr este mismo comando alguna vez, ya no
+    deberia pisar con MultipleObjectsReturned.
 
 
 
