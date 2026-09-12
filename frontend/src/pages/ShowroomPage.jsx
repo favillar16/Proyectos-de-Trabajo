@@ -12,6 +12,7 @@
  * - Paginación con botones grandes en touch
  */
 import { useState, useEffect, useCallback } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   Search, X, Grid3X3, List, SlidersHorizontal,
@@ -728,6 +729,7 @@ function Paginacion({ pagina, totalPaginas, setPagina, isTouch }) {
 // ─── Carrito flotante del showroom ────────────────────────────────────────────
 function CarritoShowroom({ items, onCambiarCantidad, onEliminar, onVaciar, onCerrar, device }) {
   const queryClient = useQueryClient()
+  const navigate = useNavigate()
   const [cliente, setCliente] = useState({ nombre:'', telefono:'' })
 
   const total = items.reduce((s, i) => s + Number(i.precio_unitario) * Number(i.cantidad), 0)
@@ -747,9 +749,10 @@ function CarritoShowroom({ items, onCambiarCantidad, onEliminar, onVaciar, onCer
     }).then(r => r.data),
     onSuccess: (pedido) => {
       queryClient.invalidateQueries({ queryKey: ['pedidos'] })
-      toast.success(`Nota ${pedido.numero} enviada a caja`)
+      toast.success(`Nota ${pedido.numero} creada — revisala en Pedidos antes de mandarla a caja`)
       onVaciar()
       onCerrar()
+      navigate('/pedidos')
     },
     onError: (err) => {
       toast.error(mensajeErrorApi(err, 'Error al crear el pedido'))

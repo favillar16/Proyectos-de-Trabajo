@@ -537,6 +537,22 @@ function AccionesFooter({ pedido, rol, onCambiarEstado, isPending }) {
     )
   }
 
+  // Vendedor/Encargada/admin: pendiente → listo, directo a caja sin pasar
+  // por depósito (el vendedor ya vio el stock disponible en el Showroom).
+  // Este es el punto de la ventana de Pedidos donde se revisa, edita o
+  // imprime la nota/presupuesto antes de mandarla a cobrar.
+  if ((rol === 'vendedor' || rol === 'encargada_ventas' || rol === 'admin') && pedido.estado === 'pendiente') {
+    return (
+      <div style={{ display:'flex', flexDirection:'column', gap:'8px' }}>
+        <BtnAccion label="Enviar a caja" icon={<CreditCard size={16}/>}
+          color={C.success} onClick={() => onCambiarEstado('listo')} isPending={isPending} />
+        <BtnAccion label="Cancelar pedido" icon={<XCircle size={16}/>}
+          color={C.danger} variant="ghost"
+          onClick={() => onCambiarEstado('cancelado')} isPending={isPending} />
+      </div>
+    )
+  }
+
   // Cajero: listo → pagado (simplificado — el módulo de caja completo va aparte)
   if (rol === 'cajero' && pedido.estado === 'listo') {
     return (
@@ -545,9 +561,8 @@ function AccionesFooter({ pedido, rol, onCambiarEstado, isPending }) {
     )
   }
 
-  // Cancelar (admin, encargada de ventas o vendedor en estados previos al pago)
-  if (pedido.estado !== 'pagado' && pedido.estado !== 'cancelado' &&
-      (rol === 'admin' || ((rol === 'vendedor' || rol === 'encargada_ventas') && pedido.estado === 'pendiente'))) {
+  // Cancelar (admin, en cualquier estado previo al pago)
+  if (pedido.estado !== 'pagado' && pedido.estado !== 'cancelado' && rol === 'admin') {
     return (
       <BtnAccion label="Cancelar pedido" icon={<XCircle size={16}/>}
         color={C.danger} variant="ghost"

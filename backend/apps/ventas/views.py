@@ -7,6 +7,7 @@ from rest_framework.response import Response
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from django.db import transaction
+from django.db.models import F
 from asgiref.sync import async_to_sync
 from channels.layers import get_channel_layer
 
@@ -53,10 +54,10 @@ def _emitir_evento(pedido, tipo_evento, request=None):
 
     # Rooms por rol según el tipo de evento
     roles_destino = {
-        # Depósito ya no participa del flujo de venta: el pedido nace
-        # directo en "listo" (ver NotaPedidoCreateSerializer.create) y solo
-        # caja tiene algo que hacer con él.
-        'pedido_creado':      ['cajero', 'admin'],
+        # El pedido nace "pendiente" en la ventana de Pedidos (no en caja):
+        # el vendedor todavía puede editarlo, imprimirlo o cancelarlo antes
+        # de mandarlo a cobrar, así que caja no necesita enterarse todavía.
+        'pedido_creado':      ['admin'],
         'pedido_preparando':  ['vendedor', 'cajero', 'admin'],
         'pedido_listo':       ['cajero', 'vendedor', 'admin'],
         'pedido_pagado':      ['vendedor', 'admin'],
@@ -127,9 +128,6 @@ class NotaPedidoListCreateView(views.APIView):
 
         pedido = serializer.save()
         _emitir_evento(pedido, 'pedido_creado', request)
-        # El pedido ya nace "listo" (sin paso de depósito) — avisar también
-        # con este evento para que caja lo vea aparecer al instante.
-        _emitir_evento(pedido, 'pedido_listo', request)
 
         return Response(
             NotaPedidoReadSerializer(pedido, context={'request': request}).data,
@@ -237,6 +235,10 @@ class CambioEstadoView(views.APIView):
     POST /ventas/pedidos/<id>/estado/
     Transiciones permitidas según rol:
       pendiente → en_preparacion  : depósito
+      pendiente → listo           : vendedor/admin — "Enviar a caja" desde la
+                                     ventana de Pedidos, saltando depósito
+                                     (el vendedor ya vio el stock disponible
+                                     en el Showroom al armar el pedido)
       en_preparacion → listo      : depósito
       listo → pagado              : cajero (desde módulo de caja)
       cualquiera → cancelado      : admin o vendedor (solo si no está pagado)
@@ -244,7 +246,8 @@ class CambioEstadoView(views.APIView):
     permission_classes = [EsAdminVendedorODeposito]
 
     TRANSICIONES = {
-        NotaPedido.ESTADO_PENDIENTE:       [NotaPedido.ESTADO_EN_PREPARACION, NotaPedido.ESTADO_CANCELADO],
+        NotaPedido.ESTADO_PENDIENTE:       [NotaPedido.ESTADO_EN_PREPARACION, NotaPedido.ESTADO_LISTO,
+                                             NotaPedido.ESTADO_CANCELADO],
         NotaPedido.ESTADO_EN_PREPARACION:  [NotaPedido.ESTADO_LISTO,          NotaPedido.ESTADO_CANCELADO],
         NotaPedido.ESTADO_LISTO:           [NotaPedido.ESTADO_CANCELADO],
     }
@@ -287,12 +290,20 @@ class CambioEstadoView(views.APIView):
 
         # Validaciones extra
         if nuevo_estado == NotaPedido.ESTADO_LISTO:
-            no_prep = pedido.items.filter(preparado=False).count()
-            if no_prep > 0:
-                return Response(
-                    {'error': f'{no_prep} ítem(s) aún no están marcados como preparados.'},
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
+            if pedido.estado == NotaPedido.ESTADO_PENDIENTE:
+                # Atajo del vendedor: pendiente → listo directo, sin pasar por
+                # depósito. Los ítems nunca se marcaron preparado (eso lo hace
+                # PrepararItemView, restringido a depósito/admin) — se marcan
+                # acá mismo, igual que hacía NotaPedidoCreateSerializer antes
+                # de que el pedido pasara a nacer "pendiente".
+                pedido.items.update(preparado=True, cantidad_preparada=F('cantidad'))
+            else:
+                no_prep = pedido.items.filter(preparado=False).count()
+                if no_prep > 0:
+                    return Response(
+                        {'error': f'{no_prep} ítem(s) aún no están marcados como preparados.'},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
 
         pedido.estado = nuevo_estado
 
