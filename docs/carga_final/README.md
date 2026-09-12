@@ -159,9 +159,34 @@ notebook ya tenía uno de los artículos del lote.
 **Por qué `--sin-stock`:** la carga se hizo en la notebook, y el stock es del
 servidor — no viaja por el sync y el próximo `pg_dump` lo borraría (ver
 `docs/sync_bidireccional.md`). El catálogo sí viaja: los registros quedaron
-anotados en el registro de cambios, esperando el despliegue del servidor. **Las
-cantidades del lote hay que darlas de alta en el servidor**, con este mismo
-comando y el mismo margen, cuando el sync ya esté corriendo.
+anotados en el registro de cambios, esperando el despliegue del servidor.
+
+> **Resuelto el 12/09/2026 — esta sección decía algo que no funcionaba.**
+> Decía que las cantidades había que darlas de alta en el servidor «con este
+> mismo comando y el mismo margen, cuando el sync ya esté corriendo». Eso no
+> anda en ningún orden, y conviene entender por qué antes de repetirlo con otro
+> lote:
+>
+> - **Antes** del empuje, el comando crea los productos en el servidor con sus
+>   propios `uid`. Cuando después llega el empuje con los mismos productos de la
+>   notebook, `apps/sync/conciliacion.py` **no los fusiona**: `Producto` no está
+>   en `CLAVES_NATURALES` (solo Marca, Acabado, Categoria y Variante), está en
+>   `CAMPOS_REGENERABLES`, así que al chocar el código se le genera uno nuevo y
+>   el catálogo queda duplicado.
+> - **Después** del empuje no duplica, pero tampoco carga el stock: en
+>   `cargar_lote_facturas.py:304-310`, si ya existe una `Variante` con ese
+>   `(producto__nombre, color)` escribe `= ya existe` y hace `continue` — se
+>   saltea la fila entera, el movimiento de stock incluido.
+>
+> Lo que se hizo: los 42 productos del lote que el servidor no tenía **no** se
+> empujaron, y se los creó allá con este comando (sin `--sin-stock`), que es el
+> único camino por el que entran con su cantidad. Para los productos que solo
+> existían en la notebook y no están en ningún CSV, el stock viajó por separado
+> con `manage.py cargar_stock_por_uid`, que empareja por `uid` porque el sync
+> **regenera el SKU** al recibir uno que ya está en uso.
+>
+> **Regla para la próxima:** un producto entra en el servidor por el CSV *o* por
+> el sync, nunca por los dos. Si necesita stock, tiene que entrar por el CSV.
 
 Respaldo previo en `C:\Users\usuario\respaldos\carga_final_20260829\`
 (`ceramica_db_antes.dump` + `sync_antes.sqlite3`).
