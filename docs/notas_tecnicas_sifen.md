@@ -20,7 +20,14 @@ copiar manualmente tablas o XSD sin registrar su versión y origen"*. Esto es
 ese registro.
 
 **Fuente:** <https://www.dnit.gov.py/web/e-kuatia/documentacion-tecnica>
-Los 27 PDF se bajaron de ahí el 14/09/2026.
+
+Los 27 PDF están versionados en
+`docs/Documentacion para Facturación Electrónica/Notas Tecnicas/`, bajados de
+ahí el 14/09/2026. Se guardan en el repositorio a propósito y no solo el
+enlace: los del portal cuelgan de URLs con token, la DNIT reorganiza el sitio
+cada tanto, y volver a bajar y releer 27 documentos para verificar una duda
+puntual no es razonable. Es el mismo criterio con el que ya estaban guardados
+el Manual Técnico y la Guía de Pruebas.
 
 ---
 
