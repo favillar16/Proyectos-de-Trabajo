@@ -48,6 +48,20 @@ const MEDIOS = [
   { key:'transferencia',label:'Transferencia',     icon:<ArrowRightLeft size={18}/> },
 ]
 
+// Denominaciones de tarjeta del SIFEN (campo E621 del Manual Técnico).
+// El grupo de tarjeta es OBLIGATORIO en toda venta con débito o crédito que
+// se facture electrónicamente, así que esto no es un adorno: sin la marca,
+// el documento vuelve rechazado. Ver backend/apps/caja/pos.py.
+const TARJETAS = [
+  { key: 1,  label: 'Visa' },
+  { key: 2,  label: 'Mastercard' },
+  { key: 3,  label: 'American Express' },
+  { key: 4,  label: 'Maestro' },
+  { key: 5,  label: 'Panal' },
+  { key: 6,  label: 'Cabal' },
+  { key: 99, label: 'Otra' },
+]
+
 function formatGs(v) { return `Gs. ${Number(v||0).toLocaleString('es-PY')}` }
 
 function etiquetaTasaIva(tasa) {
@@ -244,6 +258,10 @@ function PanelCobro({ pedido: pedidoResumen, sesion, onPagado, onCancelar }) {
   const [medio, setMedio]       = useState('efectivo')
   const [recibido, setRecibido] = useState('')
   const [referencia, setReferencia] = useState('')
+  // Datos que el SIFEN exige de la tarjeta. Solo se piden si la venta se
+  // factura: para un ticket no hace falta nada de esto.
+  const [tarjeta, setTarjeta] = useState({
+    denominacion: '', denominacion_descripcion: '', titular: '', ultimos_digitos: '' })
   const [tipoComprobante, setTipoComprobante] = useState('ticket')
   const [condicionVenta, setCondicionVenta] = useState('Contado')
   const [descuentoPct, setDescuentoPct] = useState('')   // % de descuento en caja
@@ -274,6 +292,9 @@ function PanelCobro({ pedido: pedidoResumen, sesion, onPagado, onCancelar }) {
   const vuelto    = medio === 'efectivo' && Number(recibido) > total
     ? Number(recibido) - total
     : 0
+  const esTarjeta = medio === 'debito' || medio === 'credito'
+  // La marca de la tarjeta es obligatoria solo cuando la venta se factura.
+  const faltaTarjeta = esTarjeta && tipoComprobante === 'factura' && !tarjeta.denominacion
 
   const mutation = useMutation({
     mutationFn: () => cajaApi.registrarPago({
@@ -289,6 +310,9 @@ function PanelCobro({ pedido: pedidoResumen, sesion, onPagado, onCancelar }) {
       guardar_cliente:    tipoComprobante === 'factura' && Boolean(cli.ruc && cli.razon_social),
       condicion_venta:    tipoComprobante === 'factura' ? condicionVenta : 'Contado',
       descuento_porcentaje: pct,
+      datos_tarjeta: esTarjeta && tipoComprobante === 'factura'
+        ? { ...tarjeta, codigo_autorizacion: referencia }
+        : undefined,
     }).then(r => r.data),
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ['pedidos'] })
@@ -305,6 +329,7 @@ function PanelCobro({ pedido: pedidoResumen, sesion, onPagado, onCancelar }) {
 
   const puedeConfirmar = pedido?.estado === 'listo' &&
     !facturaSinDatos &&
+    !faltaTarjeta &&
     (medio !== 'efectivo' || Number(recibido) >= total || !recibido)
 
   return (
@@ -654,6 +679,74 @@ function PanelCobro({ pedido: pedidoResumen, sesion, onPagado, onCancelar }) {
                 Falta {formatGs(total - Number(recibido))} para completar el pago
               </div>
             )}
+          </div>
+        )}
+
+        {/* Datos de la tarjeta — obligatorios para facturar electrónicamente.
+            El SIFEN activa el grupo E620 en toda venta con débito o crédito
+            (ver backend/apps/caja/pos.py). Solo se piden si es factura: un
+            ticket no genera documento electrónico. */}
+        {esTarjeta && tipoComprobante === 'factura' && (
+          <div style={{ marginBottom:'12px' }}>
+            <label style={{ display:'block', fontSize:'12px', fontWeight:'500',
+              color:C.textSec, marginBottom:'6px' }}>
+              ¿Con qué tarjeta pagó?
+              <span style={{ color:C.gold, fontWeight:'500' }}> *</span>
+            </label>
+            <div style={{ display:'flex', flexWrap:'wrap', gap:'6px' }}>
+              {TARJETAS.map(t => {
+                const activa = tarjeta.denominacion === t.key
+                return (
+                  <button key={t.key}
+                    onClick={() => setTarjeta(v => ({ ...v, denominacion: t.key }))}
+                    style={{ height:device.isTouch?'40px':'34px', padding:'0 12px',
+                      borderRadius:'8px', cursor:'pointer', fontSize:'12.5px',
+                      border:`1px solid ${activa ? C.gold : C.border}`,
+                      background: activa ? C.gold : C.bg,
+                      color: activa ? '#fff' : C.textSec,
+                      WebkitTapHighlightColor:'transparent' }}>
+                    {t.label}
+                  </button>
+                )
+              })}
+            </div>
+
+            {tarjeta.denominacion === 99 && (
+              <input
+                value={tarjeta.denominacion_descripcion}
+                onChange={e => setTarjeta(v => ({ ...v, denominacion_descripcion: e.target.value }))}
+                placeholder="Nombre de la tarjeta"
+                maxLength={20}
+                style={{ width:'100%', height:'40px', padding:'0 12px', marginTop:'8px',
+                  border:`1px solid ${C.border}`, borderRadius:'10px',
+                  fontSize:'13px', color:C.text, background:C.bg, outline:'none' }}
+              />
+            )}
+
+            <div style={{ display:'flex', gap:'8px', marginTop:'8px' }}>
+              <input
+                value={tarjeta.titular}
+                onChange={e => setTarjeta(v => ({ ...v, titular: e.target.value }))}
+                placeholder="Titular (opcional)"
+                maxLength={30}
+                style={{ flex:2, height:'40px', padding:'0 12px',
+                  border:`1px solid ${C.border}`, borderRadius:'10px',
+                  fontSize:'13px', color:C.text, background:C.bg, outline:'none' }}
+              />
+              <input
+                value={tarjeta.ultimos_digitos}
+                onChange={e => setTarjeta(v => ({
+                  ...v, ultimos_digitos: e.target.value.replace(/\D/g, '').slice(-4) }))}
+                placeholder="Últimos 4"
+                inputMode="numeric"
+                style={{ flex:1, height:'40px', padding:'0 12px',
+                  border:`1px solid ${C.border}`, borderRadius:'10px',
+                  fontSize:'13px', color:C.text, background:C.bg, outline:'none' }}
+              />
+            </div>
+            <p style={{ fontSize:'11px', color:C.textMuted, marginTop:'6px' }}>
+              Se copian del voucher que imprime la terminal.
+            </p>
           </div>
         )}
 

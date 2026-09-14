@@ -146,14 +146,25 @@ class ReimpresionTests(BaseCaja):
         self.pago.refresh_from_db()
         self.assertEqual(getattr(self.pago, 'documento_electronico', None), de)
 
-    def test_select_related_no_rompe_cuando_no_hay_documento(self):
+    def test_traer_el_pago_no_rompe_cuando_no_hay_documento(self):
         # Es el caso de TODOS los pagos mientras el SIFEN esté apagado.
-        from apps.caja.models import Pago
-        pago = (Pago.objects
-                .select_related('pedido', 'cajero', 'sesion_caja',
-                                'documento_electronico')
-                .get(pk=self.pago.pk))
-        self.assertIsNone(getattr(pago, 'documento_electronico', None))
+        #
+        # Antes esto probaba el select_related('documento_electronico'), que
+        # dejó de ser válido cuando la relación pasó a ser de varios para
+        # que un cobro pueda tener factura Y nota de crédito. Ahora prueba
+        # el helper que usa la vista de verdad, que es lo que importaba.
+        from apps.caja.views import _pago_para_comprobante
+        pago = _pago_para_comprobante(self.pago.pk)
+        self.assertIsNone(pago.documento_electronico)
+        self.assertIsNone(pago.nota_credito)
+
+    def test_traer_el_pago_encuentra_la_factura_cuando_existe(self):
+        de = emisor.emitir_para_pago(
+            self.pago,
+            receptor={'ruc': f.RUC_RECEPTOR, 'razon_social': 'CONSTRUCTORA X SA'})
+        from apps.caja.views import _pago_para_comprobante
+        pago = _pago_para_comprobante(self.pago.pk)
+        self.assertEqual(pago.documento_electronico, de)
 
     def test_la_reimpresion_conserva_numero_y_timbrado_originales(self):
         de = emisor.emitir_para_pago(

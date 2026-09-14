@@ -30,6 +30,7 @@ api_v1 = [
     path('inventario/', include('apps.inventario.urls')),
     path('ventas/', include('apps.ventas.urls')),
     path('caja/', include('apps.caja.urls')),
+    path('facturacion/', include('apps.facturacion.urls')),
     path('costos/', include('apps.costos.urls')),
     path('sync/', include('apps.sync.urls')),
 ]

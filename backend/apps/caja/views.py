@@ -24,10 +24,11 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-from .models import SesionCaja, Pago
+from .models import DatosTarjeta, SesionCaja, Pago
 from .printer import imprimir_ticket, imprimir_factura, imprimir_cierre, ticket_a_texto
 from apps.ventas.models import NotaPedido
 from apps.facturacion import emisor as fe_emisor
+from . import pos as pos_mod
 
 # Tope de descuento que puede aplicar un cajero al cobrar. Un 100% equivaldría
 # a regalar la mercadería sin ninguna aprobación adicional; 70% ya cubre
@@ -354,6 +355,34 @@ class RegistrarPagoView(views.APIView):
                     status=status.HTTP_400_BAD_REQUEST,
                 )
 
+        # ── Tarjeta: pasar por la terminal POS ────────────────
+        # Solo si es factura Y el SIFEN está prendido. Con ticket o con el
+        # SIFEN apagado el cobro con tarjeta sigue funcionando exactamente
+        # como siempre — no se le agrega un requisito a la cajera por una
+        # obligación fiscal que todavía no rige.
+        #
+        # Se hace ANTES de crear el pago a propósito: si faltan los datos que
+        # el SIFEN exige, es mejor frenar acá, con el cliente todavía en el
+        # mostrador, que emitir la factura y descubrirlo cuando el documento
+        # vuelva rechazado al otro día.
+        resultado_pos = None
+        if (tipo_comprobante == 'factura'
+                and fe_emisor.sifen_activo()
+                and pos_mod.requiere_datos_de_tarjeta(medio)):
+            terminal = pos_mod.obtener_terminal()
+            try:
+                resultado_pos = terminal.cobrar(
+                    monto_final, medio=medio,
+                    datos=request.data.get('datos_tarjeta') or {})
+            except pos_mod.ErrorPOS as e:
+                return Response({'error': str(e)},
+                                status=status.HTTP_400_BAD_REQUEST)
+            if not resultado_pos.aprobado:
+                return Response(
+                    {'error': f'La terminal rechazó el cobro: '
+                              f'{resultado_pos.mensaje or "sin detalle"}'},
+                    status=status.HTTP_400_BAD_REQUEST)
+
         # ── Crear pago ────────────────────────────────────────
         pago = Pago(
             pedido           = pedido,
@@ -377,6 +406,21 @@ class RegistrarPagoView(views.APIView):
             condicion_venta      = condicion_venta if tipo_comprobante == 'factura' else 'Contado',
         )
         pago.save()
+
+        if resultado_pos is not None:
+            DatosTarjeta.objects.create(
+                pago=pago,
+                denominacion=resultado_pos.denominacion,
+                denominacion_descripcion=resultado_pos.denominacion_descripcion,
+                forma_procesamiento=resultado_pos.forma_procesamiento,
+                codigo_autorizacion=resultado_pos.codigo_autorizacion,
+                titular=resultado_pos.titular,
+                ultimos_digitos=resultado_pos.ultimos_digitos,
+                procesadora_ruc=resultado_pos.procesadora_ruc,
+                procesadora_razon_social=resultado_pos.procesadora_razon_social,
+                numero_boleta=resultado_pos.numero_boleta,
+                origen=pos_mod.obtener_terminal().nombre,
+            )
 
         # ── Cambiar estado del pedido ─────────────────────────
         pedido.estado = NotaPedido.ESTADO_PAGADO
@@ -681,13 +725,16 @@ class EstadoImpresora(views.APIView):
 def _pago_para_comprobante(pk):
     """
     Trae un pago con todo lo que necesita _reconstruir_comprobante en una
-    sola consulta. El select_related de 'documento_electronico' no rompe
-    cuando el pago no tiene uno: es un OneToOne inverso y queda en None.
+    sola consulta.
+
+    Los documentos electrónicos van por prefetch y no por select_related:
+    desde que un cobro puede tener factura y nota de crédito, la relación
+    es de varios (ver DocumentoElectronico.pago).
     """
     return get_object_or_404(
-        Pago.objects.select_related('pedido', 'cajero', 'sesion_caja',
-                                    'documento_electronico')
-                    .prefetch_related('pedido__items__variante__producto'),
+        Pago.objects.select_related('pedido', 'cajero', 'sesion_caja')
+                    .prefetch_related('documentos_electronicos',
+                                      'pedido__items__variante__producto'),
         pk=pk
     )
 

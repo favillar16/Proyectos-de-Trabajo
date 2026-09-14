@@ -264,6 +264,10 @@ DATOS_FISCALES = {
     'telefono':     config('FISCAL_TELEFONO', default=''),
     'timbrado':     config('FISCAL_TIMBRADO', default=''),
     'timbrado_vto': config('FISCAL_TIMBRADO_VTO', default=''),
+    # Fecha de INICIO de vigencia del timbrado (AAAA-MM-DD). No es lo mismo
+    # que el vencimiento: el XML del SIFEN declara el inicio (campo dFeIniT)
+    # y valida contra el timbrado registrado en Marangatú.
+    'timbrado_inicio': config('FISCAL_TIMBRADO_INICIO', default=''),
 
     # ── Agregados para facturación electrónica ───────────────────────────
     # Los tres de abajo componen el CDC y el número de comprobante, así que
@@ -300,6 +304,22 @@ CONTACTO_COMERCIAL = {
     'telefono':  config('CONTACTO_TELEFONO', default='') or '0971451936',
     'direccion': (config('CONTACTO_DIRECCION', default='')
                   or 'Lidia Peralta de Benítez e/ Josefina Plas, Coronel Oviedo - Paraguay'),
+}
+
+# ─── Terminal POS (cobro con tarjeta) ─────────────────────────────────────────
+# El SIFEN exige datos de la tarjeta en todo cobro con crédito o débito
+# (grupo E620 del Manual Técnico), así que hace falta capturarlos.
+#
+#   'manual'   — la cajera copia los datos del voucher de la terminal. Es el
+#                único modo que funciona sin acuerdo con la procesadora, y el
+#                que corresponde hoy.
+#   'simulada' — aprueba todo sin preguntar. Solo para demo y tests: NUNCA en
+#                la PC del local.
+#
+# El día que haya integración con Bancard u otra procesadora se agrega un
+# driver en apps/caja/pos.py y se cambia esta clave; caja no se toca.
+POS = {
+    'terminal': config('POS_TERMINAL', default='manual'),
 }
 
 # ─── SIFEN / e-Kuatia ─────────────────────────────────────────────────────────

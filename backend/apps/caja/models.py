@@ -157,5 +157,98 @@ class Pago(models.Model):
             self.vuelto = max(0, self.monto_recibido - self.monto)
         super().save(*args, **kwargs)
 
+    @property
+    def documento_electronico(self):
+        """
+        La factura electrónica de este cobro, si se emitió.
+
+        Existe para que el resto del sistema siga hablando de "el documento
+        electrónico del pago" en singular, que es como se lo piensa: un cobro
+        se factura una sola vez. La relación por debajo es de varios porque
+        además puede colgar una nota de crédito, que es otro documento sobre
+        el mismo cobro — pero cuando alguien pide "el documento" de una venta
+        se refiere a su factura.
+        """
+        from apps.facturacion.codigos import TIPO_DE_FACTURA
+        return self.documentos_electronicos.filter(
+            tipo_documento=TIPO_DE_FACTURA).first()
+
+    @property
+    def nota_credito(self):
+        """La nota de crédito que anula o corrige esta venta, si existe."""
+        from apps.facturacion.codigos import TIPO_DE_NOTA_CREDITO
+        return self.documentos_electronicos.filter(
+            tipo_documento=TIPO_DE_NOTA_CREDITO).first()
+
     def __str__(self):
         return f'Pago {self.numero_ticket} — {self.get_medio_pago_display()} — {self.monto}'
+
+
+class DatosTarjeta(models.Model):
+    """
+    Datos del cobro con tarjeta, tal como los pide el SIFEN.
+
+    Existe por una razón concreta: el grupo E620 (`gPagTarCD`) del Manual
+    Técnico **se activa obligatoriamente** cuando el medio de pago es tarjeta
+    de crédito o débito. Sin al menos la denominación de la tarjeta, el
+    documento electrónico de esa venta vuelve rechazado.
+
+    Va en una tabla aparte y no en columnas de `Pago` porque solo aplica a
+    una parte de los cobros, y porque así se puede preguntar directamente
+    cuáles son los cobros con tarjeta a los que les falta el dato.
+
+    Los datos salen de la terminal POS: o los copia la cajera del voucher, o
+    los manda la terminal si algún día se integra (ver apps/caja/pos.py). El
+    modelo es el mismo en los dos casos.
+    """
+    pago = models.OneToOneField(
+        Pago, on_delete=models.CASCADE, related_name='datos_tarjeta')
+
+    # ── Obligatorios para el SIFEN ───────────────────────────────────────
+    denominacion = models.PositiveSmallIntegerField(
+        help_text='Código E621: 1 Visa, 2 Mastercard, 3 Amex, 4 Maestro, '
+                  '5 Panal, 6 Cabal, 99 Otra.')
+    denominacion_descripcion = models.CharField(
+        max_length=20, blank=True,
+        help_text='Solo para denominación 99: el nombre real de la tarjeta.')
+    forma_procesamiento = models.PositiveSmallIntegerField(
+        default=1, help_text='Código E626: 1 POS, 2 pago electrónico, 9 otro.')
+
+    # ── Opcionales para el SIFEN, útiles para conciliar ──────────────────
+    codigo_autorizacion = models.CharField(
+        max_length=10, blank=True,
+        help_text='El que imprime el voucher de la terminal.')
+    titular = models.CharField(max_length=30, blank=True)
+    ultimos_digitos = models.CharField(
+        max_length=4, blank=True,
+        help_text='Los últimos cuatro de la tarjeta. Nunca el número entero: '
+                  'guardarlo completo sería un problema de seguridad y el '
+                  'SIFEN tampoco lo pide.')
+    procesadora_ruc = models.CharField(max_length=20, blank=True)
+    procesadora_razon_social = models.CharField(max_length=60, blank=True)
+    numero_boleta = models.CharField(
+        max_length=30, blank=True,
+        help_text='Número del voucher, para cruzar con el resumen de la '
+                  'procesadora al cierre.')
+
+    origen = models.CharField(
+        max_length=20, default='manual',
+        help_text='Qué terminal produjo estos datos (manual, simulada, o el '
+                  'driver de la procesadora).')
+    fecha_creacion = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'caja_datos_tarjeta'
+        verbose_name = 'Datos de tarjeta'
+        verbose_name_plural = 'Datos de tarjeta'
+
+    def __str__(self):
+        cola = f' ****{self.ultimos_digitos}' if self.ultimos_digitos else ''
+        return f'{self.descripcion_sifen}{cola} — {self.pago.numero_ticket}'
+
+    @property
+    def descripcion_sifen(self) -> str:
+        """Descripción del campo E622, coherente con el código E621."""
+        from apps.facturacion import codigos
+        return codigos.descripcion_tarjeta(
+            self.denominacion, self.denominacion_descripcion)
