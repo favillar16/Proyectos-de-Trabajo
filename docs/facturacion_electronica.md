@@ -212,6 +212,15 @@ La versión 150 es además la que declara el sistema en el QR (`nVersion=150`).
   de cola asíncrona.
 - **El KuDE lo muestra agrupado de a cuatro** (§10.1). Es lo que hace
   `formatear_legible()`.
+- **Las tablas de códigos** (14/09/2026), contra las tablas inline de §10.4
+  y las Codificaciones de §15: `iTiDE`, `iTipEmi`, `iTipTra`, `iTImp`,
+  `iCondOpe`, `iTiPago`, `iNatRec`, `iTiOpe`, `iTiContRec`, `iTipIDRec` y la
+  Tabla 6 de afectación del IVA. Salió **un error**: `IDENTIDAD_PASAPORTE`
+  estaba en `3`, que es el código de la *cédula extranjera*; el pasaporte es
+  `2`. No había llegado a ningún DE porque esas constantes todavía no se
+  usaban en ningún lado. Faltaba además la autofactura (`iTiDE = 4`), que
+  ahora hace falta porque la habilitación se pide por los cinco tipos.
+  Fijado en `test_codigos.ContraElManualTecnicoTests`.
 - **Código de seguridad** (§10.3): 9 dígitos, aleatorio, no secuencial,
   rango **000000001 a 999999999**, distinto en cada DE, y **no puede ser
   igual al número de documento** (`dNumDoc`).
@@ -223,57 +232,88 @@ La versión 150 es además la que declara el sistema en el QR (`nVersion=150`).
 
 #### ⚠️ Lo que sigue sin poder verificarse
 
-- **El rango de pesos del módulo 11**, tanto del DV del RUC como del CDC. El
-  manual (§10.2) no lo detalla: remite a un PDF aparte
-  (`digito-verificador.pdf`) cuyo enlace **está caído** — redirige al portal
-  del DNIT sin el documento.
+*(Al 14/09/2026 no queda nada en esta lista. Los códigos de `codigos.py` y el
+módulo 11 del DV, que eran los dos pendientes, se cerraron ese día.)*
 
-  Mientras tanto: `cdc.PESO_MAX` está en 9 y hay un test que verifica que
-  los 43 dígitos queden protegidos. El valor anterior (11) era
-  demostrablemente defectuoso (ver más abajo). Para cerrarlo hay que
-  conseguir ese PDF o escribir a **facturacionelectronica@dnit.gov.py** /
-  la Mesa de Ayuda SIFEN.
+#### El módulo 11: resuelto el 14/09/2026, y al revés de lo que se creía
 
-- **Los códigos de `codigos.py`** (medio de pago, condición de operación,
-  naturaleza del receptor, afectación IVA). Están en la sección *Tablas y
-  Codificaciones* del portal, que no se llegó a contrastar campo por campo.
+Esta es la corrección más importante de todo el módulo fiscal, así que
+conviene leerla entera antes de tocar `cdc.PESO_MAX`.
 
-#### Sobre el defecto de los pesos que encontraron los tests
+**El estado hasta el 14/09/2026.** El manual (§10.2) dice que el DV se calcula
+por módulo 11 pero no publica los pesos: remite a un `digito-verificador.pdf`
+cuyo enlace está caído (reintentado el 14/09/2026 con la URL exacta que
+imprime el manual; redirige de `set.gov.py` a `dnit.gov.py` sin el documento).
 
-Vale dejarlo escrito porque es fácil "corregirlo" mal. La primera versión de
-`cdc.calcular_dv()` ciclaba los pesos de 2 a 11, copiando a `ruc.py`. Un peso
-de 11 hace que ese dígito **no aporte nada** al checksum (11·d ≡ 0 mod 11), y
-en un cuerpo de 43 dígitos el ciclo pasa cuatro veces por el 11: quedaban
-**8 dígitos que se podían alterar sin que el DV lo notara**.
+Ante esa ausencia, en agosto se razonó así: ciclar los pesos de 2 a 11 —como
+hace `ruc.py`— es defectuoso, porque un peso de 11 anula el aporte de ese
+dígito (11·d ≡ 0 mod 11) y deja posiciones que se pueden alterar sin que el
+DV se entere. Así que se bajó `PESO_MAX` a 9 y se escribieron tests que
+exigían que ninguna posición quedara ciega.
 
-En `ruc.py` el mismo ciclo 2..11 es inofensivo, porque el RUC tiene 8 dígitos
-y los pesos nunca llegan a 11. Por eso el error no salta a la vista.
+**El razonamiento era correcto y la conclusión estaba mal.** El DV no es una
+decisión de diseño nuestra: es un protocolo compartido. El SIFEN recalcula el
+dígito con **su** algoritmo y compara. Un DV más fuerte que el suyo es, para
+el SIFEN, simplemente un DV equivocado — y el rechazo es del documento
+entero. Con `PESO_MAX=9` el sistema habría sido rechazado en el **100%** de
+las emisiones, desde el primer documento.
 
-Hoy `cdc.PESO_MAX` está en 9 y ninguna posición queda ciega. Hay tres tests
-que fallan si alguien vuelve a subirlo
-(`test_cdc.ProteccionDelDigitoVerificadorTests`) — verificado reintroduciendo
-el defecto a propósito.
+**Cómo se resolvió.** Por tres vías independientes, todas el 14/09/2026:
+
+1. **El propio Manual Técnico.** §10.1 publica un CDC de ejemplo *completo*,
+   con su DV: termina en **8**. Pasado por nuestro algoritmo, `PESO_MAX=11`
+   da 8 y `PESO_MAX=9` da 2. El dato estaba a mano desde agosto — el test que
+   lo usaba parseaba los campos pero **evitaba a propósito** verificar el DV,
+   con la nota "el DV del ejemplo depende del algoritmo de pesos, que es
+   justamente lo que no se pudo verificar todavía".
+2. **`facturacionelectronicapy-xmlgen`** (TIPS-SA), una de las dos librerías
+   que la DNIT publica como referencia:
+   `calcularDigitoVerificador(cdc, 11)`.
+3. **`rshk-jsifenlib`** (Roshka), la otra: `generateDv()` con `baseMax = 11`,
+   aplicada al cuerpo del CDC.
+
+Hoy `cdc.PESO_MAX` está en **11**, y hay un test que falla si alguien lo
+cambia.
+
+**Qué queda desprotegido, concretamente.** Las posiciones ciegas existen y
+son reales, solo que no son nuestras para arreglar. Medidas, no deducidas:
+son **4** (la documentación de agosto decía 8; el conteo también estaba mal),
+deterministas, y caen en los índices **3, 13, 23 y 33** — exactamente los que
+reciben peso 11. El 33 es el **tipo de emisión** (normal / contingencia), que
+es el que más incomoda; el SIFEN lo valida por su cuenta.
 
 Conviene distinguir dos cosas que parecen iguales:
 
 - **Posición estructuralmente ciega**: el dígito no aporta nada, *cualquier*
-  cambio pasa, siempre. Es lo que había y se corrigió.
+  cambio pasa, siempre. Son esas cuatro, y son parte del algoritmo de la DNIT.
 - **Colisión aislada**: para un valor puntual, dos cadenas dan el mismo DV.
-  Ronda el **2%** de los cambios de un dígito y es inherente a este módulo 11,
-  porque la regla "dv = 0 si resto < 2" hace que resto 0 y resto 1 den el
-  mismo dígito. No se puede eliminar sin apartarse del algoritmo: un dígito
-  verificador único nunca detecta el 100%.
+  Ronda el **2%** de los cambios de un dígito en las otras 39 posiciones, y es
+  inherente a este módulo 11: la regla "dv = 0 si resto < 2" hace que resto 0
+  y resto 1 den el mismo dígito. Un dígito verificador único nunca detecta el
+  100%.
+
+**La lección, que vale más allá de este campo.** En un protocolo de
+interoperabilidad, "más correcto" no existe como criterio independiente:
+existe "igual al otro lado". Cuando falte documentación oficial, la respuesta
+está en la implementación de referencia que publica el organismo, no en el
+razonamiento propio por más sólido que sea. Y si hay un ejemplo oficial a
+mano, hay que contrastarlo **entero** — incluido el campo que da pereza
+verificar.
 
 Sobre el **DV del RUC**: `verificar_fiscal` lo chequea solo. Al cargar el RUC
 real, si dice que el DV no cierra pero la cédula tributaria dice que sí,
-entonces el algoritmo de `ruc.py` no coincide con el del DNIT.
+entonces el algoritmo de `ruc.py` no coincide con el del DNIT. En `ruc.py` el
+ciclo 2..11 nunca llega a 11 en la práctica, porque el RUC tiene 8 dígitos.
 
 ### 5.3 Decisiones abiertas
 
-- **e-Kuatia'i o e-Kuatia.** Ver §1. Cambia si la factura sale sola o se
-  carga a mano en el portal.
-- **Internet en la PC servidor.** Hoy el local no tiene. Sin internet no hay
-  transmisión al SIFEN, con ningún camino.
+- ~~**e-Kuatia'i o e-Kuatia.**~~ **Decidido el 14/09/2026: e-Kuatia completo**,
+  con habilitación por los **cinco** tipos de documento. La propietaria va a
+  conseguir el certificado de firma. El plan de migración, con sus fases y lo
+  que el certificado *no* resuelve, está en `docs/migracion_ekuatia.md`.
+- ~~**Internet en la PC servidor.**~~ **Resuelto el 14/09/2026**: el local
+  tiene servicio y es estable. La cola asíncrona se mantiene igual — cubre
+  los cortes, que es distinto de cubrir la ausencia de conexión.
 - **Numeración por talonario.** Falta confirmar si la propietaria necesita
   numeración propia por talonario o le sirve la del sistema.
 

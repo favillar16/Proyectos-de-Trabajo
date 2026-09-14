@@ -5,10 +5,13 @@ El SIFEN rechaza el documento entero si el RUC del emisor o del receptor
 viene con el dígito verificador mal. Conviene validarlo al cargarlo en la
 pantalla de caja y no descubrirlo recién cuando el DE vuelve rechazado.
 
-⚠️ El algoritmo de abajo es el módulo 11 estándar que usa la DNIT, pero hay
-que contrastarlo contra el Manual Técnico antes del lanzamiento: probar con
-el RUC real del negocio y verificar que dé el DV que figura en la cédula
-tributaria. Ver docs/facturacion_electronica.md §"Pendientes de verificar".
+El algoritmo es el mismo módulo 11 del CDC, verificado el 14/09/2026 contra
+las dos librerías de referencia que publica la DNIT (ciclo de pesos 2..11).
+Acá el ciclo nunca llega a 11 en la práctica, porque el RUC tiene 8 dígitos
+y los pesos se quedan en 9. Ver el bloque de PESO_MAX en cdc.py.
+
+Conviene igual probar con el RUC real del negocio y verificar que dé el DV
+que figura en la cédula tributaria: `manage.py verificar_fiscal` lo hace.
 """
 import re
 

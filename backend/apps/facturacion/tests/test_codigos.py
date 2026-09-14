@@ -11,6 +11,8 @@ from django.test import SimpleTestCase
 
 from apps.facturacion import codigos
 
+from .factories import RUC_RECEPTOR as RUC_VALIDO
+
 
 class TraduccionDeCodigosTests(SimpleTestCase):
 
@@ -50,16 +52,128 @@ class TraduccionDeCodigosTests(SimpleTestCase):
     def test_naturaleza_del_receptor_depende_del_ruc_no_del_tipo(self):
         # Una persona física puede tener RUC, y una venta de mostrador puede
         # no identificar a nadie.
-        self.assertEqual(codigos.naturaleza_receptor('80012345-6'),
+        self.assertEqual(codigos.naturaleza_receptor(RUC_VALIDO),
                          codigos.RECEPTOR_CONTRIBUYENTE)
         for sin_ruc in ('', '   ', None):
             with self.subTest(ruc=sin_ruc):
                 self.assertEqual(codigos.naturaleza_receptor(sin_ruc),
                                  codigos.RECEPTOR_NO_CONTRIBUYENTE)
 
+    def test_una_cedula_no_convierte_al_cliente_en_contribuyente(self):
+        """
+        La pantalla de caja pide "RUC/CI" y acepta las dos cosas.
+
+        Hasta el 14/09/2026 bastaba con que el campo no viniera vacío para
+        declarar al cliente como contribuyente y mandar el número como
+        `dRucRec`. El SIFEN valida el dígito verificador de ese campo: cada
+        factura a un consumidor identificado con cédula habría vuelto
+        rechazada.
+
+        El criterio ahora es el DV. En Paraguay el RUC de una persona física
+        es su cédula MÁS el dígito verificador, así que el módulo 11 separa
+        los dos casos.
+        """
+        cedula = '4123456'
+        self.assertFalse(codigos.es_ruc(cedula))
+        self.assertEqual(codigos.naturaleza_receptor(cedula),
+                         codigos.RECEPTOR_NO_CONTRIBUYENTE)
+
+    def test_un_ruc_con_el_dv_mal_no_pasa_como_ruc(self):
+        # Un error de tipeo en el mostrador tiene que salir acá, no como
+        # rechazo del SIFEN.
+        base = RUC_VALIDO.split('-')[0]
+        dv_correcto = int(RUC_VALIDO.split('-')[1])
+        dv_malo = (dv_correcto + 1) % 10
+        self.assertFalse(codigos.es_ruc(f'{base}-{dv_malo}'))
+
     def test_tipo_de_operacion_acompana_a_la_naturaleza(self):
-        self.assertEqual(codigos.tipo_operacion('80012345-6'), codigos.OPERACION_B2B)
+        self.assertEqual(codigos.tipo_operacion(RUC_VALIDO), codigos.OPERACION_B2B)
         self.assertEqual(codigos.tipo_operacion(''), codigos.OPERACION_B2C)
+        self.assertEqual(codigos.tipo_operacion('4123456'), codigos.OPERACION_B2C)
+
+
+class ContraElManualTecnicoTests(SimpleTestCase):
+    """
+    Las tablas del Manual Técnico V150, transcritas a mano acá.
+
+    Es deliberadamente redundante con codigos.py: el punto es que si alguien
+    "corrige" un código de memoria, el test lo frene. Cuando la DNIT publique
+    una revisión, se actualizan los dos lados a la vez y el diff muestra
+    exactamente qué se movió.
+
+    Contrastado el 14/09/2026 contra el PDF que está en
+    docs/Documentacion para Facturación Electrónica/.
+    """
+
+    # Campo C002 (iTiDE), sección 10.4 del manual.
+    def test_tipos_de_documento_electronico(self):
+        self.assertEqual(codigos.TIPO_DE_FACTURA, 1)
+        self.assertEqual(codigos.TIPO_DE_AUTOFACTURA, 4)
+        self.assertEqual(codigos.TIPO_DE_NOTA_CREDITO, 5)
+        self.assertEqual(codigos.TIPO_DE_NOTA_DEBITO, 6)
+        self.assertEqual(codigos.TIPO_DE_NOTA_REMISION, 7)
+
+    def test_cada_tipo_de_documento_tiene_su_descripcion(self):
+        # C003 (dDesTiDE) es obligatorio y el SIFEN valida que el texto
+        # corresponda al código de C002.
+        for codigo in (codigos.TIPO_DE_FACTURA, codigos.TIPO_DE_AUTOFACTURA,
+                       codigos.TIPO_DE_NOTA_CREDITO, codigos.TIPO_DE_NOTA_DEBITO,
+                       codigos.TIPO_DE_NOTA_REMISION):
+            with self.subTest(tipo=codigo):
+                self.assertIn(codigo, codigos.DESCRIPCION_TIPO_DE)
+
+    # Campo B002 (iTipEmi).
+    def test_tipo_de_emision(self):
+        self.assertEqual(codigos.EMISION_NORMAL, 1)
+        self.assertEqual(codigos.EMISION_CONTINGENCIA, 2)
+
+    # Campo D011 (iTipTra) y D013 (iTImp).
+    def test_transaccion_e_impuesto(self):
+        self.assertEqual(codigos.TRANSACCION_VENTA_MERCADERIA, 1)
+        self.assertEqual(codigos.IMPUESTO_IVA, 1)
+
+    # Campo E601 (iCondOpe).
+    def test_condicion_de_la_operacion(self):
+        self.assertEqual(codigos.CONDICION_CONTADO, 1)
+        self.assertEqual(codigos.CONDICION_CREDITO, 2)
+
+    # Campo E606 (iTiPago).
+    def test_tipos_de_pago(self):
+        self.assertEqual(codigos.PAGO_EFECTIVO, 1)
+        self.assertEqual(codigos.PAGO_TARJETA_CREDITO, 3)
+        self.assertEqual(codigos.PAGO_TARJETA_DEBITO, 4)
+        self.assertEqual(codigos.PAGO_TRANSFERENCIA, 5)
+
+    # Campo D201 (iNatRec) y D202 (iTiOpe).
+    def test_naturaleza_y_tipo_de_operacion(self):
+        self.assertEqual(codigos.RECEPTOR_CONTRIBUYENTE, 1)
+        self.assertEqual(codigos.RECEPTOR_NO_CONTRIBUYENTE, 2)
+        self.assertEqual(codigos.OPERACION_B2B, 1)
+        self.assertEqual(codigos.OPERACION_B2C, 2)
+        self.assertEqual(codigos.OPERACION_B2G, 3)
+
+    # Campo D205 (iTiContRec).
+    def test_tipo_de_contribuyente_receptor(self):
+        self.assertEqual(codigos.RECEPTOR_PERSONA_FISICA, 1)
+        self.assertEqual(codigos.RECEPTOR_PERSONA_JURIDICA, 2)
+
+    # Campo D208 (iTipIDRec). El pasaporte estuvo en 3 —que es la cédula
+    # extranjera— hasta el 14/09/2026.
+    def test_documentos_de_identidad_del_receptor(self):
+        self.assertEqual(codigos.IDENTIDAD_CEDULA_PY, 1)
+        self.assertEqual(codigos.IDENTIDAD_PASAPORTE, 2)
+        self.assertEqual(codigos.IDENTIDAD_CEDULA_EXTRANJERA, 3)
+        self.assertEqual(codigos.IDENTIDAD_CARNET_RESIDENCIA, 4)
+        self.assertEqual(codigos.IDENTIDAD_INNOMINADO, 5)
+        self.assertEqual(codigos.IDENTIDAD_TARJETA_DIPLOMATICA, 6)
+        self.assertEqual(codigos.IDENTIDAD_OTRO, 9)
+
+    # Tabla 6 de las Codificaciones (sección 15), campo E731 (iAfecIVA).
+    def test_codigos_de_afectacion_del_iva(self):
+        self.assertEqual(codigos.IVA_GRAVADO, 1)
+        self.assertEqual(codigos.IVA_EXONERADO, 2)
+        self.assertEqual(codigos.IVA_EXENTO, 3)
+        self.assertEqual(codigos.IVA_GRAVADO_PARCIAL, 4)
 
 
 class DesglosarIvaTests(SimpleTestCase):

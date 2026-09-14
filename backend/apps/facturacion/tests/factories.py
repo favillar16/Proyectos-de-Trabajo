@@ -33,9 +33,25 @@ DATOS_FISCALES_COMPLETOS = {
     'telefono': '0981000000',
     'timbrado': '12345678',
     'timbrado_vto': '2027-12-31',
+    # Fecha de INICIO de vigencia: es la que declara el XML (dFeIniT), no la
+    # de vencimiento.
+    'timbrado_inicio': '2026-06-23',
     'establecimiento': '001',
     'punto_expedicion': '001',
     'tipo_contribuyente': 2,
+
+    # Domicilio y actividad: el XML del SIFEN los exige, así que sin estos
+    # `payload.construir_params()` no puede armar nada. Los códigos son de
+    # prueba, no los reales del negocio (esos salen de la planilla de
+    # referencia geográfica del DNIT, todavía pendiente de bajar).
+    'departamento': 5,
+    'departamento_desc': 'CAAGUAZU',
+    'distrito': 55,
+    'distrito_desc': 'CNEL. OVIEDO',
+    'ciudad': 5555,
+    'ciudad_desc': 'CNEL. OVIEDO',
+    'actividad_economica': '47523',
+    'actividad_desc': 'Comercio al por menor de materiales de construcción',
 }
 
 SIFEN_PRENDIDO = {
