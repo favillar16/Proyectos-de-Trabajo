@@ -276,3 +276,185 @@ class DatosFacturaPersistidosTests(TestCase):
         resp = self.client.post(f'/api/v1/caja/pagos/{pago.id}/reimprimir/')
         self.assertEqual(resp.status_code, 200, resp.data)
         self.assertEqual(resp.data['tipo_comprobante'], 'ticket')
+
+    def test_la_lista_se_puede_buscar_por_nombre_del_cliente(self):
+        """
+        Los usuarios finales buscan por nombre, no por RUC. La razón social
+        solo existe en cobros facturados, así que este es el campo que cubre
+        el caso "quiero cargar al portal la factura de CONSTRUCTORA X".
+        """
+        self._cobrar_como_factura()
+        resp = self.client.get('/api/v1/caja/pagos/lista/', {
+            'sesion': self.sesion.id, 'q': 'constructora',
+        })
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.data['count'], 1)
+        self.assertEqual(resp.data['results'][0]['cliente_razon_social'],
+                         'CONSTRUCTORA X SA')
+
+    def test_la_busqueda_por_nombre_tambien_alcanza_a_los_tickets(self):
+        """
+        Un ticket normal no tiene razón social (ver
+        test_un_ticket_normal_no_guarda_ruc): su nombre vive en el pedido.
+        Buscar solo en cliente_razon_social dejaría afuera a todos los cobros
+        sin factura.
+        """
+        self.client.post('/api/v1/caja/pagos/', {
+            'pedido_id':      self.pedido.id,
+            'medio_pago':     'efectivo',
+            'monto_recibido': '110000',
+        }, format='json')
+        resp = self.client.get('/api/v1/caja/pagos/lista/', {
+            'sesion': self.sesion.id, 'q': 'Cliente de Prueba',
+        })
+        self.assertEqual(resp.data['count'], 1)
+        self.assertEqual(resp.data['results'][0]['tipo_comprobante'], 'ticket')
+
+    def test_la_busqueda_por_nombre_que_no_coincide_no_devuelve_nada(self):
+        self._cobrar_como_factura()
+        resp = self.client.get('/api/v1/caja/pagos/lista/', {
+            'sesion': self.sesion.id, 'q': 'ferreteria lopez',
+        })
+        self.assertEqual(resp.data['count'], 0)
+
+    def test_ver_el_comprobante_devuelve_lo_mismo_que_reimprimir(self):
+        """
+        El cuadro "Datos para cargar en e-Kuatia'i" del frontend se arma
+        desde esta respuesta: si no coincidiera con la de reimprimir, la
+        cajera copiaría al portal datos distintos a los del papel.
+        """
+        from apps.caja.models import Pago
+        self._cobrar_como_factura()
+        pago = Pago.objects.get(pedido=self.pedido)
+
+        visto   = self.client.get(f'/api/v1/caja/pagos/{pago.id}/comprobante/')
+        impreso = self.client.post(f'/api/v1/caja/pagos/{pago.id}/reimprimir/')
+
+        self.assertEqual(visto.status_code, 200, visto.data)
+        self.assertEqual(visto.data['tipo_comprobante'],
+                         impreso.data['tipo_comprobante'])
+        self.assertEqual(visto.data['ticket'], impreso.data['ticket'])
+
+    def test_ver_el_comprobante_no_toca_la_impresora(self):
+        """
+        La razón de ser del endpoint: antes, volver a ver los datos para
+        cargarlos al portal obligaba a reimprimir, o sea gastar un papel por
+        cada factura. Si esto vuelve a imprimir, el endpoint no sirve.
+        """
+        from unittest.mock import patch
+        from apps.caja.models import Pago
+        self._cobrar_como_factura()
+        pago = Pago.objects.get(pedido=self.pedido)
+
+        with patch('apps.caja.views.imprimir_factura') as factura, \
+             patch('apps.caja.views.imprimir_ticket') as ticket:
+            resp = self.client.get(f'/api/v1/caja/pagos/{pago.id}/comprobante/')
+
+        self.assertEqual(resp.status_code, 200)
+        factura.assert_not_called()
+        ticket.assert_not_called()
+
+
+class HistorialDeCobrosTests(TestCase):
+    """
+    La lista de cobros solo miraba la sesión abierta, y la pantalla de caja
+    ni se renderiza sin sesión: un cobro de ayer era inalcanzable. Como las
+    facturas se cargan al portal del DNIT cuando se puede —típicamente al día
+    siguiente— eso dejaba sin ayudante de carga justo al caso más frecuente.
+
+    `historico=1` levanta ese recorte, pero no la regla de visibilidad: quien
+    no es admin sigue viendo solo sus propios cobros.
+    """
+    databases = {'default', 'sync'}
+
+    def setUp(self):
+        from rest_framework.test import APIClient
+        from apps.caja.models import SesionCaja
+
+        self.cajero   = f.crear_usuario()
+        self.variante = f.crear_variante(precio=Decimal('110000'))
+
+        # Turno de ayer: se cobra una factura y después se cierra.
+        pedido_viejo = f.crear_pedido(self.cajero, [(self.variante, 1, '110000')])
+        self.sesion_vieja = f.crear_sesion(self.cajero)
+        self.pago_viejo = f.crear_pago(pedido_viejo, self.sesion_vieja,
+                                       self.cajero, '110000')
+        self.pago_viejo.tipo_comprobante     = 'factura'
+        self.pago_viejo.cliente_ruc          = f.RUC_RECEPTOR
+        self.pago_viejo.cliente_razon_social = 'CONSTRUCTORA X SA'
+        self.pago_viejo.save()
+        # Una sola sesión abierta por cajero (UniqueConstraint del modelo),
+        # así que hay que cerrar esta antes de abrir la de hoy.
+        self.sesion_vieja.estado = SesionCaja.ESTADO_CERRADA
+        self.sesion_vieja.save(update_fields=['estado'])
+
+        # Turno de hoy, vacío.
+        self.sesion_hoy = f.crear_sesion(self.cajero)
+
+        self.client = APIClient()
+        self.client.force_authenticate(self.cajero)
+
+    def test_sin_historico_un_cobro_de_otro_turno_no_aparece(self):
+        resp = self.client.get('/api/v1/caja/pagos/lista/', {
+            'sesion': self.sesion_hoy.id,
+        })
+        self.assertEqual(resp.data['count'], 0)
+        self.assertEqual(resp.data['alcance'], 'turno')
+
+    def test_con_historico_aparece_el_cobro_del_turno_cerrado(self):
+        resp = self.client.get('/api/v1/caja/pagos/lista/', {'historico': '1'})
+        self.assertEqual(resp.status_code, 200, resp.data)
+        self.assertEqual(resp.data['alcance'], 'historico')
+        self.assertEqual(resp.data['count'], 1)
+        self.assertEqual(resp.data['results'][0]['id'], self.pago_viejo.id)
+
+    def test_el_historico_se_puede_buscar_por_nombre(self):
+        resp = self.client.get('/api/v1/caja/pagos/lista/', {
+            'historico': '1', 'q': 'constructora',
+        })
+        self.assertEqual(resp.data['count'], 1)
+        self.assertEqual(resp.data['results'][0]['id'], self.pago_viejo.id)
+
+    def test_el_historico_no_muestra_cobros_de_otro_cajero(self):
+        """
+        Es la misma regla que ya regía al pedir una sesión explícita. Sin
+        esto, `historico=1` sería el agujero por el que cualquier cajero ve
+        la caja entera del negocio.
+        """
+        otra   = f.crear_usuario(username='otra_cajera')
+        pedido = f.crear_pedido(otra, [(self.variante, 1, '110000')])
+        sesion = f.crear_sesion(otra)
+        f.crear_pago(pedido, sesion, otra, '110000')
+
+        resp = self.client.get('/api/v1/caja/pagos/lista/', {'historico': '1'})
+        ids = [p['id'] for p in resp.data['results']]
+        self.assertEqual(ids, [self.pago_viejo.id])
+
+    def test_un_admin_ve_los_cobros_de_todos(self):
+        from rest_framework.test import APIClient
+        otra   = f.crear_usuario(username='otra_cajera')
+        pedido = f.crear_pedido(otra, [(self.variante, 1, '110000')])
+        sesion = f.crear_sesion(otra)
+        pago_ajeno = f.crear_pago(pedido, sesion, otra, '110000')
+
+        admin = f.crear_usuario(username='duenha', rol='admin')
+        cliente_admin = APIClient()
+        cliente_admin.force_authenticate(admin)
+
+        resp = cliente_admin.get('/api/v1/caja/pagos/lista/', {'historico': '1'})
+        ids = sorted(p['id'] for p in resp.data['results'])
+        self.assertEqual(ids, sorted([self.pago_viejo.id, pago_ajeno.id]))
+
+    def test_un_cobro_viejo_se_puede_reabrir_para_cargarlo_al_portal(self):
+        """
+        El recorrido completo del pedido: encontrar la factura de ayer y
+        volver a abrir sus datos, sin imprimir.
+        """
+        resp = self.client.get(
+            f'/api/v1/caja/pagos/{self.pago_viejo.id}/comprobante/')
+        self.assertEqual(resp.status_code, 200, resp.data)
+        self.assertEqual(resp.data['tipo_comprobante'], 'factura')
+        self.assertEqual(resp.data['ticket']['cliente_ruc'], f.RUC_RECEPTOR)
+        # Lo que el ayudante de carga necesita para el portal.
+        self.assertIn('base_gravada_10', resp.data['ticket'])
+        self.assertIn('iva_10', resp.data['ticket'])

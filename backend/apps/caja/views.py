@@ -17,6 +17,7 @@ from apps.usuarios.permissions import EsAdminOCajero, EsAdmin
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from django.db import transaction, IntegrityError
+from django.db.models import Q
 from django.conf import settings
 from decimal import Decimal
 import logging
@@ -460,100 +461,151 @@ class RegistrarPagoView(views.APIView):
         }, status=status.HTTP_201_CREATED)
 
 
+# Tope de resultados cuando se busca fuera del turno abierto. Sin esto una
+# búsqueda histórica sin criterio arrastraría la tabla de pagos entera; con
+# esto la respuesta avisa que quedó recortada ("truncado") y la UI puede
+# pedir que afinen la búsqueda.
+LIMITE_HISTORICO = 50
+
+
 class ListaPagosView(views.APIView):
     """
-    GET /caja/pagos/lista/?sesion=<id>&ruc=<texto>
-    Lista los pagos de la sesión activa o de una sesión específica.
-    `ruc` filtra por el RUC/CI cargado al facturar (búsqueda parcial) —
-    solo tiene resultado en pagos cobrados como factura, un ticket normal
-    no tiene RUC.
+    GET /caja/pagos/lista/?sesion=<id>&q=<texto>&ruc=<texto>&historico=1
+
+    Por defecto lista los pagos de la sesión activa (o de una sesión puntual
+    con `sesion`): es el "Cobros del turno" de la pantalla de caja.
+
+    `q` busca por nombre del cliente, RUC/CI o número de comprobante. El
+    nombre se busca en DOS campos a propósito: `cliente_razon_social` solo se
+    completa al cobrar como factura, mientras que `pedido.cliente_nombre`
+    está en todos los cobros — mirar uno solo dejaría la mitad afuera. Es lo
+    que piden los usuarios finales: buscan por nombre, no por RUC.
+
+    `ruc` sigue existiendo como filtro propio por compatibilidad con quien ya
+    lo usa; equivale a `q` restringido al RUC.
+
+    `historico=1` deja de recortar al turno. Sirve para cargar al portal de
+    e-Kuatia'i facturas cobradas en turnos ya cerrados, que de otro modo son
+    inalcanzables: la pantalla de caja ni se abre sin sesión, así que un
+    cobro de ayer no tenía forma de volver a mirarse. Los resultados se
+    acotan a LIMITE_HISTORICO por fecha descendente.
+
+    En los tres casos rige la misma regla de visibilidad que ya valía para
+    una sesión explícita: quien no es admin solo ve cobros de sus propias
+    sesiones.
     """
     permission_classes = [EsAdminOCajero]
 
     def get(self, request):
-        sesion_id = request.query_params.get('sesion')
-        if sesion_id:
-            qs = Pago.objects.filter(sesion_caja_id=sesion_id)
-            if request.user.rol != 'admin':
-                qs = qs.filter(sesion_caja__cajero=request.user)
+        historico = request.query_params.get('historico') in ('1', 'true', 'True')
+
+        if historico:
+            qs = Pago.objects.all()
         else:
-            sesion = _sesion_activa(request.user)
-            qs = Pago.objects.filter(sesion_caja=sesion) if sesion else Pago.objects.none()
+            sesion_id = request.query_params.get('sesion')
+            if sesion_id:
+                qs = Pago.objects.filter(sesion_caja_id=sesion_id)
+            else:
+                sesion = _sesion_activa(request.user)
+                qs = Pago.objects.filter(sesion_caja=sesion) if sesion else Pago.objects.none()
+
+        # Para la sesión activa es redundante (esa sesión ya es suya), pero
+        # aplicarlo siempre evita que el alcance histórico se vuelva un
+        # agujero por el que un cajero vea los cobros de otro.
+        if request.user.rol != 'admin':
+            qs = qs.filter(sesion_caja__cajero=request.user)
 
         ruc = (request.query_params.get('ruc') or '').strip()
         if ruc:
             qs = qs.filter(cliente_ruc__icontains=ruc)
 
+        texto = (request.query_params.get('q') or '').strip()
+        if texto:
+            qs = qs.filter(
+                Q(cliente_razon_social__icontains=texto) |
+                Q(pedido__cliente_nombre__icontains=texto) |
+                Q(cliente_ruc__icontains=texto) |
+                Q(numero_ticket__icontains=texto)
+            )
+
         qs = qs.select_related('pedido', 'cajero').order_by('-fecha')
+
+        # count() antes de recortar: el frontend necesita saber cuántos hay
+        # en total para avisar que la lista quedó cortada.
+        total = qs.count()
+        if historico:
+            qs = qs[:LIMITE_HISTORICO]
+
         return Response({
-            'results': PagoSerializer(qs, many=True).data,
-            'count':   qs.count(),
+            'results':  PagoSerializer(qs, many=True).data,
+            'count':    total,
+            'alcance':  'historico' if historico else 'turno',
+            'truncado': bool(historico and total > LIMITE_HISTORICO),
         })
 
 
 class ReimprimirTicketView(views.APIView):
     """
     POST /caja/pagos/<id>/reimprimir/
-    Reimprime el comprobante de un pago ya procesado.
-    Útil cuando el papel se atasca o el cliente pide otra copia.
+    Reimprime el comprobante de un pago ya procesado y manda el papel a la
+    impresora. Útil cuando el papel se atasca o el cliente pide otra copia.
 
-    Si el pago tenía documento electrónico, se reimprime la FACTURA con su
-    CDC y su timbrado originales — no un ticket. Reimprimir un ticket en
-    lugar de la factura le daría al cliente un papel sin valor fiscal, y
-    reconstruir los datos desde settings sacaría el timbrado de hoy en vez
-    del que estaba vigente cuando se emitió.
+    Qué se reimprime (factura con su CDC y timbrado originales, factura sin
+    documento electrónico, o ticket) lo decide _reconstruir_comprobante().
+
+    Para solo VER los datos sin imprimir —el caso de cargar la factura en el
+    portal del DNIT más tarde— está ComprobanteView, que no toca la
+    impresora.
     """
     permission_classes = [EsAdminOCajero]
 
     def post(self, request, pk):
-        pago = get_object_or_404(
-            Pago.objects.select_related('pedido', 'cajero', 'sesion_caja',
-                                        'documento_electronico')
-                        .prefetch_related('pedido__items__variante__producto'),
-            pk=pk
-        )
+        pago = _pago_para_comprobante(pk)
+        tipo_comprobante, datos_ticket = _reconstruir_comprobante(pago)
 
-        documento = getattr(pago, 'documento_electronico', None)
-        if documento is not None:
-            tipo_comprobante = 'factura'
-            datos_ticket = _datos_ticket(
-                pago.pedido, pago, pago.sesion_caja,
-                tipo_comprobante=tipo_comprobante,
-                cliente_ruc=documento.receptor_ruc,
-                cliente_razon_social=documento.receptor_razon_social,
-                cliente_telefono=documento.receptor_telefono,
-                cliente_direccion=documento.receptor_direccion,
-                documento=documento,
-            )
-            resultado = imprimir_factura(datos_ticket)
-        elif pago.tipo_comprobante == Pago.COMPROBANTE_FACTURA:
-            # Sin DE real (Solución Gratuita / e-Kuatia'i, el caso de hoy)
-            # los datos del cliente no salen de un documento fiscal sino de
-            # lo que se guardó en el propio pago al cobrar.
-            tipo_comprobante = 'factura'
-            datos_ticket = _datos_ticket(
-                pago.pedido, pago, pago.sesion_caja,
-                tipo_comprobante=tipo_comprobante,
-                cliente_ruc=pago.cliente_ruc,
-                cliente_razon_social=pago.cliente_razon_social,
-                cliente_telefono=pago.cliente_telefono,
-                cliente_direccion=pago.cliente_direccion,
-                condicion_venta=pago.condicion_venta or 'Contado',
-            )
+        if tipo_comprobante == 'factura':
             resultado = imprimir_factura(datos_ticket)
         else:
-            tipo_comprobante = 'ticket'
-            datos_ticket = _datos_ticket(pago.pedido, pago, pago.sesion_caja)
-            resultado    = imprimir_ticket(datos_ticket)
-        texto = ticket_a_texto(datos_ticket)
+            resultado = imprimir_ticket(datos_ticket)
 
         return Response({
             'ok':           resultado['ok'],
             'impresion':    resultado,
-            'ticket_texto': texto,
+            'ticket_texto': ticket_a_texto(datos_ticket),
             'ticket':       datos_ticket,
             # Qué se imprimió realmente. Sin esto el frontend no puede saber
             # si salió un ticket o una factura, y avisaría cualquier cosa.
+            'tipo_comprobante': tipo_comprobante,
+        })
+
+
+class ComprobanteView(views.APIView):
+    """
+    GET /caja/pagos/<id>/comprobante/
+    Devuelve el comprobante reconstruido de un pago ya cobrado, SIN imprimir
+    nada. Misma forma de respuesta que reimprimir y que el cobro, para que el
+    frontend pueda renderizarlo con el mismo componente.
+
+    Existe por el flujo de e-Kuatia'i: bajo Solución Gratuita la factura
+    legal se carga a mano en el portal del DNIT, con el cuadro "Datos para
+    cargar en e-Kuatia'i" que el frontend arma desde esta misma respuesta.
+    Ese cuadro solo aparecía en el instante del cobro, y la única forma de
+    volver a abrirlo era reimprimir: un papel gastado por cada factura a
+    cargar.
+
+    Es GET y no un POST con bandera a propósito: sobre un GET, un reintento
+    de red o un refetch del frontend no puede escupir papel por accidente.
+    """
+    permission_classes = [EsAdminOCajero]
+
+    def get(self, request, pk):
+        pago = _pago_para_comprobante(pk)
+        tipo_comprobante, datos_ticket = _reconstruir_comprobante(pago)
+
+        return Response({
+            'ok':               True,
+            'ticket':           datos_ticket,
+            'ticket_texto':     ticket_a_texto(datos_ticket),
             'tipo_comprobante': tipo_comprobante,
         })
 
@@ -625,6 +677,65 @@ class EstadoImpresora(views.APIView):
 
 
 # ─── Helper de ticket ─────────────────────────────────────────────────────────
+
+def _pago_para_comprobante(pk):
+    """
+    Trae un pago con todo lo que necesita _reconstruir_comprobante en una
+    sola consulta. El select_related de 'documento_electronico' no rompe
+    cuando el pago no tiene uno: es un OneToOne inverso y queda en None.
+    """
+    return get_object_or_404(
+        Pago.objects.select_related('pedido', 'cajero', 'sesion_caja',
+                                    'documento_electronico')
+                    .prefetch_related('pedido__items__variante__producto'),
+        pk=pk
+    )
+
+
+def _reconstruir_comprobante(pago):
+    """
+    Reconstruye el comprobante de un pago ya cobrado.
+    Devuelve (tipo_comprobante, datos_ticket).
+
+    La precedencia es la parte delicada, y vive solo acá:
+
+    1. Con DocumentoElectronico, el receptor y todo lo fiscal salen de ÉL.
+       El DE guarda el snapshot del timbrado vigente al emitir, así que
+       reconstruir desde settings sacaría el timbrado de hoy en vez del que
+       correspondía a esa venta.
+    2. Cobrado como factura pero sin DE (Solución Gratuita / e-Kuatia'i, el
+       caso de hoy): los datos del cliente salen de lo que quedó guardado en
+       el propio Pago al cobrar.
+    3. Cualquier otro caso es un ticket.
+
+    El orden importa: reimprimir un ticket en lugar de la factura le daría al
+    cliente un papel sin valor fiscal.
+    """
+    documento = getattr(pago, 'documento_electronico', None)
+    if documento is not None:
+        return 'factura', _datos_ticket(
+            pago.pedido, pago, pago.sesion_caja,
+            tipo_comprobante='factura',
+            cliente_ruc=documento.receptor_ruc,
+            cliente_razon_social=documento.receptor_razon_social,
+            cliente_telefono=documento.receptor_telefono,
+            cliente_direccion=documento.receptor_direccion,
+            documento=documento,
+        )
+
+    if pago.tipo_comprobante == Pago.COMPROBANTE_FACTURA:
+        return 'factura', _datos_ticket(
+            pago.pedido, pago, pago.sesion_caja,
+            tipo_comprobante='factura',
+            cliente_ruc=pago.cliente_ruc,
+            cliente_razon_social=pago.cliente_razon_social,
+            cliente_telefono=pago.cliente_telefono,
+            cliente_direccion=pago.cliente_direccion,
+            condicion_venta=pago.condicion_venta or 'Contado',
+        )
+
+    return 'ticket', _datos_ticket(pago.pedido, pago, pago.sesion_caja)
+
 
 def _datos_ticket(pedido, pago, sesion, tipo_comprobante='ticket',
                   cliente_ruc='', cliente_razon_social='', cliente_telefono='',

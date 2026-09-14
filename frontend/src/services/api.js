@@ -146,6 +146,9 @@ export const cajaApi = {
   registrarPago:   (data)      => api.post('/caja/pagos/', data),
   listaPagos:      (params)    => api.get('/caja/pagos/lista/', { params }),
   reimprimir:      (id)        => api.post(`/caja/pagos/${id}/reimprimir/`),
+  // Mismo comprobante que reimprimir pero SIN mandar nada a la impresora —
+  // es el que reabre el cuadro "Datos para cargar en e-Kuatia'í".
+  comprobante:     (id)        => api.get(`/caja/pagos/${id}/comprobante/`),
   estadoImpresora: ()          => api.get('/caja/impresora/estado/'),
 
   // Reportes — descargan un archivo (PDF o Excel)

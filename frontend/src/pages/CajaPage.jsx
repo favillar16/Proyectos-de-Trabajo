@@ -18,7 +18,7 @@ import {
   CheckCircle, XCircle, Printer, Lock, Unlock,
   ChevronRight, Package, Clock, AlertCircle,
   RefreshCw, Receipt, X, Loader2, TrendingUp,
-  Wifi, WifiOff, Search, User, Copy, ClipboardCheck, ExternalLink,
+  Wifi, WifiOff, Search, User, Copy, ClipboardCheck, ExternalLink, Eye,
 } from 'lucide-react'
 import Layout from '../components/layout/Layout'
 import { cajaApi, ventasApi } from '../services/api'
@@ -847,8 +847,13 @@ function AyudanteCargaPortal({ ticket }) {
 }
 
 // ─── Ticket térmico (imprimible) ──────────────────────────────────────────────
+// `datos.origen === 'historial'` marca que esto se reabrió desde "Cobros del
+// turno" y no es un cobro recién hecho. Cambia solo la presentación: el tilde
+// verde de "Pago confirmado" y el botón "Cobrar siguiente" mienten cuando se
+// está mirando una venta de hace tres horas para cargarla al portal.
 function Ticket({ datos, onNuevo, onImprimir }) {
   const ticketRef = useRef()
+  const esHistorial = datos.origen === 'historial'
 
   const imprimir = () => {
     onImprimir?.()
@@ -860,17 +865,20 @@ function Ticket({ datos, onNuevo, onImprimir }) {
       alignItems:'center', justifyContent:'center', padding:'20px',
       background:C.bgSec }}>
       <div style={{ width:'100%', maxWidth:'360px' }}>
-        {/* Éxito */}
+        {/* Encabezado — cobro recién hecho vs. comprobante reabierto */}
         <div style={{ textAlign:'center', marginBottom:'20px' }}>
           <div style={{ width:'56px', height:'56px', borderRadius:'50%',
-            background:C.successBg, border:`2px solid ${C.success}`,
+            background: esHistorial ? C.bgTer : C.successBg,
+            border:`2px solid ${esHistorial ? C.border : C.success}`,
             display:'flex', alignItems:'center', justifyContent:'center',
             margin:'0 auto 12px' }}>
-            <CheckCircle size={28} style={{ color:C.success }} />
+            {esHistorial
+              ? <Receipt size={26} style={{ color:C.textSec }} />
+              : <CheckCircle size={28} style={{ color:C.success }} />}
           </div>
           <h2 style={{ fontSize:'20px', fontWeight:'500',
             fontFamily:'var(--font-display)', color:C.text }}>
-            Pago confirmado
+            {esHistorial ? 'Comprobante' : 'Pago confirmado'}
           </h2>
           <p style={{ fontSize:'13px', color:C.textMuted, marginTop:'4px' }}>
             {datos.tipo_comprobante === 'factura' ? 'Factura' : 'Ticket'} #{datos.ticket.numero_ticket}
@@ -1041,7 +1049,9 @@ function Ticket({ datos, onNuevo, onImprimir }) {
               background:C.sidebar, border:`1.5px solid ${C.gold}`,
               color:C.gold, fontSize:'14px', fontWeight:'500', cursor:'pointer',
               display:'flex', alignItems:'center', justifyContent:'center', gap:'7px' }}>
-            <CheckCircle size={16} /> Cobrar siguiente
+            {esHistorial
+              ? <><X size={16} /> Cerrar</>
+              : <><CheckCircle size={16} /> Cobrar siguiente</>}
           </button>
         </div>
 
@@ -1215,7 +1225,14 @@ export default function CajaPage() {
   const [pedidoActivo,  setPedidoActivo]  = useState(null)
   const [ticketDatos,   setTicketDatos]   = useState(null)
   const [mostraCierre,  setMostraCierre]  = useState(false)
-  const [buscarRuc,     setBuscarRuc]     = useState('')
+  const [busqueda,      setBusqueda]      = useState('')
+  // 'turno' = solo la sesión abierta (lo de siempre) · 'historico' = también
+  // turnos cerrados, para cargar al portal del DNIT facturas de días
+  // anteriores.
+  const [alcancePagos,  setAlcancePagos]  = useState('turno')
+  // Para hacer visible el comprobante cuando se reabre en tablet: con ancho
+  // < 768px las columnas se apilan y el panel queda debajo de la lista.
+  const panelComprobante = useRef(null)
 
   // Estado de la impresora
   const { data: impresora } = useQuery({
@@ -1245,20 +1262,44 @@ export default function CajaPage() {
   })
   const pedidosListos = pedidosData?.results || []
 
-  // Pagos de la sesión actual — filtrables por RUC (solo tiene resultado en
-  // los cobrados como factura; un ticket normal no tiene RUC cargado)
-  const rucBuscado = buscarRuc.trim()
+  // Cobros listados abajo de los pedidos. `q` busca por nombre del cliente,
+  // RUC/CI o número de comprobante — el nombre es lo que usa la gente del
+  // local, el RUC solo existe en los cobrados como factura.
+  const textoBuscado = busqueda.trim()
+  const esHistorico  = alcancePagos === 'historico'
   const { data: pagosData } = useQuery({
-    queryKey: ['pagos-sesion', sesion?.id, rucBuscado],
+    queryKey: ['pagos-sesion', sesion?.id, textoBuscado, alcancePagos],
     queryFn:  () => cajaApi.listaPagos({
-      sesion: sesion.id,
-      ...(rucBuscado ? { ruc: rucBuscado } : {}),
+      ...(esHistorico ? { historico: 1 } : { sesion: sesion.id }),
+      ...(textoBuscado ? { q: textoBuscado } : {}),
     }).then(r => r.data),
     enabled:  Boolean(sesion?.id),
     staleTime: 10_000,
   })
   const pagos = pagosData?.results || []
 
+  // Reabre el comprobante en el panel derecho. Es lo que hace útil volver a
+  // un cobro viejo: trae de nuevo el cuadro "Datos para cargar en
+  // e-Kuatia'í" con los botones de copiar, que antes solo existía en el
+  // instante del cobro.
+  const abrirComprobante = useCallback((data) => {
+    setTicketDatos({ ...data, origen: 'historial' })
+    setPedidoActivo(null)
+    requestAnimationFrame(() => {
+      panelComprobante.current?.scrollIntoView({ behavior:'smooth', block:'start' })
+    })
+  }, [])
+
+  // Ver sin imprimir: GET, no gasta papel.
+  const verComprobanteMut = useMutation({
+    mutationFn: (pagoId) => cajaApi.comprobante(pagoId).then(r => r.data),
+    onSuccess: abrirComprobante,
+    onError: (err) => toast.error(
+      err.response?.data?.error || 'No se pudo abrir el comprobante'),
+  })
+
+  // Reimprimir: manda el papel Y abre el comprobante, así el mismo clic
+  // sirve para las dos cosas.
   const reimprimirMut = useMutation({
     mutationFn: (pagoId) => cajaApi.reimprimir(pagoId).then(r => r.data),
     onSuccess: (data) => {
@@ -1267,6 +1308,7 @@ export default function CajaPage() {
       } else {
         toast.error(data.impresion?.error || 'La impresora no pudo reimprimir')
       }
+      abrirComprobante(data)
     },
     onError: (err) => toast.error(err.response?.data?.error || 'No se pudo reimprimir'),
   })
@@ -1421,21 +1463,21 @@ export default function CajaPage() {
               ))
             )}
 
-            {/* Historial de pagos del día — buscable por RUC, con reimpresión */}
+            {/* Cobros — buscables por nombre/RUC/nro, reabribles y reimprimibles */}
             <div style={{ marginTop:'16px' }}>
               <p style={{ fontSize:'11px', fontWeight:'500', color:C.textMuted,
                 textTransform:'uppercase', letterSpacing:'0.06em',
                 marginBottom:'8px' }}>
-                Cobros del turno
+                {esHistorico ? 'Cobros anteriores' : 'Cobros del turno'}
               </p>
 
               <div style={{ position:'relative', marginBottom:'8px' }}>
                 <Search size={13} style={{ position:'absolute', left:'9px', top:'50%',
                   transform:'translateY(-50%)', color:C.textMuted }} />
                 <input
-                  value={buscarRuc}
-                  onChange={e => setBuscarRuc(e.target.value)}
-                  placeholder="Buscar factura por RUC/CI..."
+                  value={busqueda}
+                  onChange={e => setBusqueda(e.target.value)}
+                  placeholder="Buscar por nombre, RUC/CI o nro..."
                   style={{ width:'100%', height:'30px', padding:'0 10px 0 28px',
                     borderRadius:'7px', border:`1px solid ${C.border}`,
                     fontSize:'12px', color:C.text, background:C.bg, outline:'none' }}
@@ -1444,11 +1486,37 @@ export default function CajaPage() {
                 />
               </div>
 
+              {/* Alcance: el turno abierto o también los ya cerrados. Las
+                  facturas suelen cargarse al portal del DNIT al día
+                  siguiente, cuando ese turno ya cerró. */}
+              <div style={{ display:'flex', gap:'4px', marginBottom:'8px' }}>
+                {[['turno','Este turno'], ['historico','Turnos anteriores']].map(([k, etiqueta]) => (
+                  <button key={k} onClick={() => setAlcancePagos(k)}
+                    style={{ flex:1, height:'26px', borderRadius:'6px',
+                      fontSize:'11px', cursor:'pointer',
+                      border:`1px solid ${alcancePagos === k ? C.gold : C.border}`,
+                      background: alcancePagos === k ? C.goldMuted : C.bg,
+                      color: alcancePagos === k ? C.goldDark : C.textSec,
+                      fontWeight: alcancePagos === k ? '600' : '400' }}>
+                    {etiqueta}
+                  </button>
+                ))}
+              </div>
+
+              {pagosData?.truncado && (
+                <p style={{ fontSize:'10.5px', color:C.warning, padding:'0 2px 6px' }}>
+                  Mostrando los {pagos.length} más recientes de {pagosData.count}.
+                  Afiná la búsqueda para encontrar uno más viejo.
+                </p>
+              )}
+
               {pagos.length === 0 ? (
                 <p style={{ fontSize:'11.5px', color:C.textMuted, padding:'4px 2px' }}>
-                  {rucBuscado
-                    ? `Sin cobros con RUC/CI "${rucBuscado}" en este turno`
-                    : 'Todavía no hay cobros en este turno'}
+                  {textoBuscado
+                    ? `Sin cobros que coincidan con "${textoBuscado}"${esHistorico ? '' : ' en este turno'}`
+                    : (esHistorico
+                        ? 'No hay cobros anteriores'
+                        : 'Todavía no hay cobros en este turno')}
                 </p>
               ) : pagos.map(p => (
                 <div key={p.id} style={{ display:'flex', justifyContent:'space-between',
@@ -1475,12 +1543,27 @@ export default function CajaPage() {
                       </p>
                     )}
                   </div>
-                  <div style={{ display:'flex', alignItems:'center', gap:'8px', flexShrink:0 }}>
-                    <p style={{ fontSize:'13px', fontWeight:'600', color:C.goldDark }}>
+                  <div style={{ display:'flex', alignItems:'center', gap:'6px', flexShrink:0 }}>
+                    <p style={{ fontSize:'13px', fontWeight:'600', color:C.goldDark,
+                      marginRight:'2px' }}>
                       {formatGs(p.monto)}
                     </p>
+                    {/* Ver: abre el comprobante con el cuadro de datos para
+                        el portal, sin gastar papel. */}
+                    <button onClick={() => verComprobanteMut.mutate(p.id)}
+                      disabled={verComprobanteMut.isPending}
+                      title={p.tipo_comprobante === 'factura'
+                        ? 'Ver datos para cargar en e-Kuatia\'í'
+                        : 'Ver comprobante'}
+                      style={{ display:'flex', alignItems:'center', justifyContent:'center',
+                        width:'26px', height:'26px', borderRadius:'6px',
+                        border:`1px solid ${C.border}`, background:C.bgSec,
+                        color:C.textSec, cursor: verComprobanteMut.isPending ? 'default' : 'pointer',
+                        opacity: verComprobanteMut.isPending ? 0.5 : 1 }}>
+                      <Eye size={13}/>
+                    </button>
                     <button onClick={() => reimprimirMut.mutate(p.id)}
-                      disabled={reimprimirMut.isPending} title="Reimprimir"
+                      disabled={reimprimirMut.isPending} title="Reimprimir en la impresora"
                       style={{ display:'flex', alignItems:'center', justifyContent:'center',
                         width:'26px', height:'26px', borderRadius:'6px',
                         border:`1px solid ${C.border}`, background:C.bgSec,
@@ -1496,7 +1579,8 @@ export default function CajaPage() {
         </div>
 
         {/* ── Columna derecha: cobro activo / ticket ── */}
-        <div style={{ flex:1, display:'flex', flexDirection:'column',
+        <div ref={panelComprobante}
+          style={{ flex:1, display:'flex', flexDirection:'column',
           overflow:'hidden', background:C.bg }}>
 
           {/* Ticket post-pago */}

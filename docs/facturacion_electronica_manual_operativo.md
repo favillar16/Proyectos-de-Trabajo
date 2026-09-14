@@ -62,6 +62,34 @@ Es lo que se conoce como **e-Kuatia'i**. Consecuencia práctica, sin vuelta:
 
 ---
 
+## 2.b Cargar la factura al portal más tarde
+
+No hace falta cargar la factura en el momento del cobro. El cuadro de datos
+se puede volver a abrir cuando se quiera, sin gastar papel.
+
+En la pantalla de caja, abajo de los pedidos, está la lista de cobros. Cada
+renglón tiene **dos botones**:
+
+| Botón | Qué hace |
+|---|---|
+| 👁 (ojo) | Vuelve a abrir el comprobante completo **con el cuadro de datos para e-Kuatia'í**. No imprime nada. Es el que hay que usar para cargar la factura al portal. |
+| 🖨 (impresora) | Reimprime el papel en la impresora térmica **y además** abre el comprobante. Para cuando el papel se atascó o el cliente pide otra copia. |
+
+Dos cosas más de esa lista:
+
+- **Se busca por nombre del cliente**, no solo por RUC. También sirve el
+  número de comprobante. El buscador está arriba de la lista.
+- Con el botón **"Turnos anteriores"** se ven también los cobros de días
+  pasados, no solo los del turno abierto — que es lo normal si las facturas
+  se cargan al portal al día siguiente. Muestra los 50 más recientes; si la
+  factura buscada es más vieja, escribir el nombre del cliente en el
+  buscador.
+
+Cada cajera ve sus propios cobros; el usuario **administrador** ve los de
+todos.
+
+---
+
 ## 3. Las credenciales del portal e-Kuatia'í / Marangatú
 
 El usuario y la contraseña (RUC + Clave de Acceso) **no van a ningún archivo
