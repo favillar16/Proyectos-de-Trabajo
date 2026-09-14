@@ -290,6 +290,11 @@ DATOS_FISCALES = {
     'ciudad_desc':         config('FISCAL_CIUDAD_DESC', default=''),
     'actividad_economica': config('FISCAL_ACTIVIDAD_CODIGO', default=''),
     'actividad_desc':      config('FISCAL_ACTIVIDAD_DESC', default=''),
+
+    # Leyenda obligatoria del art. 3 inc. 7 de la RG 41/2014 en la nota de
+    # remisión (campo dInfoFisc; la NT 007 la volvió obligatoria). Es un texto
+    # legal que confirma la contadora: el sistema no lo inventa.
+    'leyenda_remision':    config('FISCAL_LEYENDA_REMISION', default=''),
 }
 
 # Datos de contacto que van al pie de la Nota de Pedido. NO son los fiscales:

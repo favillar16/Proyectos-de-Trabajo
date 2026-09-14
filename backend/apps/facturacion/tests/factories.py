@@ -52,6 +52,9 @@ DATOS_FISCALES_COMPLETOS = {
     'ciudad_desc': 'CNEL. OVIEDO',
     'actividad_economica': '47523',
     'actividad_desc': 'Comercio al por menor de materiales de construcción',
+    # Leyenda de la RG 41/2014 que la NT 007 volvió obligatoria en la remisión.
+    # Texto de prueba: el real lo confirma la contadora.
+    'leyenda_remision': 'Leyenda art. 3 inc. 7 RG 41/2014 (texto de prueba)',
 }
 
 SIFEN_PRENDIDO = {

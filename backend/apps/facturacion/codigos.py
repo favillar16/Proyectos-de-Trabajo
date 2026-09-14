@@ -235,6 +235,35 @@ def descripcion_tarjeta(denominacion: int, descripcion_libre: str = '') -> str:
     return DENOMINACION_TARJETA.get(denominacion, 'Otro')
 
 
+# ─── Reglas de las Notas Técnicas sobre el receptor ──────────────────────────
+# Revisadas las 27 NT publicadas al 14/09/2026; ver docs/migracion_ekuatia.md.
+
+# Tipos de documento donde NO se informa el tipo de transacción (campo D011).
+# NT 006: "No informar el tipo de transacción cuando C002≠1 o 4" — mandarlo en
+# una nota de crédito, débito o remisión es rechazo (código 1216).
+TIPOS_CON_TIPO_TRANSACCION = (TIPO_DE_FACTURA, TIPO_DE_AUTOFACTURA)
+
+# Monto a partir del cual el receptor NO puede quedar sin identificar
+# (validación D208c, código 1321).
+#
+# La NT 021 lo puso en 35.000.000 el 01/01/2024 y la NT 024 lo **bajó a
+# 7.000.000** el 01/01/2025. Para este rubro no es un caso de borde: siete
+# millones son los pisos de un baño. Toda venta de ese monto para arriba
+# tiene que identificar al comprador.
+MONTO_EXIGE_IDENTIFICAR_RECEPTOR = 7_000_000
+
+# NT 023: en nota de crédito, débito o remisión el receptor no puede ser
+# innominado, cualquiera sea el monto (validación D208e, código 1331).
+TIPOS_QUE_EXIGEN_RECEPTOR_IDENTIFICADO = (
+    TIPO_DE_NOTA_CREDITO, TIPO_DE_NOTA_DEBITO, TIPO_DE_NOTA_REMISION)
+
+# Longitudes que fijan las NT y que el sistema puede superar por su cuenta.
+# NT 009: el código interno del ítem (E701) es de 1 a 50 — el SKU del catálogo
+# admite 100, así que hay que recortarlo. La descripción (E708) llega a 2000.
+LARGO_MAX_CODIGO_ITEM = 50
+LARGO_MAX_DESCRIPCION_ITEM = 2000
+
+
 # ─── Naturaleza del receptor (campo iNatRec) ─────────────────────────────────
 RECEPTOR_CONTRIBUYENTE    = 1   # tiene RUC
 RECEPTOR_NO_CONTRIBUYENTE = 2   # consumidor final, se identifica con CI

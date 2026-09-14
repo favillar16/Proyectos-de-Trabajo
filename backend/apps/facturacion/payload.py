@@ -227,6 +227,7 @@ def _cliente(documento) -> dict:
             cliente['documentoTipo'] = codigos.IDENTIDAD_CEDULA_PY
             cliente['documentoNumero'] = identificacion
         else:
+            _exigir_receptor_identificado(documento)
             cliente['documentoTipo'] = codigos.IDENTIDAD_INNOMINADO
             cliente['documentoNumero'] = '0'
 
@@ -237,6 +238,43 @@ def _cliente(documento) -> dict:
         cliente.pop('direccion')
 
     return cliente
+
+
+def _exigir_receptor_identificado(documento):
+    """
+    Cuándo el SIFEN NO acepta un receptor sin identificar.
+
+    Son dos reglas de las Notas Técnicas, y la primera pega de lleno en este
+    rubro:
+
+    · **Por monto** (NT 021, corregida por la NT 024): el receptor no puede
+      ser innominado cuando el total llega a 7.000.000 Gs. La NT 021 lo había
+      puesto en 35 millones en enero de 2024; la NT 024 lo bajó a 7 millones
+      un año después. Siete millones son los pisos de un baño — o sea que acá
+      es el caso normal, no el borde.
+
+    · **Por tipo de documento** (NT 023): una nota de crédito, de débito o de
+      remisión nunca puede ir a un receptor innominado, sin importar el monto.
+      Tiene sentido: corrigen o trasladan algo que ya se le entregó a alguien
+      concreto.
+
+    Se valida acá y no al cobrar porque es el único lugar que conoce las dos
+    cosas a la vez, el tipo de documento y el total.
+    """
+    if documento.tipo_documento in codigos.TIPOS_QUE_EXIGEN_RECEPTOR_IDENTIFICADO:
+        raise DatosIncompletos(
+            f'El documento {documento.numero_completo} es una '
+            f'{codigos.DESCRIPCION_TIPO_DE.get(documento.tipo_documento, "nota")} '
+            f'y no tiene identificado al receptor. El SIFEN no lo acepta '
+            f'(NT 023): hay que cargar el RUC o la cédula del cliente.')
+
+    if _dec(documento.total) >= codigos.MONTO_EXIGE_IDENTIFICAR_RECEPTOR:
+        raise DatosIncompletos(
+            f'La venta es de {documento.total} Gs y no identifica al cliente. '
+            f'Desde la NT 024 el SIFEN exige RUC o cédula del comprador en '
+            f'toda operación de '
+            f'{codigos.MONTO_EXIGE_IDENTIFICAR_RECEPTOR:,} Gs o más.'
+            .replace(',', '.'))
 
 
 def _items(documento) -> list:
@@ -313,7 +351,10 @@ def _items(documento) -> list:
             tasa = codigos.TASA_10
 
         salida.append({
-            'codigo': item.variante.sku or f'ITEM-{item.pk}',
+            # NT 009: el código interno (E701) admite hasta 50 caracteres y
+            # el SKU del catálogo llega a 100.
+            'codigo': (item.variante.sku
+                       or f'ITEM-{item.pk}')[:codigos.LARGO_MAX_CODIGO_ITEM],
             'descripcion': _descripcion_item(item),
             'unidadMedida': UNIDAD_MEDIDA_SIFEN.get(
                 producto.unidad_venta, UNIDAD_MEDIDA_POR_DEFECTO),
@@ -363,7 +404,10 @@ def _descripcion_item(item) -> str:
     detalle = str(variante).replace(variante.producto.nombre, '').strip(' -—')
     if detalle:
         partes.append(detalle)
-    return ' - '.join(partes)[:120]
+    # NT 009 amplió E708 a 2000 caracteres. Recortar el nombre del producto en
+    # un comprobante legal es peor que mandarlo largo, así que se usa el tope
+    # real del campo y no uno inventado.
+    return ' - '.join(partes)[:codigos.LARGO_MAX_DESCRIPCION_ITEM]
 
 
 def _condicion(documento) -> dict:
@@ -490,12 +534,17 @@ def _bloque_remision(documento) -> dict:
             f'traslado cargados (motivo, vehículo, dirección de entrega). '
             f'Sin eso no se puede emitir la nota de remisión.')
 
+    if not traslado.kilometros:
+        raise DatosIncompletos(
+            f'El traslado del pedido {documento.pago.pedido_id} no tiene los '
+            f'kilómetros estimados de recorrido. La NT 010 los volvió '
+            f'obligatorios en la nota de remisión (campo E505).')
+
     remision = {
         'motivo': traslado.motivo,
         'tipoResponsable': traslado.responsable,
+        'kms': traslado.kilometros,
     }
-    if traslado.kilometros:
-        remision['kms'] = traslado.kilometros
 
     # La factura que respalda el traslado, cuando existe. El SIFEN la pide
     # para el motivo "traslado por venta".
@@ -526,6 +575,20 @@ def _bloque_remision(documento) -> dict:
     if traslado.fecha_fin_traslado:
         transporte['finEstimadoTraslado'] = traslado.fecha_fin_traslado.isoformat()
 
+    # NT 007: en la nota de remisión el campo de información del Fisco
+    # (B006 dInfoFisc) es OBLIGATORIO y tiene que llevar la leyenda del
+    # art. 3 inc. 7 de la RG 41/2014. Es un texto legal: no se inventa acá
+    # ni se deduce — lo confirma la contadora y se carga en el .env.
+    # En xmlgen ese campo se llama 'descripcion' (verificado en
+    # jsonDeMain.service.ts, no deducido del README).
+    leyenda = str(_fiscal().get('leyenda_remision') or '').strip()
+    if not leyenda:
+        raise DatosIncompletos(
+            'La nota de remisión necesita la leyenda del art. 3 inc. 7 de la '
+            'RG 41/2014 en el campo de información al Fisco, que la NT 007 '
+            'volvió obligatoria. Es un texto legal: hay que pedírselo a la '
+            'contadora y cargarlo en FISCAL_LEYENDA_REMISION del .env.')
+
     if traslado.transportista_nombre:
         transportista = {
             'nombre': traslado.transportista_nombre,
@@ -543,7 +606,8 @@ def _bloque_remision(documento) -> dict:
             }
         transporte['transportista'] = transportista
 
-    return {'remision': remision, 'transporte': transporte}
+    return {'remision': remision, 'transporte': transporte,
+            'descripcion': leyenda}
 
 
 def _domicilio_entrega(traslado) -> dict:
@@ -587,13 +651,20 @@ def construir_data(documento) -> dict:
         # que es la que figura en el comprobante que recibió el cliente.
         'fecha': _fecha_local(documento.fecha_emision),
         'tipoEmision': codigos.EMISION_NORMAL,
-        'tipoTransaccion': codigos.TRANSACCION_VENTA_MERCADERIA,
         'tipoImpuesto': codigos.IMPUESTO_IVA,
         'moneda': MONEDA,
         'cliente': _cliente(documento),
         'condicion': _condicion(documento),
         'items': _items(documento),
     }
+
+    # NT 006: el tipo de transacción NO se informa cuando el documento no es
+    # una factura o una autofactura. Mandarlo en una nota de crédito, débito
+    # o remisión es rechazo (validación D011a, código 1216). La primera
+    # versión lo mandaba siempre.
+    if documento.tipo_documento in codigos.TIPOS_CON_TIPO_TRANSACCION:
+        data['tipoTransaccion'] = codigos.TRANSACCION_VENTA_MERCADERIA
+
     data.update(_bloque_por_tipo(documento))
     return data
 

@@ -31,6 +31,8 @@ class BaseRemisionTests(TestCase):
         'vehiculo_marca': 'Hyundai',
         'vehiculo_matricula': 'ABC123',
         'direccion_entrega': 'Avda. Mcal. Lopez 1234',
+        # Obligatorio desde la NT 010.
+        'kilometros': 12,
     }
 
     def _documento_remision(self, traslado=None):
@@ -66,14 +68,14 @@ class ValidacionDelTrasladoTests(BaseRemisionTests):
         traslado = self._traslado_suelto(
             'veh', motivo=codigos.TRASLADO_POR_VENTA,
             fecha_inicio_traslado=date(2026, 9, 15),
-            direccion_entrega='Alguna calle')
+            kilometros=12, direccion_entrega='Alguna calle')
         with self.assertRaises(ValidationError) as caso:
             traslado.clean()
         self.assertIn('vehiculo_matricula', caso.exception.message_dict)
 
     def test_exige_la_direccion_de_entrega(self):
         traslado = self._traslado_suelto(
-            'dir', fecha_inicio_traslado=date(2026, 9, 15),
+            'dir', fecha_inicio_traslado=date(2026, 9, 15), kilometros=12,
             vehiculo_matricula='ABC123', direccion_entrega='   ')
         with self.assertRaises(ValidationError) as caso:
             traslado.clean()

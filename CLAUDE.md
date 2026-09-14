@@ -35,7 +35,7 @@ python manage.py sifen_transmitir --listar    # cola de documentos electrónicos
 python manage.py sifen_transmitir             # worker: transmite la cola al SIFEN (no hace nada con SIFEN_HABILITADO=False)
 ```
 
-Test coverage is **partial**: 344 backend tests (`apps/facturacion/` full suite — códigos, CDC, numeración, emisión, payload del SIFEN, transmisión, nota de crédito, remisión y POS —, plus `apps/productos/tests/`, `apps/ventas/tests/` and `apps/sync/tests/` for the bidirectional sync) and 22 frontend tests (`cd frontend && npm test`, vitest + jsdom — contextual help). Everything else has no automated tests — verify those changes manually against `docs/checklist_entrega.md`.
+Test coverage is **partial**: 364 backend tests (`apps/facturacion/` full suite — códigos, CDC, numeración, emisión, payload del SIFEN, transmisión, nota de crédito, remisión, POS y las reglas de las Notas Técnicas —, plus `apps/productos/tests/`, `apps/ventas/tests/` and `apps/sync/tests/` for the bidirectional sync) and 22 frontend tests (`cd frontend && npm test`, vitest + jsdom — contextual help). Everything else has no automated tests — verify those changes manually against `docs/checklist_entrega.md`.
 
 ### Frontend (from `frontend/`)
 ```

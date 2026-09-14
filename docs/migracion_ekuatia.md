@@ -445,28 +445,33 @@ Conviene igual tenerla a mano como **segunda opinión**: es una implementación
 independiente de las mismas reglas, y sirve para contrastar cuando algo no
 cierra. De hecho fue así como se confirmó el dígito verificador.
 
-### Pendiente nuevo: hay 27 Notas Técnicas sin revisar
+### Las 27 Notas Técnicas ✅ (14/09/2026)
 
-Este es el hallazgo incómodo. El Manual Técnico V150 que está en `docs/` tiene
-pie de página de **septiembre de 2019**. La DNIT no reemplaza el manual: le
-publica **Notas Técnicas** encima, y hay **27** (NT 001 a NT 027), la última
-de 2024.
+Revisadas una por una. El registro completo, con qué se aplicó y qué no,
+está en **`docs/notas_tecnicas_sifen.md`**.
 
-El proyecto **no ha mirado ninguna**. Todo lo verificado hasta ahora —códigos,
-CDC, código de seguridad— se contrastó contra el manual base. Si alguna NT
-movió un código o agregó un campo obligatorio, no nos enteramos.
+El riesgo era real y del mismo tipo que el del dígito verificador: **cuatro**
+notas corregían cosas que el sistema tenía mal justamente por seguir el manual
+base, que es de 2019.
 
-Hay que:
+Lo más importante que salió:
 
-1. Bajar las 27 desde la documentación técnica y registrarlas en `docs/`.
-2. Revisar cuáles tocan lo que ya está implementado (códigos, CDC, totales,
-   QR) y cuáles tocan lo que falta construir.
-3. Dejar anotado qué NT está aplicada, como pide el propio README de la
-   especificación en `SIFEN_Specification_ES-000_ES-013`: *"No copiar
-   manualmente tablas o XSD sin registrar su versión y origen"*.
+- **NT 024** — el receptor no puede quedar sin identificar en ventas de
+  **7.000.000 Gs o más**. No es técnico, es operativo: siete millones son los
+  pisos de un baño, así que en este rubro es el caso normal. Hay que avisarle
+  a la cajera antes de prender el SIFEN.
+- **NT 006** — el tipo de transacción no se informa fuera de factura y
+  autofactura. El payload lo mandaba siempre: tres de los cinco tipos de
+  documento habrían sido rechazados.
+- **NT 023** — las notas de crédito, débito y remisión nunca pueden ir a un
+  receptor innominado.
+- **NT 010, 009, 005, 007** — kilómetros obligatorios en la remisión,
+  longitudes de código y descripción del ítem, matrícula de 7 caracteres, y la
+  leyenda legal obligatoria de la remisión.
 
-El riesgo es del mismo tipo que el del dígito verificador: silencioso hasta el
-día que el SIFEN rechaza todo.
+Queda **un pendiente para la contadora**: el texto literal de la leyenda del
+art. 3 inc. 7 de la RG 41/2014, que va en la nota de remisión. No está en la
+NT y no se inventa.
 
 ### Falta también bajar la estructura XSD
 

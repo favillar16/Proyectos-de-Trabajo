@@ -323,7 +323,10 @@ class DatosTraslado(models.Model):
         help_text='Cuándo se estima que llega.')
     kilometros = models.PositiveIntegerField(
         null=True, blank=True,
-        help_text='Distancia estimada del recorrido.')
+        help_text='Kilómetros estimados de recorrido (E505). La NT 010 lo '
+                  'volvió OBLIGATORIO para la nota de remisión, así que sin '
+                  'esto el documento vuelve rechazado. Queda nullable en la '
+                  'base para no romper filas viejas; clean() lo exige.')
 
     # ── Grupo E10: transporte ────────────────────────────────────────────
     tipo_transporte = models.PositiveSmallIntegerField(
@@ -343,9 +346,9 @@ class DatosTraslado(models.Model):
                   'modalidad (E961).')
     vehiculo_marca = models.CharField(max_length=10, blank=True)
     vehiculo_matricula = models.CharField(
-        max_length=6, blank=True,
+        max_length=7, blank=True,
         help_text='La chapa. Es la identificación habitual de un camión '
-                  'local (E965).')
+                  'local (E965). La NT 005 amplió el campo de 6 a 7.')
     vehiculo_numero = models.CharField(
         max_length=20, blank=True,
         help_text='Número de identificación, si no se usa la matrícula (E963).')
@@ -402,6 +405,12 @@ class DatosTraslado(models.Model):
         if not self.direccion_entrega.strip():
             raise ValidationError({
                 'direccion_entrega': 'Falta la dirección de entrega.'})
+        if not self.kilometros:
+            raise ValidationError({
+                'kilometros':
+                    'Los kilómetros estimados del recorrido son obligatorios '
+                    'para la nota de remisión (campo E505; la NT 010 lo pasó '
+                    'de opcional a obligatorio).'})
 
     @property
     def tipo_identificacion_vehiculo(self) -> int:
