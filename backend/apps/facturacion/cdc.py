@@ -24,10 +24,10 @@ Composición:
                 ──
                 44
 
-⚠️ La composición y el módulo 11 del DV son los del Manual Técnico del
-SIFEN, pero hay que contrastarlos contra la versión vigente antes de emitir
-en producción. El chequeo concreto está en
-docs/facturacion_electronica.md §"Pendientes de verificar".
+La composición y el módulo 11 del DV están verificados contra el CDC de
+ejemplo que publica el Manual Técnico §10.1 y contra las dos librerías de
+referencia que publica la DNIT. Ver el bloque de PESO_MAX más abajo y
+docs/facturacion_electronica.md §5.2.
 """
 import secrets
 from datetime import date
@@ -83,16 +83,36 @@ def generar_codigo_seguridad(numero_documento=None) -> str:
 # Rango de pesos del módulo 11. Los pesos se aplican de derecha a izquierda
 # y vuelven a PESO_MIN al pasar PESO_MAX.
 #
-# ⚠️ Ojo con subir PESO_MAX a 11: un peso de 11 hace que ese dígito NO aporte
-# nada al checksum (11·d ≡ 0 mod 11), o sea que se puede alterar sin que el
-# DV lo note. Con un cuerpo de 43 dígitos el ciclo pasa cuatro veces por el
-# 11 y deja 8 dígitos sin protección — está medido, hay un test que lo
-# verifica (tests/test_cdc.py, ProteccionDelDigitoVerificadorTests).
+# ─── Por qué 11, aunque 11 sea matemáticamente peor ──────────────────────────
 #
-# Por eso acá el ciclo llega hasta 9 y no hasta 11. En ruc.py sí llega a 11,
-# pero ahí es inofensivo: el RUC tiene 8 dígitos y los pesos nunca pasan de 9.
+# Un peso de 11 hace que ese dígito NO aporte nada al checksum
+# (11·d ≡ 0 mod 11): se puede alterar sin que el DV se entere. En un cuerpo de
+# 43 dígitos el ciclo pasa cuatro veces por el 11, así que quedan 8 posiciones
+# ciegas. Es un defecto real y está medido.
+#
+# Entre el 23/08/2026 y el 14/09/2026 este valor estuvo en 9 justamente para
+# evitarlo. **Era un error**, y de los caros: el DV no es una decisión de
+# diseño nuestra, es un protocolo compartido. El SIFEN recalcula el dígito con
+# SU algoritmo y compara. Un DV "mejor" que el suyo es, para el SIFEN,
+# simplemente un DV equivocado — rechaza el documento entero.
+#
+# Verificado el 14/09/2026 por tres vías independientes:
+#
+#   1. El CDC de ejemplo que publica el propio Manual Técnico §10.1 termina
+#      en 8. Con PESO_MAX=11 da 8; con PESO_MAX=9 da 2. Hay un test que lo
+#      contrasta (ContraElManualTecnicoTests.test_el_dv_del_ejemplo_oficial).
+#   2. facturacionelectronicapy-xmlgen (TIPS-SA), que la DNIT publica como
+#      librería de referencia: `calcularDigitoVerificador(cdc, 11)`.
+#   3. rshk-jsifenlib (Roshka), la otra librería que publica la DNIT:
+#      `generateDv()` con `baseMax = 11`, aplicada al cuerpo del CDC.
+#
+# O sea que las 8 posiciones ciegas son una propiedad del algoritmo de la
+# DNIT, no un defecto que nos toque arreglar. Reproducirlo es el requisito.
+#
+# En ruc.py el mismo ciclo 2..11 nunca llega a 11 en la práctica, porque el
+# RUC tiene 8 dígitos y los pesos se quedan en 9.
 PESO_MIN = 2
-PESO_MAX = 9
+PESO_MAX = 11
 
 
 def calcular_dv(cuerpo: str) -> int:

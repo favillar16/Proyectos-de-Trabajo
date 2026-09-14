@@ -86,16 +86,55 @@ class ValidarTests(SimpleTestCase):
     def test_un_cdc_recien_generado_es_valido(self):
         self.assertTrue(cdc_mod.es_valido(_generar()))
 
-    def test_detecta_cualquier_digito_alterado(self):
-        # Es el punto del dígito verificador: un error de tipeo o de
-        # transmisión no puede pasar desapercibido.
+    def test_ninguna_posicion_util_pasa_desapercibida_del_todo(self):
+        """
+        Fuera de las cuatro posiciones ciegas, alterar un dígito se nota.
+
+        Ojo con cómo está escrito, porque la versión obvia de este test es
+        **flaky** y así estuvo hasta que lo destapó una corrida sobre un
+        commit aislado. Afirmar "cambiar un dígito por +1 siempre se detecta"
+        es falso: las posiciones 4, 14, 24 y 34 reciben peso 10, y un +1 ahí
+        mueve el total en 10 ≡ −1 (mod 11). Si el resto valía 1 pasa a 0, y
+        la regla "dv = 0 si resto < 2" devuelve el mismo dígito. Como el
+        código de seguridad del CDC es aleatorio, el resto vale 1 en ~1 de
+        cada 11 documentos: el test fallaba el 10% de las veces.
+
+        Lo que sí se puede afirmar, y es lo que importa, es que la posición
+        no sea ciega: que NO todas las alteraciones posibles pasen. Eso es
+        determinista.
+        """
+        ciegas = ProteccionDelDigitoVerificadorTests.POSICIONES_CIEGAS
         cdc = _generar()
-        for pos in range(cdc_mod.LARGO_CDC):
-            alterado = cdc[:pos] + str((int(cdc[pos]) + 1) % 10) + cdc[pos + 1:]
-            if alterado == cdc:
+        for pos in range(cdc_mod.LARGO_CDC - 1):
+            if pos in ciegas:
                 continue
+            detectadas = sum(
+                1 for delta in range(1, 10)
+                if not cdc_mod.es_valido(
+                    cdc[:pos] + str((int(cdc[pos]) + delta) % 10) + cdc[pos + 1:]))
             with self.subTest(posicion=pos):
+                self.assertGreaterEqual(
+                    detectadas, 8,
+                    f'La posición {pos} detecta solo {detectadas} de 9 '
+                    f'alteraciones; lo esperable es 8 o 9 (una sola puede '
+                    f'colisionar por la regla resto<2 del módulo 11).')
+
+    def test_alterar_el_propio_digito_verificador_se_detecta(self):
+        cdc = _generar()
+        for delta in range(1, 10):
+            alterado = cdc[:-1] + str((int(cdc[-1]) + delta) % 10)
+            with self.subTest(delta=delta):
                 self.assertFalse(cdc_mod.es_valido(alterado))
+
+    def test_las_posiciones_ciegas_efectivamente_no_se_detectan(self):
+        # El complemento del anterior, escrito como afirmación y no como
+        # excepción: si alguna de las cuatro empezara a detectarse, el
+        # algoritmo cambió y hay que revisarlo contra la DNIT.
+        cdc = _generar()
+        for pos in ProteccionDelDigitoVerificadorTests.POSICIONES_CIEGAS:
+            alterado = cdc[:pos] + str((int(cdc[pos]) + 1) % 10) + cdc[pos + 1:]
+            with self.subTest(posicion=pos):
+                self.assertTrue(cdc_mod.es_valido(alterado))
 
     def test_rechaza_largos_distintos_de_44(self):
         cdc = _generar()
@@ -111,26 +150,19 @@ class ValidarTests(SimpleTestCase):
 
 class ProteccionDelDigitoVerificadorTests(SimpleTestCase):
     """
-    El DV tiene que proteger todas las POSICIONES del CDC.
+    Qué protege y qué NO protege el DV de la DNIT.
 
-    Hay que distinguir dos cosas que parecen la misma y no lo son:
+    Hasta el 14/09/2026 esta clase exigía que ninguna posición del CDC
+    quedara "ciega" (o sea, que ningún dígito pudiera alterarse sin que el DV
+    cambiara), y para lograrlo el proyecto usaba PESO_MAX=9 en vez de 11.
+    La exigencia era razonable como criterio de diseño y **equivocada como
+    requisito**: el DV es un protocolo compartido con el SIFEN, no una
+    decisión nuestra. Ver el bloque de PESO_MAX en cdc.py.
 
-    1. **Posición estructuralmente ciega**: el dígito no aporta nada al
-       checksum, así que *cualquier* cambio pasa desapercibido, siempre.
-       Esto es un defecto y acá se encontró uno real: con el ciclo de pesos
-       2..11 (el mismo de `ruc.py`), un peso de 11 anula el aporte del
-       dígito (11·d ≡ 0 mod 11), y en 43 dígitos el ciclo pasa cuatro veces
-       por el 11 — quedaban 8 posiciones ciegas por CDC, de forma
-       determinista. Corregido bajando PESO_MAX a 9.
-
-    2. **Colisión aislada**: para un valor puntual, dos cadenas distintas
-       dan el mismo DV. Es inherente a este módulo 11, porque la regla
-       "dv = 0 si resto < 2" hace que resto 0 y resto 1 den el mismo
-       dígito. Ronda el 2% de los cambios de un dígito y no se puede
-       eliminar sin apartarse del algoritmo. Un DV de un dígito nunca
-       detecta el 100%.
-
-    Estos tests exigen (1) y toleran (2).
+    Estos tests ahora documentan el algoritmo real en lugar de pelearse con
+    él: miden la debilidad, la dejan escrita, y se aseguran de que nadie
+    "arregle" el peso máximo sin darse cuenta de que eso rompe la
+    interoperabilidad.
     """
     # Código de seguridad fijo: si se dejara el aleatorio, el test pasaría o
     # fallaría según el CDC que tocara. Ya pasó.
@@ -140,30 +172,92 @@ class ProteccionDelDigitoVerificadorTests(SimpleTestCase):
         return [_generar(numero=str(n + 1), codigo_seguridad=self.CODIGO_FIJO)[:-1]
                 for n in range(cantidad)]
 
-    def test_ninguna_posicion_queda_estructuralmente_ciega(self):
-        for cuerpo in self._cuerpos_de_prueba():
-            original = cdc_mod.calcular_dv(cuerpo)
-            for pos in range(len(cuerpo)):
-                no_detectados = 0
-                for delta in range(1, 10):
-                    alterado = (cuerpo[:pos]
-                                + str((int(cuerpo[pos]) + delta) % 10)
-                                + cuerpo[pos + 1:])
-                    if cdc_mod.calcular_dv(alterado) == original:
-                        no_detectados += 1
-                self.assertLess(
-                    no_detectados, 9,
-                    f'La posición {pos} es ciega: los 9 cambios posibles pasan '
-                    f'sin que el DV se entere. Revisar cdc.PESO_MAX — un peso '
-                    f'múltiplo de 11 anula el dígito.')
+    def _posiciones_ciegas(self, cuerpo):
+        """Posiciones donde los 9 cambios posibles pasan sin alterar el DV."""
+        original = cdc_mod.calcular_dv(cuerpo)
+        ciegas = []
+        for pos in range(len(cuerpo)):
+            no_detectados = sum(
+                1 for delta in range(1, 10)
+                if cdc_mod.calcular_dv(
+                    cuerpo[:pos] + str((int(cuerpo[pos]) + delta) % 10)
+                    + cuerpo[pos + 1:]) == original)
+            if no_detectados == 9:
+                ciegas.append(pos)
+        return ciegas
 
-    def test_la_tasa_de_colisiones_se_mantiene_baja(self):
-        # Guardarraíl: si alguien toca el algoritmo y la tasa se dispara, es
-        # señal de que rompió algo aunque no haya posiciones ciegas.
+    def test_el_peso_maximo_es_el_de_la_dnit(self):
+        # Es el guardarraíl central. Bajarlo "para que el DV sea más fuerte"
+        # es exactamente el error que se cometió en agosto de 2026: produce
+        # documentos que el SIFEN rechaza en bloque.
+        self.assertEqual(
+            cdc_mod.PESO_MAX, 11,
+            'PESO_MAX tiene que ser 11: es lo que usan el ejemplo del Manual '
+            'Técnico §10.1 y las dos librerías de referencia de la DNIT. '
+            'Cualquier otro valor genera CDC que el SIFEN rechaza.')
+        self.assertEqual(cdc_mod.PESO_MIN, 2)
+
+    # Medido, no deducido. El ciclo de pesos 2..11 tiene período 10 y se
+    # aplica de derecha a izquierda, así que sobre 43 dígitos el peso 11 cae
+    # cuatro veces: en las posiciones 3, 13, 23 y 33 contando desde la
+    # izquierda, base 0.
+    POSICIONES_CIEGAS = [3, 13, 23, 33]
+
+    def test_las_posiciones_ciegas_son_las_que_reciben_peso_11(self):
+        # Propiedad del algoritmo de la DNIT, no un defecto nuestro:
+        # 11·d ≡ 0 (mod 11) anula el aporte de ese dígito.
+        #
+        # Se deja medido a propósito, por dos motivos: documenta hasta dónde
+        # llega el DV, y si algún día la DNIT corrige el algoritmo este test
+        # es el que va a avisar que algo cambió.
+        #
+        # (La documentación de agosto de 2026 decía "8 dígitos sin
+        # protección". Son 4. El error de conteo no cambia la conclusión.)
+        for cuerpo in self._cuerpos_de_prueba(10):
+            with self.subTest(cuerpo=cuerpo[:12] + '...'):
+                self.assertEqual(self._posiciones_ciegas(cuerpo),
+                                 self.POSICIONES_CIEGAS)
+
+    def test_las_posiciones_ciegas_coinciden_con_el_ciclo_de_pesos(self):
+        # La explicación, verificada aparte del efecto: se reconstruye el
+        # ciclo de pesos y se comprueba que las posiciones ciegas son
+        # exactamente aquellas a las que les toca un peso múltiplo de 11.
+        pesos = []
+        peso = cdc_mod.PESO_MIN
+        for _ in range(cdc_mod.LARGO_CDC - 1):
+            if peso > cdc_mod.PESO_MAX:
+                peso = cdc_mod.PESO_MIN
+            pesos.append(peso)
+            peso += 1
+        # pesos[0] es el dígito de más a la derecha; se pasa a índice
+        # contando desde la izquierda.
+        largo = cdc_mod.LARGO_CDC - 1
+        anuladas = sorted(largo - 1 - i
+                          for i, w in enumerate(pesos) if w % 11 == 0)
+        self.assertEqual(anuladas, self.POSICIONES_CIEGAS)
+
+    def test_una_posicion_ciega_cae_en_el_tipo_de_emision(self):
+        # Vale saber qué queda desprotegido, no solo cuánto. La posición 33
+        # es el tipo de emisión (normal / contingencia): se puede cambiar sin
+        # que el DV lo note. No es algo que podamos arreglar —el SIFEN valida
+        # ese campo por su cuenta—, pero sí algo que conviene no ignorar.
+        cdc = _generar()
+        self.assertEqual(cdc_mod.descomponer(cdc)['tipo_emision'],
+                         int(cdc[33]))
+        self.assertIn(33, self.POSICIONES_CIEGAS)
+
+    def test_fuera_de_las_posiciones_ciegas_el_dv_detecta_casi_todo(self):
+        # Lo que el DV sí aporta. En las 35 posiciones restantes la única
+        # forma de pasar desapercibido es la colisión aislada del módulo 11
+        # (la regla "dv = 0 si resto < 2" hace que resto 0 y resto 1 den el
+        # mismo dígito), que ronda el 2%.
         total = colisiones = 0
         for cuerpo in self._cuerpos_de_prueba():
+            ciegas = set(self._posiciones_ciegas(cuerpo))
             original = cdc_mod.calcular_dv(cuerpo)
             for pos in range(len(cuerpo)):
+                if pos in ciegas:
+                    continue
                 for delta in range(1, 10):
                     alterado = (cuerpo[:pos]
                                 + str((int(cuerpo[pos]) + delta) % 10)
@@ -173,16 +267,9 @@ class ProteccionDelDigitoVerificadorTests(SimpleTestCase):
                         colisiones += 1
         tasa = colisiones / total
         self.assertLess(tasa, 0.05,
-                        f'La tasa de cambios no detectados subió a {tasa:.1%}; '
-                        f'lo esperable con este módulo 11 es ~2%.')
-
-    def test_el_peso_maximo_no_es_multiplo_de_11(self):
-        # Guardarraíl explícito: si alguien sube PESO_MAX a 11 "para que
-        # coincida con ruc.py", este test lo frena antes de que se emitan
-        # documentos con CDC débiles.
-        for peso in range(cdc_mod.PESO_MIN, cdc_mod.PESO_MAX + 1):
-            with self.subTest(peso=peso):
-                self.assertNotEqual(peso % 11, 0)
+                        f'La tasa de cambios no detectados fuera de las '
+                        f'posiciones ciegas subió a {tasa:.1%}; lo esperable '
+                        f'con este módulo 11 es ~2%.')
 
 
 class DescomponerTests(SimpleTestCase):
@@ -288,10 +375,39 @@ class ContraElManualTecnicoTests(SimpleTestCase):
     def test_el_ejemplo_oficial_tiene_44_digitos(self):
         self.assertEqual(len(self.cdc), cdc_mod.LARGO_CDC)
 
+    def test_el_dv_del_ejemplo_oficial_cierra_con_nuestro_algoritmo(self):
+        """
+        La prueba decisiva del módulo 11, y la que faltaba hasta el
+        14/09/2026.
+
+        El manual publica el CDC completo, DV incluido. Si nuestro cálculo
+        reprodujera otro dígito, cada documento que emitamos saldría con un
+        CDC que el SIFEN considera corrupto.
+
+        Con PESO_MAX=11 da 8, que es lo que dice el manual.
+        Con PESO_MAX=9 —lo que había hasta hoy— daba 2.
+        """
+        cuerpo, dv_publicado = self.cdc[:-1], int(self.cdc[-1])
+        self.assertEqual(cdc_mod.calcular_dv(cuerpo), dv_publicado)
+
+    def test_el_ejemplo_oficial_pasa_nuestra_validacion(self):
+        # Corolario del anterior: validar() tiene que aceptar el CDC del
+        # manual tal cual, sin excepciones ni tolerancias.
+        self.assertTrue(cdc_mod.es_valido(self.cdc))
+
+    def test_descomponer_lee_el_ejemplo_oficial(self):
+        # Ahora que el DV cierra se puede usar descomponer(), que valida el
+        # dígito antes de cortar. Es bastante más fuerte que parsear a mano:
+        # comprueba composición Y checksum contra el documento oficial.
+        campos = cdc_mod.descomponer(self.cdc)
+        self.assertEqual(campos['tipo_documento'], codigos.TIPO_DE_FACTURA)
+        self.assertEqual(campos['establecimiento'], '001')
+        self.assertEqual(campos['punto_expedicion'], '001')
+        self.assertEqual(campos['tipo_contribuyente'], 2)
+        self.assertEqual(campos['fecha_emision'], '2017-01-25')
+        self.assertEqual(campos['tipo_emision'], codigos.EMISION_NORMAL)
+
     def test_nuestra_composicion_lo_parsea_coherentemente(self):
-        # Se parsea a mano con nuestros cortes (no con descomponer(), que
-        # exige que el DV cierre: el DV del ejemplo depende del algoritmo de
-        # pesos, que es justamente lo que no se pudo verificar todavía).
         self.assertEqual(self.cdc[0:2], '01', 'tipo de documento: 01 = factura')
         self.assertEqual(self.cdc[11:14], '001', 'establecimiento')
         self.assertEqual(self.cdc[14:17], '001', 'punto de expedición')
