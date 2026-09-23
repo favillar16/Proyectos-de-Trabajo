@@ -50,7 +50,12 @@ export function useProductoForm({ onSuccess } = {}) {
   // ── Estado del formulario ────────────────────────────────
   const [form,      setForm]      = useState(PRODUCTO_VACÍO)
   const [variantes, setVariantes] = useState([{ ...VARIANTE_VACÍA }])
-  const [imagenes,  setImagenes]  = useState([])      // { file, preview, es_principal }[]
+  // { file?, id?, preview, es_principal, _existente? }[] — las que ya están
+  // en el servidor entran con `_existente` e `id`; las nuevas, con `file`.
+  const [imagenes,  setImagenes]  = useState([])
+  // Id del producto que se está editando: hace falta para borrar en el
+  // servidor una imagen ya subida (el endpoint cuelga del producto).
+  const [productoEditandoId, setProductoEditandoId] = useState(null)
   const [errores,   setErrores]   = useState({})
   const [paso,      setPaso]      = useState(0)       // 0=datos, 1=variantes, 2=imágenes
 
@@ -118,17 +123,38 @@ export function useProductoForm({ onSuccess } = {}) {
 
   const eliminarImagen = useCallback((idx) => {
     setImagenes(prev => {
+      const img = prev[idx]
+      // Si ya estaba subida, borrarla también en el servidor. Sin esto solo
+      // desaparecía de esta pantalla y volvía a aparecer al reabrir la ficha
+      // (que es lo que pasaba antes: las imágenes del producto ni siquiera se
+      // cargaban al editar, así que no había forma de sacar una mal subida).
+      if (img?._existente && img.id && productoEditandoId) {
+        productosApi.eliminarImagen(productoEditandoId, img.id)
+          .catch(() => toast.error('No se pudo eliminar la imagen del servidor'))
+      }
       const arr = prev.filter((_, i) => i !== idx)
-      if (arr.length > 0 && !arr.some(img => img.es_principal)) {
-        arr[0].es_principal = true
+      if (arr.length > 0 && !arr.some(i => i.es_principal)) {
+        arr[0] = { ...arr[0], es_principal: true }
+        // La nueva principal también hay que marcarla en el servidor si ya
+        // existe ahí; si es un archivo nuevo, viaja marcada al subirse.
+        if (arr[0]._existente && arr[0].id && productoEditandoId) {
+          productosApi.marcarImagenPrincipal(productoEditandoId, arr[0].id).catch(() => {})
+        }
       }
       return arr
     })
-  }, [])
+  }, [productoEditandoId])
 
   const marcarImagenPrincipal = useCallback((idx) => {
-    setImagenes(prev => prev.map((img, i) => ({ ...img, es_principal: i === idx })))
-  }, [])
+    setImagenes(prev => {
+      const elegida = prev[idx]
+      if (elegida?._existente && elegida.id && productoEditandoId) {
+        productosApi.marcarImagenPrincipal(productoEditandoId, elegida.id)
+          .catch(() => toast.error('No se pudo marcar la imagen principal'))
+      }
+      return prev.map((img, i) => ({ ...img, es_principal: i === idx }))
+    })
+  }, [productoEditandoId])
 
   // ── Validación ───────────────────────────────────────────
   const validar = useCallback(() => {
@@ -177,9 +203,12 @@ export function useProductoForm({ onSuccess } = {}) {
         productoId = res.data.id
       }
 
-      // 2. Subir imágenes del producto
-      for (let i = 0; i < imagenes.length; i++) {
-        const img = imagenes[i]
+      // 2. Subir solo las imágenes nuevas de esta sesión. Las que ya estaban
+      // en el servidor se identifican con `_existente` y no se re-suben:
+      // hacerlo duplicaría la galería en cada edición.
+      const imagenesNuevasProducto = imagenes.filter(img => img.file)
+      for (let i = 0; i < imagenesNuevasProducto.length; i++) {
+        const img = imagenesNuevasProducto[i]
         const fd  = new FormData()
         fd.append('imagen',       img.file)
         fd.append('es_principal', img.es_principal ? 'true' : 'false')
@@ -311,6 +340,7 @@ export function useProductoForm({ onSuccess } = {}) {
     setPaso(0)
     setVariantes([{ ...VARIANTE_VACÍA }])
     setImagenes([])
+    setProductoEditandoId(producto.id)
     setForm({
       codigo:              producto.codigo,
       nombre:              producto.nombre,
@@ -340,6 +370,13 @@ export function useProductoForm({ onSuccess } = {}) {
       })
       const variantesExistentes = (detalle.variantes || []).map(mapearVarianteExistente)
       setVariantes(variantesExistentes.length > 0 ? variantesExistentes : [{ ...VARIANTE_VACÍA }])
+      // Las imágenes del producto ya cargadas: hasta ahora no se traían, así
+      // que el paso "Imágenes" aparecía vacío en una edición y no había
+      // manera de borrar una imagen desde la aplicación.
+      setImagenes((detalle.imagenes || []).map(img => ({
+        id: img.id, preview: img.imagen_url || img.imagen,
+        es_principal: img.es_principal, _existente: true,
+      })))
     } catch {
       toast.error('No se pudo cargar el detalle completo del producto')
     }
@@ -349,6 +386,7 @@ export function useProductoForm({ onSuccess } = {}) {
     setForm(PRODUCTO_VACÍO)
     setVariantes([{ ...VARIANTE_VACÍA }])
     setImagenes([])
+    setProductoEditandoId(null)
     setErrores({})
     setPaso(0)
   }, [])

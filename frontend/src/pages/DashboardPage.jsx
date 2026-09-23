@@ -4,6 +4,7 @@
  * KPIs: ventas de hoy / semana / mes con % vs período anterior
  * Gráfico: línea de ventas diarias (canvas nativo, sin dependencias)
  * Top productos: los 5 más vendidos del mes en ingresos
+ * Mercadería vendida: cuántos m²/piezas salieron, agrupados por unidad
  * Medios de pago: distribución del mes
  * Pedidos activos: cola por estado en tiempo real
  * Stock: resumen con alertas
@@ -348,10 +349,51 @@ function TopProductos({ productos }) {
           </div>
           <p style={{ fontSize:'11px', color:C.textMuted, marginTop:'2px',
             marginLeft:'26px' }}>
-            {p.unidades.toFixed(2)} unidades · {p.codigo}
+            {p.unidades.toFixed(2)} {p.unidad || 'unidades'} · {p.codigo}
           </p>
         </div>
       ))}
+    </div>
+  )
+}
+
+// ─── Mercadería que salió ─────────────────────────────────────────────────────
+// El tablero mostraba cuántos cobros hubo, no cuánta mercadería se fue. Es lo
+// que pidió la propietaria para saber qué reponer: se agrupa por unidad de
+// venta porque sumar m² con inodoros no da ningún número que sirva.
+function UnidadesVendidas({ datos }) {
+  const porUnidad = datos?.por_unidad || []
+  if (!porUnidad.length) return (
+    <p style={{ fontSize:'12.5px', color:C.textMuted }}>
+      Sin mercadería despachada en el período
+    </p>
+  )
+
+  return (
+    <div style={{ display:'flex', gap:'8px', flexWrap:'wrap' }}>
+      {porUnidad.map(u => (
+        <div key={u.unidad} style={{ flex:'1 1 110px', padding:'9px 12px',
+          background:C.bgSec, border:`1px solid ${C.border}`, borderRadius:'10px' }}>
+          <p style={{ fontSize:'17px', fontWeight:'600', color:C.goldDark, lineHeight:1.1 }}>
+            {u.cantidad.toLocaleString('es-PY', { maximumFractionDigits:2 })}
+            <span style={{ fontSize:'12px', color:C.textSec, marginLeft:'4px' }}>{u.unidad}</span>
+          </p>
+          <p style={{ fontSize:'10.5px', color:C.textMuted, marginTop:'2px' }}>
+            en {u.lineas} línea{u.lineas !== 1 ? 's' : ''} de venta
+          </p>
+        </div>
+      ))}
+      {datos?.variantes_distintas > 0 && (
+        <div style={{ flex:'1 1 110px', padding:'9px 12px',
+          background:C.bgSec, border:`1px solid ${C.border}`, borderRadius:'10px' }}>
+          <p style={{ fontSize:'17px', fontWeight:'600', color:C.goldDark, lineHeight:1.1 }}>
+            {datos.variantes_distintas}
+          </p>
+          <p style={{ fontSize:'10.5px', color:C.textMuted, marginTop:'2px' }}>
+            productos distintos
+          </p>
+        </div>
+      )}
     </div>
   )
 }
@@ -725,6 +767,18 @@ function DashboardAdmin({ navigate }) {
               </div>
             : <ColaPedidos activos={kpi?.pedidos_activos} navigate={navigate} />}
         </div>
+      </div>
+
+      {/* ── Mercadería despachada en el mes ── */}
+      <div style={{ background:C.bg, border:`1px solid ${C.border}`,
+        borderRadius:'14px', padding:'18px 20px', marginBottom:'14px' }}>
+        <p style={{ fontSize:'12px', fontWeight:'500', color:C.textMuted,
+          textTransform:'uppercase', letterSpacing:'0.06em', marginBottom:'12px' }}>
+          Mercadería vendida — últimos 30 días
+        </p>
+        {isLoading
+          ? <Skeleton h={60} r={10} />
+          : <UnidadesVendidas datos={kpi?.productos_vendidos} />}
       </div>
 
       {/* ── Top productos + Medios de pago ── */}

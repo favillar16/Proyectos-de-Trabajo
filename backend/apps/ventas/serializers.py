@@ -150,7 +150,7 @@ class NotaPedidoListSerializer(serializers.ModelSerializer):
         model  = NotaPedido
         fields = [
             'id', 'numero', 'estado', 'estado_display',
-            'vendedor_nombre', 'cliente_nombre',
+            'vendedor_nombre', 'cliente_nombre', 'cliente_ruc',
             'total', 'total_ajustado', 'monto_a_cobrar',
             'items_count', 'todos_preparados',
             'fecha_creacion', 'puede_preparar', 'puede_cobrar',

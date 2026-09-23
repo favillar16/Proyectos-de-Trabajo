@@ -242,6 +242,15 @@ class ProductoViewSet(ProtegeAlBorrarMixin, viewsets.ModelViewSet):
                 'stock_minimo': float(s.stock_minimo)       if s else 0,
                 'estado':       s.estado                    if s else 'sin_stock',
                 'ubicacion':    s.ubicacion                 if s else '',
+                # Rendimiento de la caja y equivalencia del disponible.
+                # El showroom muestra "25,20 m² · 10 cajas de 2,52 m²": sin
+                # estos campos el vendedor ve un número de m² y tiene que
+                # hacer la cuenta de cabeza para saber cuántas cajas son.
+                'unidad_venta':    producto.unidad_venta,
+                'm2_por_caja':     v.m2_por_caja_calculado,
+                'piezas_por_caja': v.piezas_por_caja,
+                'detalle_cajas':   s.detalle_cajas          if s else None,
+                'cajas_completas': s.cajas_completas        if s else None,
             })
         return Response(data)
 

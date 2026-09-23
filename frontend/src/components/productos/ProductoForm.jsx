@@ -782,7 +782,8 @@ function PasoImagenes({ imagenes, agregarImagenes, eliminarImagen, marcarImagenP
       {imagenes.length > 0 ? (
         <>
           <p style={{ fontSize: '12px', color: C.textMuted, marginBottom: '12px' }}>
-            {imagenes.length} imagen{imagenes.length !== 1 ? 'es' : ''} — hacé clic en ★ para marcar como principal
+            {imagenes.length} imagen{imagenes.length !== 1 ? 'es' : ''} — ★ marca la principal,
+            🗑 la elimina. Las que ya están guardadas se borran del servidor al instante.
           </p>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: '12px' }}>
             {imagenes.map((img, i) => (
@@ -830,7 +831,7 @@ function PasoImagenes({ imagenes, agregarImagenes, eliminarImagen, marcarImagenP
                     <Trash2 size={13} />
                   </button>
                 </div>
-                {img.es_principal && (
+                {img.es_principal ? (
                   <div style={{
                     position: 'absolute', bottom: 0, left: 0, right: 0,
                     background: C.sidebar, padding: '3px 6px',
@@ -839,7 +840,18 @@ function PasoImagenes({ imagenes, agregarImagenes, eliminarImagen, marcarImagenP
                   }}>
                     Imagen principal
                   </div>
-                )}
+                ) : img._existente ? (
+                  /* Distinguir la que ya está guardada de la que todavía no se
+                     subió: borrar una es inmediato y definitivo, borrar la otra
+                     solo la saca de la lista. */
+                  <div style={{
+                    position: 'absolute', bottom: 0, left: 0, right: 0,
+                    background: 'rgba(0,0,0,0.45)', padding: '3px 6px',
+                    fontSize: '10px', color: '#fff', textAlign: 'center',
+                  }}>
+                    Ya guardada
+                  </div>
+                ) : null}
               </div>
             ))}
           </div>

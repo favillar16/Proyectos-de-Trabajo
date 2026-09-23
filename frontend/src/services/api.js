@@ -112,6 +112,7 @@ export const inventarioApi = {
 
 // ─── Ventas ───────────────────────────────────────────────────
 export const ventasApi = {
+  // params: { estado, buscar } — `buscar` cruza nombre, CI/RUC y número de pedido
   pedidos:      (params)    => api.get('/ventas/pedidos/', { params }),
   detalle:      (id)        => api.get(`/ventas/pedidos/${id}/`),
   crear:        (data)      => api.post('/ventas/pedidos/', data),
@@ -202,4 +203,74 @@ export const costosApi = {
 
   alertas:           (dias = 7)  => api.get('/costos/alertas/', { params: { dias } }),
   resumen:           (anio, mes) => api.get('/costos/resumen/', { params: { anio, mes } }),
+}
+// ─── Facturación electrónica ──────────────────────────────────
+// Los datos de traslado cuelgan del PEDIDO y no del cobro: una nota de
+// remisión describe un movimiento de mercadería, no una venta. Por eso la
+// ruta va por pedido.
+//
+// `guardarTraslado` es un PUT y no un POST/PATCH separados porque hay uno
+// solo por pedido: el formulario manda el estado completo y el backend decide
+// si crea o actualiza. Para quien lo carga, "Guardar" es una sola acción.
+export const facturacionApi = {
+  // Cola de documentos electrónicos y eventos del emisor (panel de admin)
+  documentos:      (params)       => api.get('/facturacion/documentos/', { params }),
+  // El KuDE es el PDF que se le entrega al cliente: la representación
+  // gráfica del DE, no la factura en sí (esa es el XML aprobado).
+  kude:            (id)           => api.get(`/facturacion/documentos/${id}/kude/`, {
+                                       responseType: 'blob' }),
+  cancelar:        (id, motivo)   => api.post(`/facturacion/documentos/${id}/cancelar/`, { motivo }),
+  numerosSinUsar:  (params = {})  => api.get('/facturacion/numeros-sin-usar/', { params }),
+  inutilizaciones: (params = {})  => api.get('/facturacion/inutilizaciones/', { params }),
+  inutilizar:      (data)         => api.post('/facturacion/inutilizaciones/', data),
+  motivosNota:     ()             => api.get('/facturacion/motivos-nota/'),
+  // Cobros marcados como factura que no llegaron a generar documento
+  // electrónico — el punto ciego de la cola de arriba, que solo lista los
+  // documentos que existen.
+  ventasSinDocumento: (params = {}) =>
+    api.get('/facturacion/ventas-sin-documento/', { params }),
+
+  // Nota de débito: el espejo de la de crédito. El monto va CON IVA incluido,
+  // igual que todos los precios del sistema.
+  motivosDebito:   ()             => api.get('/facturacion/motivos-debito/'),
+  notaDebito:      (id, data)     => api.post(`/facturacion/documentos/${id}/nota-debito/`, data),
+
+  // Camino asincrónico. Mandar un lote y pedir su resultado son dos viajes
+  // distintos: el SIFEN contesta un número y procesa después.
+  lotes:           ()             => api.get('/facturacion/lotes/'),
+  enviarLote:      (limite)       => api.post('/facturacion/lotes/', { limite }),
+  consultarLotes:  ()             => api.post('/facturacion/lotes/', { consultar: true }),
+
+  // Padrón de la DNIT. Es una ayuda, no una barrera: necesita certificado y
+  // conexión, así que no se puede exigir para cobrar.
+  consultarRuc:    (ruc)          => api.get('/facturacion/consulta-ruc/', { params: { ruc } }),
+
+  // Autofactura: el único documento que respalda una COMPRA a alguien sin
+  // RUC, no una venta. Por eso no va por documento ni por pedido.
+  autofacturas:    ()             => api.get('/facturacion/autofacturas/'),
+  // Tablas geográficas de la DNIT (departamento → distrito → ciudad). Salen
+  // del sidecar y NO necesitan certificado ni internet: son un archivo de la
+  // librería. No se copian al frontend para que no queden desfasadas.
+  geografia:       (params = {}) => api.get('/facturacion/geografia/', { params }),
+  emitirAutofactura: (data)       => api.post('/facturacion/autofacturas/', data),
+
+  // Eventos del rol receptor: lo que el local declara sobre un DTE ajeno,
+  // identificado solo por su CDC.
+  eventosReceptor: ()             => api.get('/facturacion/eventos-receptor/'),
+  registrarEventoReceptor: (data) => api.post('/facturacion/eventos-receptor/', data),
+  notaCredito:     (id, data)     => api.post(`/facturacion/documentos/${id}/nota-credito/`, data),
+
+  opcionesTraslado: ()            => api.get('/facturacion/opciones-traslado/'),
+  traslado:         (pedidoId)    => api.get(`/facturacion/pedidos/${pedidoId}/traslado/`),
+  guardarTraslado:  (pedidoId, data) => api.put(`/facturacion/pedidos/${pedidoId}/traslado/`, data),
+  borrarTraslado:   (pedidoId)    => api.delete(`/facturacion/pedidos/${pedidoId}/traslado/`),
+
+  // Emitir la remisión es una acción aparte del cobro y no un efecto suyo:
+  // el documento respalda el TRASLADO de la mercadería, no la venta (Decreto
+  // 6.539/2005 art. 30), y la RG 41/2014 art. 5 exime de emitirla cuando la
+  // mercadería viaja acompañada del comprobante de venta. El cliente que se
+  // lleva los pisos con su factura no necesita ninguna; el pedido que sale
+  // en el flete del local, sí. Lo sabe quien despacha, no el sistema.
+  remision:         (pedidoId)    => api.get(`/facturacion/pedidos/${pedidoId}/remision/`),
+  emitirRemision:   (pedidoId)    => api.post(`/facturacion/pedidos/${pedidoId}/remision/`, {}),
 }

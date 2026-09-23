@@ -87,14 +87,14 @@ class NotaPedidoListCreateView(views.APIView):
 
     def get(self, request):
         """
-        Listado filtrado por rol:
+        Listado filtrado por rol (y por ?buscar=, ?estado=):
         - vendedor:  sus propios pedidos
         - deposito:  pendientes y en preparación
         - cajero:    listos para cobrar
         - admin:     todos
         """
         qs = NotaPedido.objects.select_related(
-            'vendedor', 'preparado_por'
+            'vendedor', 'preparado_por', 'cliente'
         ).prefetch_related('items__variante__producto').order_by('-fecha_creacion')
 
         rol = request.user.rol
@@ -113,6 +113,21 @@ class NotaPedidoListCreateView(views.APIView):
         estado = request.query_params.get('estado')
         if estado:
             qs = qs.filter(estado=estado)
+
+        # Buscador: nombre del cliente, su CI/RUC o el número de pedido.
+        # Los tres en un solo campo porque quien busca en el mostrador tiene
+        # a mano uno cualquiera de ellos —el cliente dice su nombre, muestra
+        # la cédula o trae la nota impresa— y no sabe cuál es "el correcto".
+        buscar = request.query_params.get('buscar', '').strip()
+        if buscar:
+            from django.db.models import Q
+            qs = qs.filter(
+                Q(cliente_nombre__icontains=buscar)
+                | Q(cliente_ruc__icontains=buscar)
+                | Q(cliente__razon_social__icontains=buscar)
+                | Q(cliente__ruc__icontains=buscar)
+                | Q(numero__icontains=buscar)
+            ).distinct()
 
         serializer = NotaPedidoListSerializer(qs, many=True, context={'request': request})
         return Response({'results': serializer.data, 'count': qs.count()})
@@ -163,21 +178,60 @@ class NotaPedidoDetailView(views.APIView):
         pedido = self._get_pedido(pk)
         return Response(NotaPedidoReadSerializer(pedido, context={'request': request}).data)
 
+    # Los tres datos que identifican al cliente ante el Fisco. Se separan del
+    # resto porque son los únicos que se pueden tocar después de cobrar (ver
+    # `patch`): la nota de remisión no admite receptor innominado (NT 023) y
+    # sin esta rendija un pedido cobrado como ticket, sin RUC cargado, no
+    # podría despacharse nunca.
+    CAMPOS_IDENTIDAD_CLIENTE = ('cliente_nombre', 'cliente_ruc',
+                                'cliente_telefono')
+
     def patch(self, request, pk):
         """
         Actualizar campos editables mientras el pedido está PENDIENTE.
         - Datos del cliente: admin, encargada de ventas o vendedor.
         - Monto (descuento / total_ajustado): SOLO admin o encargada de ventas.
         Una vez que el pedido pasa a 'en preparación' o más, nada es editable.
+
+        **Con una excepción, y una sola:** en un pedido ya PAGADO se pueden
+        corregir los tres datos que identifican al cliente. El motivo es
+        concreto: la nota de remisión se emite después de cobrar y el SIFEN no
+        la acepta sin receptor identificado (NT 023). Si el cobro salió como
+        ticket —donde nadie pide el RUC— el pedido queda sin documento y la
+        mercadería no se puede despachar, sin ninguna pantalla donde
+        arreglarlo. Esta rendija es esa pantalla.
+
+        Lo que la excepción **no** toca: ítems, montos, descuentos ni estado.
+        Y no reescribe la factura ya emitida — el `DocumentoElectronico`
+        guarda su propio snapshot del receptor al emitir, que es un registro
+        histórico y no una vista de estos campos. Corregir el pedido sirve
+        para el documento que todavía no salió, nunca para el que ya salió.
         """
         pedido = self._get_pedido(pk)
 
         if pedido.estado != NotaPedido.ESTADO_PENDIENTE:
-            return Response(
-                {'error': 'Solo se puede editar un pedido en estado Pendiente. '
-                          'Un pedido en preparación o posterior no admite cambios.'},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+            campos_pedidos = set(request.data.keys())
+            solo_identidad = campos_pedidos and campos_pedidos.issubset(
+                set(self.CAMPOS_IDENTIDAD_CLIENTE))
+
+            if not (pedido.estado == NotaPedido.ESTADO_PAGADO and solo_identidad):
+                return Response(
+                    {'error': 'Solo se puede editar un pedido en estado Pendiente. '
+                              'Un pedido en preparación o posterior no admite cambios. '
+                              'En un pedido pagado solo se pueden corregir los datos '
+                              'del cliente, para poder emitir la nota de remisión.'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            for campo in self.CAMPOS_IDENTIDAD_CLIENTE:
+                if campo in request.data:
+                    setattr(pedido, campo, request.data[campo])
+            pedido.save(update_fields=[*self.CAMPOS_IDENTIDAD_CLIENTE,
+                                       'fecha_actualizacion'])
+
+            _emitir_evento(pedido, 'pedido_actualizado', request)
+            return Response(NotaPedidoReadSerializer(
+                pedido, context={'request': request}).data)
 
         usuario = request.user
         puede_precio = (
@@ -186,7 +240,11 @@ class NotaPedidoDetailView(views.APIView):
         )
 
         # Campos de cliente: cualquier rol que pueda crear pedidos
-        for campo in ['cliente_nombre', 'cliente_telefono', 'cliente_observaciones']:
+        # cliente_ruc entra acá porque el buscador de pedidos filtra por él:
+        # si no se puede corregir después, un RUC mal tipeado al crear el
+        # pedido deja ese pedido imposible de encontrar por documento.
+        for campo in ['cliente_nombre', 'cliente_ruc', 'cliente_telefono',
+                      'cliente_observaciones']:
             if campo in request.data:
                 setattr(pedido, campo, request.data[campo])
 
@@ -363,11 +421,19 @@ class CancelarItemView(views.APIView):
     """
     DELETE /ventas/pedidos/<id>/items/<item_id>/
     Solo vendedor y admin pueden eliminar ítems (solo en estado pendiente).
+
+    Sacar un ítem **devuelve su reserva al stock**. Sin eso la mercadería
+    quedaba reservada por un ítem que ya no existe: seguía en depósito pero
+    el sistema no la dejaba vender de nuevo, y la única forma de recuperarla
+    era un ajuste manual de inventario.
     """
     permission_classes = [EsAdminOVendedor]
 
+    @transaction.atomic
     def delete(self, request, pk, item_id):
-        pedido = get_object_or_404(NotaPedido, pk=pk)
+        # select_for_update por lo mismo que en CambioEstadoView: dos borrados
+        # casi simultáneos del mismo ítem no pueden liberar la reserva dos veces.
+        pedido = get_object_or_404(NotaPedido.objects.select_for_update(), pk=pk)
 
         if pedido.estado != NotaPedido.ESTADO_PENDIENTE:
             return Response(
@@ -376,6 +442,7 @@ class CancelarItemView(views.APIView):
             )
 
         item = get_object_or_404(ItemPedido, pk=item_id, pedido=pedido)
+        liberado = pedido.liberar_reserva_item(item, usuario=request.user)
         item.delete()
 
         # Recalcular totales
@@ -384,7 +451,7 @@ class CancelarItemView(views.APIView):
         pedido.save(update_fields=['subtotal', 'total'])
 
         _emitir_evento(pedido, 'pedido_actualizado', request)
-        return Response(status=status.HTTP_204_NO_CONTENT)
+        return Response({'liberado': float(liberado)}, status=status.HTTP_200_OK)
 
 
 # ════════════════════════════════════════════════════════

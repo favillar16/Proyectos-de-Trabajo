@@ -54,10 +54,46 @@ function useDebounce(value, delay = 380) {
 
 function formatGs(v) { return `Gs. ${Number(v).toLocaleString('es-PY')}` }
 
+// Abreviatura de la unidad de venta, para que el número diga de qué habla.
+const UNIDAD_CORTA = { m2:'m²', pieza:'u.', juego:'jgo.', caja:'cajas', ml:'ml' }
+function unidadCorta(u) { return UNIDAD_CORTA[u] || u || '' }
+
+/**
+ * Cantidad exacta, con dos decimales y su unidad.
+ *
+ * Los pisos se venden en m² y una caja rinde fracciones (2,52 m²): el stock
+ * casi nunca es un número entero. Redondear o truncar acá cambia lo que el
+ * vendedor le promete al cliente, así que el disponible se muestra completo.
+ */
+function fmtCant(v, unidad) {
+  const n = Number(v || 0)
+  return `${n.toLocaleString('es-PY', { minimumFractionDigits:2, maximumFractionDigits:2 })} ${unidadCorta(unidad)}`.trim()
+}
+
+/**
+ * "10 cajas de 2,52 m²" — el mismo stock dicho como lo pide el cliente.
+ * Devuelve null si la variante no tiene rendimiento por caja cargado.
+ */
+// Cuánto suma cada toque de +/− sobre un ítem ya cargado en el carrito:
+// una caja si es un producto por m² con rendimiento conocido, si no una unidad.
+function pasoItem(item) {
+  return item?.unidad === 'm2' && Number(item?.m2_caja) > 0 ? Number(item.m2_caja) : 1
+}
+
+function equivalenciaCajas(disponible, m2Caja) {
+  const caja = Number(m2Caja || 0)
+  if (!caja || caja <= 0) return null
+  const cajas = Math.floor(Math.round((Number(disponible) / caja) * 10000) / 10000)
+  if (cajas <= 0) return null
+  const sueltos = Math.max(0, Number(disponible) - cajas * caja)
+  const base = `${cajas} caja${cajas !== 1 ? 's' : ''}`
+  return sueltos >= 0.01 ? `${base} + ${sueltos.toFixed(2)} m²` : base
+}
+
 // ─── Badge de stock ───────────────────────────────────────────────────────────
-function BadgeStock({ estado, cantidad, grande = false }) {
+function BadgeStock({ estado, cantidad, unidad, grande = false }) {
   const cfg = {
-    disponible: { bg: C.successBg, color: C.success, icon: <CheckCircle size={grande?12:10} />, label: `${Number(cantidad).toFixed(2)} disp.` },
+    disponible: { bg: C.successBg, color: C.success, icon: <CheckCircle size={grande?12:10} />, label: `${fmtCant(cantidad, unidad)} disp.` },
     critico:    { bg: C.warningBg, color: C.warning,  icon: <AlertCircle size={grande?12:10} />, label: 'Stock bajo'  },
     sin_stock:  { bg: C.dangerBg,  color: C.danger,   icon: <XCircle     size={grande?12:10} />, label: 'Sin stock'   },
   }
@@ -154,7 +190,8 @@ function ProductoCardGrid({ producto, onClick, isTouch }) {
           </div>
         )}
         <div style={{ position:'absolute', bottom:'8px', right:'8px' }}>
-          <BadgeStock estado={estado} cantidad={producto.stock_total} />
+          <BadgeStock estado={estado} cantidad={producto.stock_total}
+            unidad={producto.unidad_venta} />
         </div>
       </div>
 
@@ -236,7 +273,8 @@ function ProductoFila({ producto, onClick, isTouch }) {
           {formatGs(producto.precio_base)}
         </p>
         <p style={{ fontSize:'11px', color:C.textMuted, marginBottom:'4px' }}>por {producto.unidad_venta}</p>
-        <BadgeStock estado={estado} cantidad={producto.stock_total} />
+        <BadgeStock estado={estado} cantidad={producto.stock_total}
+          unidad={producto.unidad_venta} />
       </div>
     </div>
   )
@@ -253,10 +291,22 @@ function PanelDetalle({ producto, detalle, stock, cargando, onCerrar, device, on
     setCantidad(1)
   }, [producto?.id])
 
-  // Stock disponible de la variante elegida — limita cuánto se puede pedir
+  // Stock disponible de la variante elegida — limita cuánto se puede pedir.
+  // Sin truncar: el disponible en m² casi nunca es entero.
   const stockSel = varianteSel
     ? Math.max(0, Number(varianteSel.stock?.disponible ?? varianteSel.stock?.cantidad ?? 0))
     : Infinity
+
+  const esM2 = producto?.unidad_venta === 'm2'
+  // Cuánto suma cada toque de +/−: una caja completa si el producto se vende
+  // por m² y tiene rendimiento cargado (que es como se pide en el mostrador),
+  // o una unidad en el resto de los casos.
+  const pasoDe = (v) => (esM2 && Number(v?.m2_calculado) > 0 ? Number(v.m2_calculado) : 1)
+  const paso = pasoDe(varianteSel)
+  // Mínimo vendible: una fracción de metro se puede vender (un recorte, el
+  // resto de una caja abierta), así que el piso es 0,01 y no una caja.
+  const minimo = esM2 ? 0.01 : 1
+  const redondear = (n) => Math.round(Number(n) * 100) / 100
 
   if (!producto) return null
 
@@ -371,8 +421,21 @@ function PanelDetalle({ producto, detalle, stock, cargando, onCerrar, device, on
                           <p style={{ fontSize:'11.5px', color:C.textMuted, marginTop:'2px' }}>
                             SKU: {item.sku}{item.ubicacion && ` · ${item.ubicacion}`}
                           </p>
+                          {/* Rendimiento de la caja: es el dato que el cliente
+                              pregunta primero ("¿cuántas cajas necesito?") y
+                              hasta ahora había que buscarlo en la ficha. */}
+                          {item.m2_por_caja > 0 && (
+                            <p style={{ fontSize:'11.5px', color:C.goldDark, marginTop:'3px' }}>
+                              {Number(item.m2_por_caja).toFixed(2)} m² por caja
+                              {item.piezas_por_caja ? ` · ${item.piezas_por_caja} piezas` : ''}
+                              {equivalenciaCajas(item.disponible, item.m2_por_caja)
+                                ? ` · hay ${equivalenciaCajas(item.disponible, item.m2_por_caja)}`
+                                : ''}
+                            </p>
+                          )}
                         </div>
-                        <BadgeStock estado={item.estado} cantidad={item.disponible} grande />
+                        <BadgeStock estado={item.estado} cantidad={item.disponible}
+                          unidad={item.unidad_venta} grande />
                       </div>
                     ))}
                   </div>
@@ -427,7 +490,12 @@ function PanelDetalle({ producto, detalle, stock, cargando, onCerrar, device, on
                       disabled={sinStock}
                       onClick={() => {
                         setVarianteSel(v)
-                        setCantidad(c => Math.max(1, Math.min(c, Math.floor(Number(st)) || 1)))
+                        // Al elegir la variante se propone **una caja**, que
+                        // es la compra típica; el vendedor la edita si el
+                        // cliente lleva otra cosa. Sin Math.floor: en m² el
+                        // disponible casi nunca es entero y truncarlo perdía
+                        // hasta una caja entera.
+                        setCantidad(redondear(Math.min(pasoDe(v), Number(st))))
                       }}
                       style={{
                         display:'flex', alignItems:'center', justifyContent:'space-between',
@@ -445,8 +513,17 @@ function PanelDetalle({ producto, detalle, stock, cargando, onCerrar, device, on
                           {v.acabado?.nombre ? ` · ${v.acabado.nombre}` : ''}
                         </p>
                         <p style={{ fontSize:'11px', color: sinStock ? C.danger : C.textMuted }}>
-                          {sinStock ? 'Sin stock' : `Stock: ${Number(st).toFixed(2)}`} · {formatGs(v.precio_venta)}
+                          {sinStock ? 'Sin stock' : `Stock: ${fmtCant(st, producto.unidad_venta)}`} · {formatGs(v.precio_venta)}
                         </p>
+                        {v.m2_calculado > 0 && (
+                          <p style={{ fontSize:'10.5px', color:C.goldDark, marginTop:'1px' }}>
+                            {Number(v.m2_calculado).toFixed(2)} m² por caja
+                            {v.piezas_por_caja ? ` · ${v.piezas_por_caja} piezas` : ''}
+                            {!sinStock && equivalenciaCajas(st, v.m2_calculado)
+                              ? ` · ${equivalenciaCajas(st, v.m2_calculado)}`
+                              : ''}
+                          </p>
+                        )}
                       </div>
                       {sel && <CheckCircle size={17} style={{ color:C.gold, flexShrink:0 }} />}
                     </button>
@@ -457,13 +534,17 @@ function PanelDetalle({ producto, detalle, stock, cargando, onCerrar, device, on
               {/* Cantidad + agregar */}
               {varianteSel && stockSel < Infinity && (
                 <p style={{ fontSize:'10.5px', color:C.textMuted, marginBottom:'6px' }}>
-                  Máximo disponible: {Math.floor(stockSel)}
+                  Máximo disponible: {fmtCant(stockSel, producto.unidad_venta)}
+                  {equivalenciaCajas(stockSel, varianteSel.m2_calculado)
+                    ? ` (${equivalenciaCajas(stockSel, varianteSel.m2_calculado)})`
+                    : ''}
+                  {paso !== 1 && ` · cada caja son ${paso.toFixed(2)} m²`}
                 </p>
               )}
               <div style={{ display:'flex', alignItems:'center', gap:'10px' }}>
                 <div style={{ display:'flex', alignItems:'center', gap:'6px' }}>
                   <button
-                    onClick={() => setCantidad(c => Math.max(1, c - 1))}
+                    onClick={() => setCantidad(c => redondear(Math.max(minimo, c - paso)))}
                     style={{ width: device.isTouch?'44px':'38px', height: device.isTouch?'44px':'38px',
                       borderRadius:'9px', background:C.bg, border:`1px solid ${C.border}`,
                       cursor:'pointer', color:C.textSec, display:'flex', alignItems:'center',
@@ -471,15 +552,23 @@ function PanelDetalle({ producto, detalle, stock, cargando, onCerrar, device, on
                     <Minus size={16} />
                   </button>
                   <input
-                    type="number" min="1" max={stockSel === Infinity ? undefined : stockSel} step="1"
+                    // step 0.01 y no 1: un pedido de 12,60 m² es lo normal acá,
+                    // y con step entero el navegador lo marcaba como inválido.
+                    type="number" min={esM2 ? '0.01' : '1'}
+                    max={stockSel === Infinity ? undefined : stockSel}
+                    step={esM2 ? '0.01' : '1'}
                     value={cantidad}
-                    onChange={e => setCantidad(Math.min(Math.max(1, Number(e.target.value) || 1), Math.max(1, Math.floor(stockSel))))}
-                    style={{ width:'56px', height: device.isTouch?'44px':'38px', textAlign:'center',
+                    onChange={e => {
+                      const pedido = Number(e.target.value)
+                      if (!pedido || pedido <= 0) { setCantidad(minimo); return }
+                      setCantidad(redondear(Math.min(pedido, stockSel)))
+                    }}
+                    style={{ width:'72px', height: device.isTouch?'44px':'38px', textAlign:'center',
                       border:`1px solid ${C.border}`, borderRadius:'9px',
                       fontSize:'15px', fontWeight:'500', color:C.text, background:C.bg, outline:'none' }}
                   />
                   <button
-                    onClick={() => setCantidad(c => Math.min(c + 1, Math.max(1, Math.floor(stockSel))))}
+                    onClick={() => setCantidad(c => redondear(Math.min(c + paso, stockSel)))}
                     disabled={cantidad >= stockSel}
                     style={{ width: device.isTouch?'44px':'38px', height: device.isTouch?'44px':'38px',
                       borderRadius:'9px', background:C.bg, border:`1px solid ${C.border}`,
@@ -812,20 +901,25 @@ function CarritoShowroom({ items, onCambiarCantidad, onEliminar, onVaciar, onCer
               </div>
               <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between' }}>
                 <div style={{ display:'flex', alignItems:'center', gap:'6px' }}>
-                  <button onClick={() => onCambiarCantidad(idx, Math.max(1, Number(item.cantidad) - 1))}
+                  <button onClick={() => onCambiarCantidad(idx,
+                    Math.max(pasoItem(item), Number(item.cantidad) - pasoItem(item)))}
                     style={{ width:'32px', height:'32px', borderRadius:'8px', background:C.bgSec,
                       border:`1px solid ${C.border}`, cursor:'pointer', color:C.textSec,
                       display:'flex', alignItems:'center', justifyContent:'center' }}>
                     <Minus size={14} />
                   </button>
-                  <input type="number" min="1" max={item.stock_disponible ?? undefined} value={item.cantidad}
-                    onChange={e => onCambiarCantidad(idx, Math.max(1, Number(e.target.value) || 1))}
-                    style={{ width:'52px', height:'32px', textAlign:'center',
+                  <input type="number" min={item.unidad === 'm2' ? '0.01' : '1'}
+                    max={item.stock_disponible ?? undefined}
+                    step={item.unidad === 'm2' ? '0.01' : '1'}
+                    value={item.cantidad}
+                    onChange={e => onCambiarCantidad(idx,
+                      Math.max(item.unidad === 'm2' ? 0.01 : 1, Number(e.target.value) || 0))}
+                    style={{ width:'66px', height:'32px', textAlign:'center',
                       border:`1px solid ${C.border}`, borderRadius:'8px',
                       fontSize:'14px', fontWeight:'500', color:C.text, background:C.bg, outline:'none' }} />
                   <button
                     disabled={item.stock_disponible != null && Number(item.cantidad) >= item.stock_disponible}
-                    onClick={() => onCambiarCantidad(idx, Number(item.cantidad) + 1)}
+                    onClick={() => onCambiarCantidad(idx, Number(item.cantidad) + pasoItem(item))}
                     style={{ width:'32px', height:'32px', borderRadius:'8px', background:C.bgSec,
                       border:`1px solid ${C.border}`, cursor:'pointer', color:C.textSec,
                       display:'flex', alignItems:'center', justifyContent:'center',
@@ -837,9 +931,17 @@ function CarritoShowroom({ items, onCambiarCantidad, onEliminar, onVaciar, onCer
                   {formatGs(Number(item.precio_unitario) * Number(item.cantidad))}
                 </p>
               </div>
+              {item.unidad === 'm2' && (
+                <p style={{ fontSize:'10.5px', color:C.textMuted, marginTop:'4px' }}>
+                  {fmtCant(item.cantidad, item.unidad)}
+                  {equivalenciaCajas(item.cantidad, item.m2_caja)
+                    ? ` · ${equivalenciaCajas(item.cantidad, item.m2_caja)}`
+                    : ''}
+                </p>
+              )}
               {item.stock_disponible != null && Number(item.cantidad) >= item.stock_disponible && (
                 <p style={{ fontSize:'10.5px', color:C.warning, marginTop:'4px' }}>
-                  Máximo disponible: {item.stock_disponible}
+                  Máximo disponible: {fmtCant(item.stock_disponible, item.unidad)}
                 </p>
               )}
             </div>
@@ -941,6 +1043,10 @@ export default function ShowroomPage() {
         precio_unitario: variante.precio_venta,
         cantidad:        Math.min(stockDisp, Number(cantidad)),
         stock_disponible: stockDisp,
+        // Unidad y rendimiento viajan con el ítem para que el carrito muestre
+        // "12,60 m²" y el +/− siga sumando de a una caja.
+        unidad:          producto?.unidad_venta,
+        m2_caja:         Number(variante.m2_calculado) > 0 ? Number(variante.m2_calculado) : null,
       }]
     })
     toast.success('Agregado al pedido', { duration: 1200 })
@@ -949,7 +1055,8 @@ export default function ShowroomPage() {
 
   const cambiarCantidad = useCallback((idx, cant) => {
     setCarrito(prev => prev.map((i, n) => n === idx
-      ? { ...i, cantidad: Math.min(Number(cant), i.stock_disponible ?? Infinity) }
+      ? { ...i, cantidad: Math.round(
+            Math.min(Number(cant), i.stock_disponible ?? Infinity) * 100) / 100 }
       : i))
   }, [])
   const eliminarDelCarrito = useCallback((idx) => {

@@ -8,16 +8,18 @@
  *
  * WebSocket actualiza la lista en tiempo real sin recargar.
  */
-import { useState, useCallback } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   Plus, RefreshCw, FileText, Clock, Truck,
   CheckCircle, CreditCard, XCircle, ChevronRight,
   Package, User, AlertCircle, Loader2, FileSpreadsheet,
+  Search, X, Trash2, Undo2,
 } from 'lucide-react'
 import Layout from '../components/layout/Layout'
 import NuevoPedidoForm from '../components/ventas/NuevoPedidoForm'
-import { ventasApi } from '../services/api'
+import DatosTrasladoForm from '../components/ventas/DatosTrasladoForm'
+import { ventasApi, facturacionApi } from '../services/api'
 import { useAuthStore } from '../store/authStore'
 import { usePedidoSocket } from '../hooks/usePedidoSocket'
 import toast from 'react-hot-toast'
@@ -155,6 +157,10 @@ function PedidoCard({ pedido, onAbrir, esActivo, rol }) {
           </div>
           <p style={{ fontSize:'12.5px', color:C.textSec }}>
             {pedido.cliente_nombre || 'Sin nombre'}
+            {/* El documento va en la tarjeta porque es por lo que se busca:
+                de poco sirve encontrar el pedido por RUC si después la lista
+                no lo muestra para confirmar que es el cliente correcto. */}
+            {pedido.cliente_ruc && <span style={{ color:C.textMuted }}> · {pedido.cliente_ruc}</span>}
             {pedido.vendedor_nombre && <span style={{ color:C.textMuted }}> · {pedido.vendedor_nombre}</span>}
           </p>
         </div>
@@ -187,6 +193,11 @@ function PanelDetalle({ pedido: pedidoResumen, rol, puedeEditarPrecio, onCerrar 
   const queryClient = useQueryClient()
   const [editandoMonto, setEditandoMonto] = useState(false)
   const [montoNuevo, setMontoNuevo] = useState('')
+  const [editandoTraslado, setEditandoTraslado] = useState(false)
+  // Confirmación en dos toques para quitar un ítem. No se usa window.confirm:
+  // en la tablet abre un diálogo del navegador encima de la PWA y, si queda
+  // abierto, bloquea toda la pantalla.
+  const [itemAQuitar, setItemAQuitar] = useState(null)
 
   const { data: pedido, isLoading } = useQuery({
     queryKey: ['pedido', pedidoResumen?.id],
@@ -239,6 +250,23 @@ function PanelDetalle({ pedido: pedidoResumen, rol, puedeEditarPrecio, onCerrar 
     onError: (err) => toast.error(err.response?.data?.error || 'Error al cambiar estado'),
   })
 
+  // Quitar un ítem devuelve su reserva al stock (lo hace el backend). Sin
+  // esta pantalla, la única forma de recuperar mercadería reservada de más
+  // era cancelar el pedido entero o tocar el inventario a mano.
+  const quitarItem = useMutation({
+    mutationFn: (itemId) => ventasApi.eliminarItem(pedidoResumen.id, itemId).then(r => r.data),
+    onSuccess: (data) => {
+      setItemAQuitar(null)
+      queryClient.invalidateQueries({ queryKey: ['pedido', pedidoResumen.id] })
+      queryClient.invalidateQueries({ queryKey: ['pedidos'] })
+      const liberado = Number(data?.liberado || 0)
+      toast.success(liberado > 0
+        ? `Producto quitado — se liberaron ${liberado.toLocaleString('es-PY', { maximumFractionDigits: 2 })} al stock`
+        : 'Producto quitado del pedido')
+    },
+    onError: (err) => toast.error(err.response?.data?.error || 'No se pudo quitar el producto'),
+  })
+
   const prepararItem = useMutation({
     mutationFn: ({ itemId, preparado }) =>
       ventasApi.prepararItem(pedidoResumen.id, itemId, { preparado, cantidad_preparada: pedido?.items?.find(i=>i.id===itemId)?.cantidad }).then(r => r.data),
@@ -249,6 +277,13 @@ function PanelDetalle({ pedido: pedidoResumen, rol, puedeEditarPrecio, onCerrar 
       }
     },
   })
+
+  // Quitar productos es parte de editar el pedido: mismo permiso y misma
+  // ventana (solo 'pendiente'), igual que el ajuste de monto.
+  const puedeQuitarItems = (
+    ['vendedor', 'encargada_ventas', 'admin'].includes(rol)
+    && estadoActual === 'pendiente'
+  )
 
   if (!pedidoResumen) return null
 
@@ -315,6 +350,20 @@ function PanelDetalle({ pedido: pedidoResumen, rol, puedeEditarPrecio, onCerrar 
                     </div>
                   ))}
                 </div>
+              )}
+
+              {/* Datos del traslado — para la nota de remisión electrónica.
+                  Cajero no los ve: los carga quien prepara la entrega. */}
+              {rol !== 'cajero' && (
+                <>
+                  <ResumenTraslado
+                    pedidoId={pedido.id}
+                    onAbrir={() => setEditandoTraslado(true)}
+                  />
+                  {/* Emitir la remisión y bajar su KuDE. Aparece recién con
+                      el pedido cobrado: el documento cuelga del cobro. */}
+                  <AccionesRemision pedido={pedido} />
+                </>
               )}
 
               {/* Observaciones */}
@@ -384,6 +433,47 @@ function PanelDetalle({ pedido: pedidoResumen, rol, puedeEditarPrecio, onCerrar 
                     {/* Estado del ítem (solo lectura para no-depósito) */}
                     {rol !== 'deposito' && item.preparado && (
                       <CheckCircle size={18} style={{ color:C.success, flexShrink:0 }} />
+                    )}
+
+                    {/* Quitar el producto del pedido — solo mientras está
+                        pendiente, que es cuando el pedido es editable. */}
+                    {puedeQuitarItems && (
+                      itemAQuitar === item.id ? (
+                        <div style={{ display:'flex', gap:'5px', flexShrink:0 }}>
+                          <button
+                            disabled={quitarItem.isPending}
+                            onClick={() => quitarItem.mutate(item.id)}
+                            style={{ height:'36px', padding:'0 10px', borderRadius:'8px',
+                              cursor:'pointer', background:C.dangerBg,
+                              border:`1.5px solid ${C.danger}`, color:C.danger,
+                              fontSize:'12px', fontWeight:'500' }}>
+                            {quitarItem.isPending ? 'Quitando...' : 'Quitar'}
+                          </button>
+                          <button onClick={() => setItemAQuitar(null)}
+                            title="No quitar"
+                            style={{ width:'36px', height:'36px', borderRadius:'8px',
+                              cursor:'pointer', background:C.bg,
+                              border:`1px solid ${C.border}`, color:C.textSec,
+                              display:'flex', alignItems:'center', justifyContent:'center' }}>
+                            <Undo2 size={15} />
+                          </button>
+                        </div>
+                      ) : (
+                        <button
+                          onClick={() => setItemAQuitar(item.id)}
+                          disabled={pedido.items.length <= 1}
+                          title={pedido.items.length <= 1
+                            ? 'Es el único producto del pedido: cancelá el pedido entero'
+                            : 'Quitar del pedido y liberar el stock reservado'}
+                          style={{ width:'36px', height:'36px', flexShrink:0,
+                            borderRadius:'8px', background:'transparent',
+                            border:`1px solid ${C.border}`, color:C.textMuted,
+                            cursor: pedido.items.length <= 1 ? 'not-allowed' : 'pointer',
+                            opacity: pedido.items.length <= 1 ? 0.35 : 1,
+                            display:'flex', alignItems:'center', justifyContent:'center' }}>
+                          <Trash2 size={15} />
+                        </button>
+                      )
                     )}
                   </div>
                 ))}
@@ -495,11 +585,348 @@ function PanelDetalle({ pedido: pedidoResumen, rol, puedeEditarPrecio, onCerrar 
           </div>
         )}
       </div>
+      {editandoTraslado && (
+        <DatosTrasladoForm
+          pedido={pedido ?? pedidoResumen}
+          onCerrar={() => setEditandoTraslado(false)}
+        />
+      )}
+
       <style>{`
         @keyframes slideIn { from{transform:translateX(100%)} to{transform:translateX(0)} }
         @keyframes spin { to{transform:rotate(360deg)} }
       `}</style>
     </>
+  )
+}
+
+/**
+ * Fila que dice si el pedido tiene cargados los datos del traslado.
+ *
+ * Se muestra siempre —no solo cuando ya hay algo— porque el problema que
+ * resuelve es justamente que nadie sabía que había que cargarlos: la nota de
+ * remisión salía bien del lado del XML y se trababa acá. Con la fila visible,
+ * quien prepara la entrega ve el pendiente sin tener que acordarse.
+ */
+function ResumenTraslado({ pedidoId, onAbrir }) {
+  const { data, isLoading } = useQuery({
+    queryKey: ['traslado', pedidoId],
+    queryFn: () => facturacionApi.traslado(pedidoId).then(r => r.data),
+    enabled: Boolean(pedidoId),
+  })
+
+  const cargado = data?.existe
+  return (
+    <button onClick={onAbrir}
+      style={{ width:'100%', display:'flex', alignItems:'center', gap:'11px',
+        padding:'12px 20px', borderBottom:`1px solid ${C.border}`,
+        background: cargado ? C.successBg : C.bg, border:'none',
+        borderLeft:`3px solid ${cargado ? C.success : C.border}`,
+        cursor:'pointer', textAlign:'left', fontFamily:'inherit' }}>
+      <Truck size={16} color={cargado ? C.success : C.textMuted}
+        style={{ flexShrink:0 }} />
+      <div style={{ flex:1, minWidth:0 }}>
+        <p style={{ fontSize:'13px', color:C.text, margin:0 }}>
+          Datos del traslado
+        </p>
+        <p style={{ fontSize:'11.5px', color:C.textMuted, margin:'2px 0 0',
+          overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>
+          {isLoading ? 'Cargando...'
+            : cargado
+              ? `${data.motivo_descripcion} · ${data.vehiculo_matricula || data.vehiculo_numero} · ${data.kilometros} km`
+              : 'Sin cargar — hacen falta para la nota de remisión'}
+        </p>
+      </div>
+      <ChevronRight size={16} color={C.textMuted} style={{ flexShrink:0 }} />
+    </button>
+  )
+}
+
+/**
+ * Emitir la nota de remisión, o bajar su KuDE si ya se emitió.
+ *
+ * Es un botón y no un paso automático del cobro a propósito. La remisión
+ * respalda el **traslado** de la mercadería, no la venta: el Decreto
+ * 6.539/2005 art. 30 dice que sustenta "el traslado de mercaderías dentro del
+ * territorio nacional, por cualquier motivo", y la RG 41/2014 art. 5 exime de
+ * emitirla cuando la mercadería va acompañada del comprobante de venta. O
+ * sea: el cliente que se lleva los pisos en su camioneta con la factura no
+ * necesita remisión; el pedido que sale en el flete del local, sí. Quien
+ * despacha es el único que sabe cuál de los dos casos es.
+ *
+ * Solo aparece con el pedido ya cobrado y con los datos del traslado
+ * cargados, que son las dos condiciones que el backend también exige.
+ */
+function AccionesRemision({ pedido }) {
+  const pedidoId = pedido.id
+  const estado = pedido.estado
+  const queryClient = useQueryClient()
+  const [bajando, setBajando] = useState(false)
+  const [editandoCliente, setEditandoCliente] = useState(false)
+
+  const { data } = useQuery({
+    queryKey: ['remision', pedidoId],
+    queryFn: () => facturacionApi.remision(pedidoId).then(r => r.data),
+    enabled: Boolean(pedidoId) && estado === 'pagado',
+  })
+
+  // Misma clave que usa ResumenTraslado, así que esto lee de la caché en vez
+  // de repetir el pedido a la API.
+  const { data: traslado } = useQuery({
+    queryKey: ['traslado', pedidoId],
+    queryFn: () => facturacionApi.traslado(pedidoId).then(r => r.data),
+    enabled: Boolean(pedidoId),
+  })
+  const hayTraslado = Boolean(traslado?.existe)
+  const hayCliente = Boolean((pedido.cliente_ruc || '').trim())
+
+  const emitirMut = useMutation({
+    mutationFn: () => facturacionApi.emitirRemision(pedidoId),
+    onSuccess: (r) => {
+      queryClient.invalidateQueries({ queryKey:['remision', pedidoId] })
+      toast.success(`Nota de remisión ${r.data.remision.numero} emitida`)
+    },
+    onError: (err) => toast.error(
+      err.response?.data?.error || 'No se pudo emitir la nota de remisión'),
+  })
+
+  const descargarKude = async () => {
+    setBajando(true)
+    try {
+      const res = await facturacionApi.kude(data.id)
+      const url = window.URL.createObjectURL(new Blob([res.data]))
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `remision_${data.numero}.pdf`
+      document.body.appendChild(a)
+      a.click()
+      a.remove()
+      window.URL.revokeObjectURL(url)
+    } catch {
+      toast.error('No se pudo bajar el KuDE de la remisión')
+    } finally {
+      setBajando(false)
+    }
+  }
+
+  // Antes de cobrar no hay remisión posible: el documento cuelga del cobro.
+  if (estado !== 'pagado') return null
+
+  const emitida = data?.existe
+  // Las dos condiciones que el backend también exige, en el mismo orden en
+  // que conviene resolverlas: primero quién recibe, después cómo viaja.
+  const listoParaEmitir = hayCliente && hayTraslado
+
+  const faltante = !hayCliente
+    ? 'Falta identificar al cliente — el SIFEN no acepta remisión sin RUC o CI'
+    : !hayTraslado
+      ? 'Cargá antes los datos del traslado'
+      : 'Solo si la mercadería sale en el flete del local'
+
+  return (
+    <div style={{ borderBottom:`1px solid ${C.border}` }}>
+    <div style={{ padding:'12px 20px',
+      display:'flex', alignItems:'center', gap:'10px', flexWrap:'wrap' }}>
+      <FileText size={16} color={emitida ? C.success : C.textMuted}
+        style={{ flexShrink:0 }} />
+      <div style={{ flex:1, minWidth:'150px' }}>
+        <p style={{ fontSize:'13px', color:C.text, margin:0 }}>
+          Nota de remisión
+        </p>
+        <p style={{ fontSize:'11.5px', color:C.textMuted, margin:'2px 0 0' }}>
+          {emitida ? `${data.numero} · ${data.estado_display || data.estado}` : faltante}
+        </p>
+      </div>
+      {/* El botón de cargar el cliente va antes que el de emitir, porque es
+          el paso que desbloquea al otro. Se ofrece siempre —no solo cuando
+          falta— para poder corregir un RUC mal tipeado antes de emitir; una
+          vez emitida, el dato ya viajó al documento y no se toca. */}
+      {!emitida && (
+        <button onClick={() => setEditandoCliente(v => !v)} style={{
+          display:'flex', alignItems:'center', gap:'6px',
+          padding:'7px 12px', borderRadius:'8px', cursor:'pointer',
+          background: hayCliente ? C.bgTer : C.warningBg,
+          border:`1px solid ${hayCliente ? C.border : C.warningBorder}`,
+          color: hayCliente ? C.textSec : C.warning,
+          fontSize:'12.5px', fontWeight:'500',
+        }}>
+          <User size={14}/> {hayCliente ? 'Cliente' : 'Cargar cliente'}
+        </button>
+      )}
+      {emitida ? (
+        <button onClick={descargarKude} disabled={bajando} style={{
+          display:'flex', alignItems:'center', gap:'6px',
+          padding:'7px 12px', borderRadius:'8px', cursor: bajando ? 'wait' : 'pointer',
+          background:C.bgTer, border:`1px solid ${C.border}`, color:C.textSec,
+          fontSize:'12.5px', fontWeight:'500',
+        }}>
+          {bajando ? <Loader2 size={14} style={{ animation:'spin 1s linear infinite' }}/>
+                   : <FileText size={14}/>}
+          KuDE
+        </button>
+      ) : (
+        <button onClick={() => emitirMut.mutate()}
+          disabled={!listoParaEmitir || emitirMut.isPending}
+          title={listoParaEmitir ? 'Emitir la nota de remisión del traslado'
+                                 : faltante}
+          style={{
+            display:'flex', alignItems:'center', gap:'6px',
+            padding:'7px 12px', borderRadius:'8px',
+            cursor: listoParaEmitir ? 'pointer' : 'not-allowed',
+            opacity: listoParaEmitir ? 1 : 0.5,
+            background:C.goldMuted, border:`1px solid ${C.border}`, color:C.goldDark,
+            fontSize:'12.5px', fontWeight:'500',
+          }}>
+          {emitirMut.isPending
+            ? <Loader2 size={14} style={{ animation:'spin 1s linear infinite' }}/>
+            : <Truck size={14}/>}
+          Emitir
+        </button>
+      )}
+    </div>
+
+    {editandoCliente && !emitida && (
+      <DatosClienteRemision
+        pedido={pedido}
+        onListo={() => setEditandoCliente(false)}
+      />
+    )}
+    </div>
+  )
+}
+
+/**
+ * Carga o corrige los datos del cliente de un pedido YA COBRADO.
+ *
+ * Existe por una razón puntual: la nota de remisión se emite después de
+ * cobrar y el SIFEN no la acepta sin receptor identificado (NT 023). Si la
+ * venta se cobró como ticket —donde nadie pide el RUC— el pedido quedaba sin
+ * forma de despacharse y sin ninguna pantalla donde arreglarlo. El backend
+ * abre exactamente esta rendija: en un pedido pagado solo se pueden tocar
+ * estos tres campos, nada de ítems ni de montos.
+ *
+ * Busca en el padrón mientras se escribe para no retipear a un cliente que ya
+ * está cargado, que es de donde salen la mitad de los RUC mal escritos.
+ *
+ * Ojo con lo que esto NO hace: no reescribe una factura ya emitida. El
+ * documento electrónico guarda su propio snapshot del receptor al emitirse,
+ * porque es un registro histórico. Corregir acá sirve para el documento que
+ * todavía no salió.
+ */
+function DatosClienteRemision({ pedido, onListo }) {
+  const queryClient = useQueryClient()
+  const [datos, setDatos] = useState({
+    cliente_nombre:   pedido.cliente_nombre   || '',
+    cliente_ruc:      pedido.cliente_ruc      || '',
+    cliente_telefono: pedido.cliente_telefono || '',
+  })
+  const [busqueda, setBusqueda] = useState('')
+
+  const { data: encontrados = [] } = useQuery({
+    queryKey: ['clientes-padron', busqueda],
+    queryFn: () => ventasApi.clientes(busqueda).then(r => r.data),
+    enabled: busqueda.trim().length >= 2,
+  })
+
+  const guardarMut = useMutation({
+    mutationFn: () => ventasApi.actualizar(pedido.id, datos),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey:['pedido', pedido.id] })
+      queryClient.invalidateQueries({ queryKey:['pedidos'] })
+      toast.success('Datos del cliente guardados')
+      onListo()
+    },
+    onError: (err) => toast.error(
+      err.response?.data?.error || 'No se pudieron guardar los datos'),
+  })
+
+  const set = (k) => (e) => setDatos(d => ({ ...d, [k]: e.target.value }))
+  const estiloInput = {
+    width:'100%', padding:'8px 10px', borderRadius:'7px',
+    border:`1px solid ${C.border}`, fontSize:'13px', fontFamily:'inherit',
+    color:C.text, background:C.bg, boxSizing:'border-box',
+  }
+
+  const listado = Array.isArray(encontrados)
+    ? encontrados
+    : (encontrados.results || [])
+
+  return (
+    <div style={{ padding:'0 20px 14px', background:C.bgSec }}>
+      <p style={{ fontSize:'11.5px', color:C.textMuted, margin:'0 0 10px' }}>
+        El SIFEN exige identificar a quien recibe la mercadería. Buscá en el
+        padrón o escribilo a mano.
+      </p>
+
+      <div style={{ position:'relative', marginBottom:'10px' }}>
+        <input value={busqueda} onChange={e => setBusqueda(e.target.value)}
+          placeholder="Buscar en el padrón por nombre o RUC..."
+          style={estiloInput} />
+        {listado.length > 0 && busqueda.trim().length >= 2 && (
+          <div style={{ position:'absolute', top:'100%', left:0, right:0, zIndex:5,
+            background:C.bg, border:`1px solid ${C.border}`, borderRadius:'8px',
+            marginTop:'4px', maxHeight:'170px', overflowY:'auto',
+            boxShadow:'0 6px 18px rgba(0,0,0,0.08)' }}>
+            {listado.slice(0, 8).map(c => (
+              <button key={c.id} onClick={() => {
+                setDatos({
+                  cliente_nombre:   c.razon_social || '',
+                  cliente_ruc:      c.ruc || '',
+                  cliente_telefono: c.telefono || '',
+                })
+                setBusqueda('')
+              }} style={{
+                display:'block', width:'100%', textAlign:'left', padding:'8px 10px',
+                background:'none', border:'none', borderBottom:`1px solid ${C.border}`,
+                cursor:'pointer', fontFamily:'inherit',
+              }}>
+                <span style={{ fontSize:'13px', color:C.text }}>{c.razon_social}</span>
+                {c.ruc && (
+                  <span style={{ fontSize:'11px', color:C.textMuted, marginLeft:'8px' }}>
+                    RUC: {c.ruc}
+                  </span>
+                )}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <div style={{ display:'grid', gap:'8px',
+        gridTemplateColumns:'repeat(auto-fit, minmax(150px, 1fr))' }}>
+        <input value={datos.cliente_nombre} onChange={set('cliente_nombre')}
+          placeholder="Nombre o razón social" style={estiloInput} />
+        <input value={datos.cliente_ruc} onChange={set('cliente_ruc')}
+          placeholder="RUC / CI *" style={estiloInput} />
+        <input value={datos.cliente_telefono} onChange={set('cliente_telefono')}
+          placeholder="Teléfono" style={estiloInput} />
+      </div>
+
+      <div style={{ display:'flex', gap:'8px', marginTop:'10px' }}>
+        <button onClick={() => guardarMut.mutate()}
+          disabled={!datos.cliente_ruc.trim() || guardarMut.isPending}
+          style={{
+            display:'flex', alignItems:'center', gap:'6px',
+            padding:'8px 14px', borderRadius:'8px',
+            cursor: datos.cliente_ruc.trim() ? 'pointer' : 'not-allowed',
+            opacity: datos.cliente_ruc.trim() ? 1 : 0.5,
+            background:C.sidebar, border:`1px solid ${C.gold}`, color:C.gold,
+            fontSize:'12.5px', fontWeight:'500',
+          }}>
+          {guardarMut.isPending
+            ? <Loader2 size={14} style={{ animation:'spin 1s linear infinite' }}/>
+            : <CheckCircle size={14}/>}
+          Guardar
+        </button>
+        <button onClick={onListo} style={{
+          padding:'8px 14px', borderRadius:'8px', cursor:'pointer',
+          background:C.bg, border:`1px solid ${C.border}`, color:C.textSec,
+          fontSize:'12.5px', fontFamily:'inherit',
+        }}>
+          Cancelar
+        </button>
+      </div>
+    </div>
   )
 }
 
@@ -610,6 +1037,17 @@ export default function PedidosPage() {
   const [pedidoActivo, setPedidoActivo] = useState(null)
   const [mostrarNuevo, setMostrarNuevo] = useState(false)
   const [filtroEstado, setFiltroEstado] = useState('')
+  // Búsqueda por nombre o CI/RUC del cliente (también entra el número de
+  // pedido). Se manda al backend y no se filtra en el cliente: la lista que
+  // llega es la del rol y puede no contener el pedido buscado.
+  const [busqueda, setBusqueda] = useState('')
+  const [busquedaAplicada, setBusquedaAplicada] = useState('')
+
+  // Debounce: en la tablet cada tecla dispararía un request.
+  useEffect(() => {
+    const t = setTimeout(() => setBusquedaAplicada(busqueda.trim()), 350)
+    return () => clearTimeout(t)
+  }, [busqueda])
 
   // Canal WebSocket por rol para recibir notificaciones
   usePedidoSocket({
@@ -627,8 +1065,11 @@ export default function PedidosPage() {
   })
 
   const { data, isLoading, refetch } = useQuery({
-    queryKey: ['pedidos', rol, filtroEstado],
-    queryFn: () => ventasApi.pedidos({ estado: filtroEstado || undefined }).then(r => r.data),
+    queryKey: ['pedidos', rol, filtroEstado, busquedaAplicada],
+    queryFn: () => ventasApi.pedidos({
+      estado: filtroEstado || undefined,
+      buscar: busquedaAplicada || undefined,
+    }).then(r => r.data),
     staleTime: 10_000,
     refetchInterval: 30_000, // fallback polling cada 30s si WebSocket falla
   })
@@ -690,7 +1131,28 @@ export default function PedidosPage() {
         </div>
 
         {/* Acciones */}
-        <div style={{ display:'flex', gap:'8px', flexShrink:0 }}>
+        <div style={{ display:'flex', gap:'8px', flexShrink:0, alignItems:'center' }}>
+          <div style={{ position:'relative' }}>
+            <Search size={15} style={{ position:'absolute', left:'10px', top:'50%',
+              transform:'translateY(-50%)', color:C.textMuted, pointerEvents:'none' }} />
+            <input
+              value={busqueda}
+              onChange={e => setBusqueda(e.target.value)}
+              placeholder="Buscar cliente, CI/RUC o N.º"
+              style={{ height:'38px', width:'232px', padding:'0 30px 0 32px',
+                border:`1px solid ${busqueda ? C.gold : C.border}`, borderRadius:'9px',
+                fontSize:'13px', color:C.text, background:C.bg, outline:'none' }}
+            />
+            {busqueda && (
+              <button onClick={() => setBusqueda('')} title="Limpiar búsqueda"
+                style={{ position:'absolute', right:'6px', top:'50%',
+                  transform:'translateY(-50%)', background:'transparent', border:'none',
+                  cursor:'pointer', color:C.textMuted, display:'flex', padding:'4px' }}>
+                <X size={14} />
+              </button>
+            )}
+          </div>
+
           <button onClick={() => refetch()}
             style={{ width:'38px', height:'38px', borderRadius:'9px',
               background:'transparent', border:`1px solid ${C.border}`,
@@ -726,9 +1188,16 @@ export default function PedidosPage() {
           <FileText size={48} style={{ margin:'0 auto 14px', opacity:0.2 }} />
           <p style={{ fontSize:'17px', fontWeight:'500', color:C.textSec,
             fontFamily:'var(--font-display)' }}>
-            {filtroEstado ? `Sin pedidos en estado "${ESTADO_CFG[filtroEstado]?.label}"` : 'Sin pedidos'}
+            {busquedaAplicada
+              ? `Ningún pedido coincide con "${busquedaAplicada}"`
+              : filtroEstado ? `Sin pedidos en estado "${ESTADO_CFG[filtroEstado]?.label}"` : 'Sin pedidos'}
           </p>
-          {puedeVender && !filtroEstado && (
+          {busquedaAplicada && (
+            <p style={{ fontSize:'12.5px', color:C.textMuted, marginTop:'6px' }}>
+              Se busca por nombre del cliente, CI/RUC o número de pedido.
+            </p>
+          )}
+          {puedeVender && !filtroEstado && !busquedaAplicada && (
             <button onClick={() => setMostrarNuevo(true)}
               style={{ marginTop:'16px', display:'inline-flex', alignItems:'center', gap:'7px',
                 padding:'10px 20px', background:C.sidebar,

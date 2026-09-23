@@ -228,6 +228,40 @@ class NotaPedido(models.Model):
                 logger.warning(f'Error liberando stock de {item.variante.sku}: {e}')
 
     @transaction.atomic
+    def liberar_reserva_item(self, item, usuario, motivo='quitado del pedido'):
+        """
+        Libera la reserva de UN ítem, sin tocar el resto del pedido.
+
+        Existe porque sacar un ítem de un pedido pendiente dejaba su reserva
+        viva para siempre: la variante quedaba con `cantidad_reservada` sin
+        pedido que la respalde y no se podía volver a vender, aunque la
+        mercadería siguiera en depósito. Es el mismo movimiento de liberación
+        que hace `liberar_stock()` al cancelar, acotado a un ítem.
+
+        Devuelve la cantidad liberada (0 si no había reserva).
+        """
+        from apps.inventario.models import Stock, MovimientoStock
+
+        try:
+            stock = Stock.objects.select_for_update().get(variante=item.variante)
+        except Stock.DoesNotExist:
+            return 0
+
+        liberar = min(item.cantidad, stock.cantidad_reservada)
+        if liberar <= 0:
+            return 0
+
+        stock.registrar_movimiento(
+            tipo            = MovimientoStock.TIPO_LIBERACION,
+            cantidad        = liberar,
+            usuario         = usuario,
+            referencia_tipo = 'pedido',
+            referencia_id   = self.id,
+            observaciones   = f'Liberación — {item.variante.sku} {motivo} ({self.numero})',
+        )
+        return liberar
+
+    @transaction.atomic
     def descontar_stock(self, usuario, numero_ticket=''):
         """
         Al confirmar el pago: descuenta el stock real y libera la reserva.
