@@ -182,7 +182,8 @@ de Caja ni ver los reportes, aunque conozca la URL.
   pago) y la diferencia entre lo esperado y lo contado.
 - **Cobro de pedidos**: el cajero cobra pedidos que depósito marcó como
   "listos". Medios de pago: efectivo (con cálculo automático de vuelto),
-  tarjeta de débito, tarjeta de crédito, transferencia. El cajero puede
+  tarjeta de débito, tarjeta de crédito, transferencia y cheque (se cargan
+  banco y número, y la fecha de cobro si es diferido). El cajero puede
   aplicar un descuento propio al momento de cobrar (hasta 70%), aparte del
   que ya traiga el pedido.
 - **Impresión térmica**: al confirmar el pago se imprime automáticamente
@@ -198,6 +199,18 @@ de Caja ni ver los reportes, aunque conozca la URL.
     medio de pago.
   - **Extracto de Caja** — sesiones de caja del período, con apertura,
     cierre, cajero responsable y total vendido.
+  - **Productos comercializados** — cuánto salió de cada producto en el
+    período: cantidad vendida con su unidad, cuántas ventas, primera y
+    última venta e ingresos. Es el reporte para decidir qué reponer.
+  - **Productos por fecha** — el mismo dato abierto en una fila por venta,
+    con la fecha y hora, el cliente y el pedido. Sirve para rastrear una
+    venta puntual o ver el ritmo de salida de un producto.
+  - **Arqueo de Caja** — de un día concreto. Trae, sesión por sesión, el
+    monto de apertura, los cobros por medio de pago, el efectivo que debe
+    haber en el cajón, lo declarado al cerrar y la diferencia (marcada como
+    sobrante o faltante). Al final incluye la grilla de billetes y monedas
+    en blanco para el conteo físico y dos líneas de firma. Solo el efectivo
+    entra en la diferencia: una tarjeta no está en el cajón.
   Los PDF se pueden generar en hoja **A4** (por defecto) u **Oficio**, con
   orientación horizontal automática cuando el reporte tiene muchas
   columnas, y pie de página con numeración.
@@ -217,7 +230,11 @@ simplificada de accesos rápidos a lo suyo). Muestra de un vistazo:
 - Gráfico de evolución de ventas diarias.
 - Cola de pedidos activos (pendientes / en preparación / listos), con
   acceso directo a cada lista.
-- Top 5 productos por ingresos del mes.
+- Top 5 productos por ingresos del mes, con la cantidad en su unidad de
+  venta (m², unidades, metros lineales).
+- **Mercadería vendida en los últimos 30 días**, agrupada por unidad de
+  venta y con cuántos productos distintos salieron. Es el número que dice
+  qué se movió de depósito, distinto de cuántos cobros hubo.
 - Distribución de ventas por medio de pago.
 - Resumen de stock (variantes ok / stock bajo / sin stock).
 - Feed de últimas ventas (cliente, medio de pago, cajero, monto).

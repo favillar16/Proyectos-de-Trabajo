@@ -126,20 +126,20 @@ desglose se entere de que se apartó de la fórmula oficial.
 | 011 | 20/10/2022 | WS de consulta masiva de RUC | No aplica hoy — sería del sidecar |
 | 012 | 21/02/2023 | La autofactura debe ser en PYG | No aplica — autofactura no implementada |
 | 013 | 20/03/2023 | **Fórmula de base gravada y base exenta por ítem** | ✅ Verificado — nuestra cuenta coincide |
-| 014 | 20/03/2023 | Evento de Nominación de Factura Electrónica | No aplica — eventos son Fase C |
-| 015 | 14/08/2023 | Validación `H004i` del evento de nominación | No aplica — ídem |
+| 014 | 20/03/2023 | Evento de Nominación de Factura Electrónica | Pendiente — la nominación no se implementó (ver abajo) |
+| 015 | 14/08/2023 | Validación `H004i` del evento de nominación | Pendiente — ídem |
 | 016 | 14/08/2023 | Estándar de firma digital (ley de servicios de confianza) | **Del sidecar** — lo resuelve `xmlsign`, no nuestro código |
 | 017 | 14/08/2023 | Mensajes de validación de distrito/ciudad del receptor | No aplica — no se manda domicilio del receptor |
 | 018 | 17/11/2023 | Grupo `gOblAfe` (imputación RG90) | No aplica — el grupo es opcional (0-11) |
-| 019 | 17/11/2023 | Evento Notificación–Recepción | No aplica — eventos son Fase C |
+| 019 | 17/11/2023 | Evento Notificación–Recepción | **Pendiente de releer** — dejó de no aplicar el 20/09/2026 (ver abajo) |
 | 020 | 17/11/2023 | Compras públicas / `dCodConDncp` | No aplica — el negocio no vende B2G |
 | 021 | 29/12/2023 | Innominado prohibido desde 35.000.000 | Reemplazada por la NT 024 |
 | 022 | 09/02/2024 | Código de obligación duplicado (RG90) | No aplica — `gOblAfe` no se usa |
 | 023 | 27/08/2024 | `dCantProSer` 1-10p(0-8); `dRucFus`; **notas no pueden ir innominadas** | ✅ Aplicado |
 | 024 | 17/12/2024 | **Innominado prohibido desde 7.000.000** | ✅ Aplicado — la de mayor impacto |
-| 025 | 23/04/2025 | Cancelación: se excluye la validación de confirmación previa | No aplica — eventos son Fase C |
+| 025 | 23/04/2025 | Cancelación: se excluye la validación de confirmación previa | ✅ Revisada (19/09/2026) — no exige código (ver abajo) |
 | 026 | 06/06/2025 | Compras públicas pasan a opcionales | No aplica — el negocio no vende B2G |
-| 027 | 09/03/2026 | Evento de Nominación: `iTipIDRec` | No aplica — eventos son Fase C |
+| 027 | 09/03/2026 | Evento de Nominación: `iTipIDRec` | Pendiente — con la nominación |
 
 ### Las que quedan pendientes de otra fase
 
@@ -147,8 +147,36 @@ Ninguna se descartó por conveniencia. Las que dicen "no aplica" son de rubros
 que el negocio no toca (seguros, energía, compras públicas, exportación) o de
 funcionalidad que todavía no existe:
 
-- **NT 014, 015, 019, 025, 027** — eventos del SIFEN. Hay que releerlas al
-  construir la Fase C (cancelación, inutilización, conformidad).
+- **NT 025** — releída al construir la Fase C el 19/09/2026. Lo que hace es
+  **sacar** una validación: hasta esa nota, un DTE que el receptor ya había
+  confirmado no se podía cancelar (regla GEC002c, código 4004). Desde abril
+  de 2025 esa restricción no corre para el emisor. No hay código que
+  escribir: es un motivo de rechazo menos. Se deja anotado porque lo
+  contrario —creer que la validación sigue viva— llevaría a bloquear
+  cancelaciones que el SIFEN aceptaría.
+- **NT 014, 015 y 027** — son las tres del **evento de Nominación**, que
+  convierte una venta innominada en nominada cuando el cliente pide la
+  factura a su nombre después de emitida. No se implementó: con la NT 024 el
+  receptor ya tiene que identificarse desde 7.000.000 Gs, así que el caso
+  que la nominación resuelve es el de una venta chica que el cliente quiere
+  nominar más tarde. Si aparece en el mostrador, el evento ya tiene su lugar
+  (`EventoDocumento`, `sifen_client.enviar_evento('nominacion', ...)`) y el
+  sidecar lo soporta: falta el modelo de datos del receptor tardío y releer
+  estas tres notas.
+- **NT 019** — evento Notificación–Recepción. Es del **rol receptor**: se
+  registra sobre documentos que el negocio *recibe* de sus proveedores.
+
+  ⚠️ **Esta fila quedó desactualizada y se detectó el 23/09/2026.** Cuando se
+  escribió era cierto que el sistema no llevaba documentos recibidos, pero el
+  **20/09/2026** se construyeron `EventoReceptor`, `eventos_receptor.py` y la
+  sección «Recibidos» de `FacturacionPage`, que hacen exactamente eso — y la
+  notificación de recepción es uno de los cuatro tipos implementados. La nota
+  pasó a aplicar y **nadie la releyó**: lo que se implementó salió del Manual
+  §11.2 y de `jsonEventoMain.service.js`, no de la NT. Hay que leerla y ver si
+  cambia algo de lo que ya está.
+
+  Sirve de recordatorio de que un «no aplica» caduca cuando el alcance crece:
+  vale revisar los demás de esta lista cada vez que se suma un módulo.
 - **NT 016** — firma digital. Hay que releerla al montar el sidecar; la
   resuelve `facturacionelectronicapy-xmlsign`, pero conviene confirmar que la
   versión que se instale la implemente.

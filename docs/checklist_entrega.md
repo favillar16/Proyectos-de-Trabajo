@@ -178,6 +178,14 @@ Ejecutar con el usuario `vendedor / demo2025` salvo que se indique otro.
 | 19 | Subir una imagen desde el paso 3 | La imagen aparece en el showroom | ☐ |
 | 20 | Con rol `cajero`, intentar crear producto | Acceso denegado (403) | ☐ |
 
+### 2.3b Imágenes del producto
+
+| # | Prueba | Esperado | OK |
+|---|--------|----------|:--:|
+| 32a | Editar un producto con fotos y abrir el paso "Imágenes" | Se ven las fotos ya cargadas, marcadas como "Ya guardada" | ☐ |
+| 32b | Borrar una foto con el ícono del tacho | Desaparece; al reabrir la ficha sigue borrada | ☐ |
+| 32c | Marcar otra foto como principal con la estrella | Es la que se ve en el showroom y en el listado | ☐ |
+
 ### 2.4 Flujo completo de venta (prueba más importante)
 
 Ejecutar con 3 ventanas abiertas: una como vendedor, una como depósito, una como cajero.
@@ -201,12 +209,25 @@ Ejecutar con 3 ventanas abiertas: una como vendedor, una como depósito, una com
 
 | # | Prueba | Esperado | OK |
 |---|--------|----------|:--:|
-| 33 | Buscar variante con stock=1 en el showroom | Muestra "1 disponible" | ☐ |
+| 33 | Buscar variante con stock=1 en el showroom | Muestra "1,00 disp." con su unidad | ☐ |
+| 33b | Abrir un porcelanato en el showroom | Cada variante dice "X m² por caja · N piezas" y cuántas cajas hay | ☐ |
+| 33c | Pedir 12,60 m² de un producto que tiene 25,20 | Acepta los decimales; el «+» suma una caja entera | ☐ |
 | 34 | Crear pedido por esa 1 unidad (sin confirmar) | Stock disponible baja a 0 en el showroom | ☐ |
 | 35 | Intentar crear otro pedido por la misma unidad | Error: stock insuficiente | ☐ |
 | 36 | Cancelar el primer pedido | El stock vuelve a 1 disponible | ☐ |
+| 36b | Crear un pedido con dos productos y quitar uno desde el panel de detalle | El stock reservado de ese producto vuelve a estar disponible, y el aviso dice cuánto se liberó | ☐ |
+| 36c | Intentar quitar el único ítem de un pedido | El botón está deshabilitado: hay que cancelar el pedido entero | ☐ |
 | 37 | Ir a Inventario y hacer ajuste manual (+5 cajas) | El stock sube correctamente | ☐ |
 | 38 | Bajar el stock a 0 con un ajuste de salida | Aparece alerta "Sin stock" en el panel | ☐ |
+
+### 2.5b Buscador de pedidos
+
+| # | Prueba | Esperado | OK |
+|---|--------|----------|:--:|
+| 38a | Buscar un pedido por el nombre del cliente | Aparece el pedido, aunque no esté en la primera pantalla | ☐ |
+| 38b | Buscar por la cédula o el RUC del cliente | Lo encuentra igual | ☐ |
+| 38c | Buscar por el número de pedido (NP-...) | Lo encuentra | ☐ |
+| 38d | Buscar como vendedor un pedido de otro vendedor | No aparece: el buscador no amplía lo que el rol ve | ☐ |
 
 ### 2.6 Módulo de caja
 
@@ -217,9 +238,12 @@ Ejecutar con 3 ventanas abiertas: una como vendedor, una como depósito, una com
 | 41 | Ver lista de pedidos listos | Aparecen los marcados como "Listo" | ☐ |
 | 42 | Cobrar con tarjeta de débito | No pide monto recibido ni vuelto | ☐ |
 | 43 | Cobrar con efectivo, ingresar billete redondo | Calcula vuelto al instante | ☐ |
+| 43b | Cobrar con cheque sin cargar banco ni número | No deja confirmar: los pide | ☐ |
+| 43c | Cobrar con cheque (banco, número y fecha de cobro) | El ticket muestra "Cheque" y abajo "Nro — Banco (al dd/mm/aaaa)" | ☐ |
 | 44 | El ticket aparece después del pago | Datos correctos: cliente, ítems, total, vuelto | ☐ |
 | 45 | Botón "Reimprimir" | Envía a la impresora nuevamente | ☐ |
 | 46 | Cerrar caja | Muestra resumen del día por medio de pago | ☐ |
+| 46b | Cerrar caja tras cobrar un cheque | El cheque figura aparte y no cuenta como efectivo en el arqueo | ☐ |
 
 ### 2.7 Impresora térmica
 
@@ -238,6 +262,10 @@ Ejecutar con 3 ventanas abiertas: una como vendedor, una como depósito, una com
 | 52 | Cambiar entre 7d / 30d / 90d | Los números y el gráfico cambian | ☐ |
 | 53 | Con ventas recién hechas, aparecen en el feed | Las últimas ventas se ven abajo | ☐ |
 | 54 | Clic en "Ver inventario" desde alerta de stock | Filtra a "Sin stock" automáticamente | ☐ |
+| 54b | Mirar el bloque "Mercadería vendida" | Muestra cuántos m² / unidades salieron, separados por unidad | ☐ |
+| 54c | Descargar el reporte "Productos vendidos" (PDF y Excel) | Lista cada producto con su cantidad exacta y las fechas | ☐ |
+| 54d | Descargar el "Arqueo de Caja" del día | Trae apertura, cobros por medio, efectivo esperado, diferencia y la grilla para contar a mano | ☐ |
+| 54e | Verificar la hora en cualquier reporte | Coincide con la hora del local (no está corrida) | ☐ |
 
 ### 2.9 Gestión de usuarios (solo admin)
 

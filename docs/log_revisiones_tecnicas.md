@@ -575,3 +575,251 @@ En la PC servidor, en este orden:
   ejercita.
 - Sidecar Node, worker de transmisión, QR del KuDE y nota de crédito.
 - La decisión e-Kuatia'i vs. e-Kuatia, y si la PC servidor va a tener internet.
+
+---
+
+## 2026-09-19 — Mejoras pedidas por la propietaria + Fases C y D de la facturación electrónica
+
+**Sin commitear.** Encima de los 5 commits de la migración a e-Kuatia que
+siguen sin pushear y del cobro con cheque del 17/09.
+
+Entrada de la primera parte: `docs/Mejoras a Incorporar.txt`, el feedback de
+la propietaria. Son ocho pedidos y todos tienen la misma raíz — el sistema
+sabe cosas que no muestra.
+
+### 1. Reportes: qué se vendió, no solo cuánto se cobró
+
+El Balance de Ventas listaba una línea por cobro, con el número de pedido. La
+propietaria necesita lo otro: **cuánto salió de cada producto**, para saber
+qué reponer y en qué cantidad.
+
+Se agregaron dos reportes en `apps/caja/reportes.py`, los dos en PDF y Excel:
+
+- **Productos comercializados** — acumulado por variante en el período, con
+  cantidad, número de ventas, primera y última venta e ingresos.
+- **Productos por fecha** (`?detalle=1`) — una fila por venta. Es el mismo
+  endpoint: son el mismo dato mirado de dos maneras.
+
+La fecha que manda es la del **cobro confirmado**, no la de creación del
+pedido: un presupuesto armado el lunes y cobrado el jueves se vendió el
+jueves. Por eso se entra por `Pago` y no por `NotaPedido`.
+
+El dashboard suma un bloque **"Mercadería vendida — últimos 30 días"**
+agrupado por unidad de venta, y el Top 5 ahora dice la unidad al lado del
+número. Sumar m² con inodoros no da ningún número útil, así que no se suman.
+
+### 2. Arqueo de caja diario
+
+Reporte nuevo, por día y no por rango: un arqueo compara el efectivo contado
+contra el esperado en un momento dado. Va sesión por sesión con el detalle
+por medio de pago, el efectivo que debe haber en el cajón (apertura + cobros
+en efectivo), lo declarado al cerrar y la diferencia, marcada como sobrante o
+faltante. Al final trae la grilla de denominaciones del guaraní en blanco
+para el conteo físico y dos líneas de firma.
+
+**Solo el efectivo entra en la diferencia.** Una tarjeta o una transferencia
+no están en el cajón; mezclarlas haría que un arqueo correcto aparezca
+descuadrado todos los días.
+
+### 3. Un bug de hora que nadie había reportado
+
+Apareció escribiendo el test del reporte nuevo: la fecha del cobro salía
+corrida. La base guarda los `DateTimeField` en UTC (`USE_TZ=True`) y todo el
+sistema llamaba a `strftime()` sobre el campo tal cual. **Una venta de las 10
+de la mañana se imprimía como "14:00"** — en el Balance de Ventas, en el
+Extracto de Caja, en el ticket que se le entrega al cliente, en el ticket de
+cierre y en el feed del dashboard. El único lugar que estaba bien era el
+payload del SIFEN, que sí convertía.
+
+Corregido en los cinco. Los reportes pasan por `reportes._fecha()`.
+
+### 4. Cantidades exactas en m² (Showroom)
+
+El Showroom truncaba: el input de cantidad tenía `step="1"` y el máximo se
+calculaba con `Math.floor(stock)`. Con 25,20 m² disponibles no se podían
+pedir 12,60 — y 12,60 m² es una compra normal acá, son cinco cajas.
+
+Ahora la cantidad admite decimales, el tope es el disponible exacto y el
+`+`/`−` suma **una caja** cuando el producto se vende por m² y tiene
+rendimiento cargado, que es como se pide en el mostrador. El carrito hace lo
+mismo y muestra la equivalencia ("12,60 m² · 5 cajas").
+
+### 5. m² por caja a la vista
+
+Pedido textual de la propietaria. En el detalle del producto, cada fila de
+stock y cada variante dicen ahora "2,52 m² por caja · 6 piezas · hay 10
+cajas". El backend lo sumó al endpoint `/productos/<id>/stock/`.
+
+### 6. Borrar imágenes de un producto
+
+No era que faltara el botón: al **editar** un producto, el paso "Imágenes"
+arrancaba vacío, porque `cargarParaEdicion` nunca traía `detalle.imagenes`.
+Se veían solo las imágenes de las variantes, que sí se cargaban. Ahora las
+del producto se cargan marcadas como `_existente`, el botón de borrar pega
+contra el endpoint que ya existía, y la estrella de "principal" también.
+
+### 7. Quitar un producto reservado — el que más costaba
+
+`DELETE /ventas/pedidos/<id>/items/<item_id>/` borraba el ítem y **no
+liberaba la reserva de stock**. La mercadería quedaba reservada por un ítem
+que ya no existía: seguía en depósito y el sistema no la dejaba vender de
+nuevo. Para peor, el endpoint no estaba conectado a ninguna pantalla, así que
+la única salida era cancelar el pedido entero o tocar el inventario a mano.
+
+Ahora `NotaPedido.liberar_reserva_item()` devuelve la reserva con su
+`MovimientoStock` de auditoría, y el panel de detalle de Pedidos tiene el
+botón, con confirmación en dos toques (no `window.confirm`: en la tablet abre
+un diálogo del navegador encima de la PWA). Solo con el pedido en
+`pendiente`, y no deja quitar el último ítem — para eso se cancela el pedido.
+
+### 8. Buscador de pedidos
+
+`?buscar=` en el listado, que cruza nombre del cliente, CI/RUC, la razón
+social del padrón y el número de pedido. Un solo campo, porque quien busca en
+el mostrador tiene a mano cualquiera de los tres y no sabe cuál es "el
+correcto". Filtra **dentro** del alcance del rol, no lo amplía: un vendedor
+sigue viendo solo los suyos. El RUC ahora viaja en el listado y se puede
+corregir por PATCH — si no, un RUC mal tipeado al crear el pedido lo dejaba
+imposible de encontrar por documento.
+
+---
+
+### Facturación electrónica: Fases C y D
+
+El detalle técnico está en `docs/migracion_ekuatia.md`. En resumen:
+
+- **Fase C — eventos.** Cancelación e inutilización, con `EventoDocumento`,
+  `eventos.py`, tres endpoints y pantalla propia. El plazo de cancelación
+  (48 h desde la aprobación en la factura, 168 en el resto) obligó a guardar
+  `DocumentoElectronico.fecha_aprobacion`, que no existía. La inutilización
+  trae `huecos_de_numeracion()`, que encuentra los números que la secuencia
+  consumió sin llegar a comprobante: el salto que la DNIT exige declarar y
+  que nadie iba a ver mirando el correlativo.
+- **Fase D — KuDE y QR.** `kude.py` arma el PDF con reportlab, con la
+  estructura del capítulo 13 del manual. Los ítems salen de
+  `payload._items()`, o sea exactamente lo que viaja al XML. El QR se extrae
+  del XML firmado (`dCarQR`) y **no se dibuja si el documento no está
+  firmado**: su contenido lleva el hash de la firma y el CSC, así que uno
+  inventado escanearía y no resolvería nada.
+- **Pantalla `Facturación`** (solo admin): la cola con el resumen por estado,
+  el motivo de cada rechazo, el KuDE de cada documento, la cancelación con su
+  plazo en horas y la declaración de números sin usar. Cubre buena parte de
+  la Fase F; falta el estado del sidecar y el aviso de certificado por
+  vencer.
+
+`SIFEN_HABILITADO` sigue en **False**. Nada de esto cambia la operación
+diaria hasta que estén el certificado y la habilitación.
+
+### Verificado
+
+`manage.py check` limpio, **522 tests backend** (66 nuevos: 15 de reportes,
+13 de pedidos/reserva, 36 de eventos, 18 de KuDE — algunos comparten
+archivo), build de Vite y 22 tests del frontend. La pasada visual por el
+navegador no se hizo (ver la nota del 17/09 sobre el login).
+
+### Al desplegar
+
+- Una migración nueva: `facturacion/0007_eventos_y_kude`.
+- **Reiniciar daphne**: hay rutas nuevas (`/facturacion/documentos/<pk>/kude/`,
+  `/cancelar/`, `/inutilizaciones/`, `/numeros-sin-usar/`, y los dos reportes
+  nuevos de caja). Vite recarga solo.
+
+---
+
+## 2026-09-23 — Relectura del Manual V150: cuatro plazos, la cadena de cancelación y el XSD equivocado
+
+**Sin commitear**, encima de todo lo anterior. No hay migración nueva: lo que
+se agregó al modelo son constantes de clase, no campos.
+
+La sesión empezó revisando dos archivos que se habían dejado en `sidecar/`
+—la Guía de Pruebas y un XSD— y terminó en el Manual.
+
+### El XSD que publica la DNIT es de 2018
+
+El archivo que la página ofrece bajo el nombre **«Estructura_DE xsd»** no es
+el de la V150. Se comprobó de tres maneras independientes: contra el código
+de `xmlgen`, contra el Manual (Schema XML 18, `DE_v150.xsd`, pág. 61) y
+empíricamente con `xmlschema`. No declara `targetNamespace` y sus grupos se
+llaman `gCiODE`, `gDTim`, `gCamOC` — nombres que **no aparecen ni una vez** en
+las 217 páginas del Manual, que usa `gOpeDE`, `gTimb`, `gDatGralOpe`.
+
+Lo peligroso es que **compila sin un error**. Apuntarle `SIFEN_XSD_PATH`
+habría hecho volver «no cumple el esquema» a todos los documentos, y como
+`esquema.validar()` corre dentro de `_firmar()`, habría tumbado el camino
+sincrónico y el de lote a la vez. La red de seguridad del módulo —no frenar
+por no poder validar— no cubría el caso: el XSD cargaba bien, solo que era el
+equivocado.
+
+`esquema._schema()` ahora revisa el `targetNamespace` y descarta el que no
+sea el del SIFEN, con un mensaje que nombra el archivo correcto
+(`siRecepDE_v150.xsd`). El módulo no tenía **ningún** test: se le escribieron
+10.
+
+Los dos archivos se borraron de `sidecar/` a pedido del usuario: el PDF era
+byte-idéntico al ya versionado en `docs/` y el XSD solo podía generar
+confusión.
+
+### Cuatro plazos del Manual que el código no aplicaba
+
+Y lo que importa es que **no todos se comportan igual**:
+
+| Regla | Dónde | Qué hace |
+|---|---|---|
+| 45 días para un evento del receptor, desde la emisión | Tabla J, filas 10–13 | **Bloquea** |
+| Cancelar primero el último DTE de la cadena | Tabla J, fila 1 | **Bloquea** |
+| Vigencia del timbrado al inutilizar | Tabla J, fila 2 | **Bloquea** |
+| 15 primeros días del mes siguiente, inutilización | Tabla J, fila 2 | **Avisa, no impide** |
+| 15 días para corregir un evento del receptor | Tabla K | Solo se calcula |
+
+**La inutilización avisa y no bloquea** porque no tiene camino alternativo:
+vencida una cancelación queda la nota de crédito, pero un hueco de numeración
+que no se declara deja el correlativo roto para siempre. Declarar tarde es
+peor que a tiempo y mucho mejor que nunca, y esa decisión es del
+contribuyente. El aviso viaja en el campo `advertencia` de la respuesta y la
+pantalla lo muestra 12 segundos: en el log no lo iba a leer nadie.
+
+La **vigencia del timbrado**, en la misma fila de la misma tabla, sí bloquea:
+el Manual la marca como «plazo del sistema», o sea que la hace cumplir el
+SIFEN.
+
+La fecha de los 45 días sale del **CDC** (posiciones 26 a 33,
+`cdc.fecha_de_emision()`), no de un campo que alguien tipee: el documento es
+de un proveedor y nunca vimos su aprobación.
+
+**El punto flojo, anotado a propósito:** el Manual cuenta el plazo de la
+inutilización desde «el acaecimiento del hecho» y no define cuál es la fecha
+de un número que nunca existió. `eventos.fecha_del_hecho()` toma la del primer
+documento emitido *después* del rango. Es una interpretación, no una cita.
+
+### Dos cosas más que salieron de la relectura
+
+- **Falta un escenario de la campaña de pruebas.** El «Ajuste del Evento» del
+  §4.3 de la Guía es la **Tabla K** del Manual (corregir un evento del
+  receptor elegido por equivocación), no la «Devolución y Ajuste de precios»
+  del §11.1.3, que es un evento *automático* de SIFEN. No está implementado y
+  `xmlgen` no trae generador para él. La batería pasa de ~130 a ~133.
+- **La NT 019 dejó de no aplicar.** Estaba registrada como «no aplica — el
+  sistema no lleva documentos recibidos», y el 20/09 se construyó justamente
+  eso. Nadie la releyó.
+
+### Verificado
+
+`manage.py check` limpio, **ruff limpio** en los archivos tocados,
+`makemigrations --check` sin cambios, **654 tests backend verdes en SQLite y
+en PostgreSQL real** (47 nuevos: 37 de plazos, 10 de esquema), build de Vite
+y 22 tests del frontend.
+
+Un test propio se estaba engañando solo: verificaba la fecha del CDC contra un
+CDC armado con la misma suposición de posiciones. Se agregó uno que lo arma
+con `cdc.generar()`, que compone los 44 dígitos campo por campo.
+
+También hubo que corregir una fixture: `CDC_AJENO` era `'01' + '8'*42`, o sea
+año 8888 y mes 88. Era irreal de un modo que antes no importaba.
+
+**La pasada visual por el navegador sigue sin hacerse** — el toast nuevo de la
+inutilización no lo vio nadie todavía.
+
+### Al desplegar
+
+Sin migración. **Reiniciar daphne** igual, porque cambió el comportamiento de
+endpoints existentes (`/inutilizaciones/`, `/eventos-receptor/`, `/cancelar/`).
