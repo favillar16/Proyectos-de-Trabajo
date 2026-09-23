@@ -67,14 +67,25 @@ cd ..
 echo   OK: Backend listo.
 echo.
 
-echo [4/5] Instalando dependencias del frontend...
+echo [4/6] Instalando dependencias del frontend...
 cd frontend
 call npm install --silent
 cd ..
 echo   OK: Frontend listo.
 echo.
 
-echo [5/5] Detectando IP de red local...
+rem  El sidecar es el proceso que firma y transmite al SIFEN. Se instala
+rem  siempre, aunque la facturacion electronica siga apagada: no molesta si no
+rem  se usa (con SIFEN_HABILITADO=False no se lo llama nunca) y evita tener que
+rem  volver a esta PC el dia que llegue el certificado.
+echo [5/6] Instalando el sidecar de facturacion electronica...
+cd sidecar
+call npm install --silent
+cd ..
+echo   OK: Sidecar listo (no transmite nada hasta tener certificado).
+echo.
+
+echo [6/6] Detectando IP de red local...
 set LOCAL_IP=
 for /f "tokens=2 delims=:" %%a in ('ipconfig ^| findstr /i "IPv4" ^| findstr /v "127.0.0.1"') do (
     if not defined LOCAL_IP set LOCAL_IP=%%a

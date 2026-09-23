@@ -44,3 +44,4 @@ function Detener($nombre, $puerto) {
 
 Detener 'daphne' 8000
 Detener 'vite' 5173
+Detener 'sidecar' 8100

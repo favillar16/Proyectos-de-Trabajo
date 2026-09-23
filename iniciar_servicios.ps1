@@ -48,3 +48,19 @@ Iniciar-Oculto 'daphne' (Join-Path $raiz 'backend') `
     8000
 
 Iniciar-Oculto 'vite' (Join-Path $raiz 'frontend') 'npm run dev' 5173
+
+# Sidecar de facturacion electronica. Solo arranca si esta instalado: la
+# tienda funciono meses sin el, y una PC recien reinstalada donde todavia no
+# se corrio "npm install" en sidecar\ tiene que poder vender igual. Que no
+# este no es un error - por eso avisa y sigue, no corta el arranque.
+#
+# Escucha en 127.0.0.1 solamente (ver sidecar\config.js): tiene la clave del
+# certificado y firma cualquier XML que le manden, asi que no puede quedar
+# expuesto a la red de las tablets.
+$sidecar = Join-Path $raiz 'sidecar'
+if (Test-Path (Join-Path $sidecar 'node_modules')) {
+    Iniciar-Oculto 'sidecar' $sidecar 'npm start' 8100
+} elseif (Test-Path (Join-Path $sidecar 'package.json')) {
+    Write-Host "  sidecar sin instalar (falta 'npm install' en sidecar\). Se omite."
+    Write-Host "  La facturacion electronica no transmite hasta que este levantado."
+}
