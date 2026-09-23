@@ -416,15 +416,20 @@ class TiposDeDocumentoTests(BaseDocumentoTests):
         with self.assertRaises(payload.DatosIncompletos):
             payload.construir_data(nota)
 
-    def test_la_autofactura_dice_que_datos_le_faltan_al_sistema(self):
-        # No está implementada, y el error tiene que explicar por qué en vez
-        # de fallar con un KeyError en el medio del worker.
+    def test_la_autofactura_sin_sus_datos_dice_que_le_falta(self):
+        # La autofactura ya se arma (ver test_autofactura.py), pero necesita
+        # lo suyo: los ítems escritos a mano y los datos del vendedor no
+        # contribuyente. Un documento marcado como autofactura al que no se
+        # le cargó nada tiene que decirlo, no reventar en el worker.
+        #
+        # El mensaje habla de los ítems porque `construir_data` los arma
+        # primero; el del vendedor sale en cuanto hay ítems.
         documento = self._documento()
         documento.tipo_documento = codigos.TIPO_DE_AUTOFACTURA
         documento.save()
         with self.assertRaises(payload.DatosIncompletos) as caso:
             payload.construir_data(documento)
-        self.assertIn('vendedor', str(caso.exception).lower())
+        self.assertIn('autofactura', str(caso.exception).lower())
 
     def test_la_nota_de_remision_pide_los_datos_del_traslado(self):
         # La remisión ya se arma (ver test_remision.py), pero necesita que

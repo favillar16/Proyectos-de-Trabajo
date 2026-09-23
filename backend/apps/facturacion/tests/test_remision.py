@@ -180,3 +180,108 @@ class PayloadDeLaRemisionTests(BaseRemisionTests):
         data = payload.construir_data(documento)
         self.assertNotIn('factura', data)
         self.assertNotIn('notaCreditoDebito', data)
+
+
+@override_settings(DATOS_FISCALES=DATOS_FISCALES_COMPLETOS, SIFEN=SIFEN_PRENDIDO)
+class CamposQueExigeXmlgenTests(BaseRemisionTests):
+    """
+    Los campos de la remisión que el validador de `xmlgen` reclamó.
+
+    De dónde salen estos tests: el 16/09/2026 se armó la primera nota de
+    remisión de verdad contra el sidecar y la librería la rechazó con **diez**
+    errores de golpe. El bloque de la remisión era el único de los tres tipos
+    construidos que nunca se había probado contra `xmlgen` — se había escrito
+    leyendo el manual, y el manual no alcanza.
+
+    Cada test de acá es uno de esos diez. No son hipótesis sobre lo que el
+    SIFEN podría pedir: son cosas que la implementación de referencia de la
+    DNIT rechazó explícitamente.
+    """
+
+    def _data(self, **campos):
+        documento = self._documento_remision(
+            dict(self.TRASLADO_MINIMO, **campos))
+        return payload.construir_data(documento)
+
+    def test_la_fecha_de_inicio_usa_el_nombre_que_espera_la_libreria(self):
+        # La clave es `inicioEstimadoTranslado`, con "Transl". Parece un error
+        # de tipeo de la librería y lo es, pero es el nombre real: escribirlo
+        # "bien" hace que xmlgen no vea el campo y rechace el documento por
+        # obligatorio. Verificado en jsonDeMain.service.js.
+        transporte = self._data()['transporte']
+        self.assertIn('inicioEstimadoTranslado', transporte)
+        self.assertNotIn('inicioEstimadoTraslado', transporte)
+
+    def test_la_fecha_de_fin_siempre_va(self):
+        # Las dos fechas son obligatorias. El sistema solo captura la de
+        # inicio porque la entrega es el mismo día; cuando no hay fecha de fin
+        # se declara la de inicio antes que omitir el campo.
+        transporte = self._data()['transporte']
+        self.assertEqual(transporte['finEstimadoTranslado'],
+                         transporte['inicioEstimadoTranslado'])
+
+    def test_la_fecha_de_fin_cargada_gana(self):
+        transporte = self._data(
+            fecha_fin_traslado=date(2026, 9, 18))['transporte']
+        self.assertEqual(transporte['finEstimadoTranslado'], '2026-09-18')
+
+    def test_el_local_de_salida_lleva_ciudad_y_numero_de_casa(self):
+        # xmlgen los exige por separado: la dirección sola no le alcanza.
+        salida = self._data()['transporte']['salida']
+        self.assertTrue(salida['ciudad'])
+        self.assertTrue(salida['numeroCasa'])
+        self.assertTrue(salida['direccion'])
+
+    def test_el_receptor_de_una_remision_lleva_direccion_y_domicilio_completo(self):
+        # Declarar la calle activa el grupo entero: sin ciudad, distrito y
+        # departamento el SIFEN rechaza.
+        cliente = self._data()['cliente']
+        self.assertTrue(cliente['direccion'])
+        for campo in ('numeroCasa', 'ciudad', 'distrito', 'departamento'):
+            self.assertTrue(cliente[campo], f'falta {campo} en el receptor')
+
+    def test_si_el_receptor_no_tiene_direccion_se_usa_la_de_entrega(self):
+        cliente = self._data()['cliente']
+        self.assertEqual(cliente['direccion'], 'Avda. Mcal. Lopez 1234')
+
+    def test_el_transportista_lleva_documento_y_direccion(self):
+        transportista = self._data(
+            transportista_nombre='Fletes del Este')['transporte']['transportista']
+        self.assertTrue(transportista['direccion'])
+        self.assertTrue(transportista.get('ruc')
+                        or transportista.get('documentoNumero'))
+        if not transportista.get('ruc'):
+            self.assertIn('documentoTipo', transportista)
+
+    def test_el_chofer_lleva_numero_de_documento_y_direccion(self):
+        transportista = self._data(
+            transportista_nombre='Fletes del Este',
+            conductor_nombre='Juan Perez',
+            conductor_documento='1234567')['transporte']['transportista']
+        chofer = transportista['chofer']
+        self.assertEqual(chofer['documentoNumero'], '1234567')
+        self.assertTrue(chofer['direccion'])
+
+    def test_las_direcciones_del_transporte_se_recortan_a_60(self):
+        # El límite es de 4 a 60 caracteres y la dirección real del local
+        # tiene 78: sin recortar, el documento vuelve rechazado por un campo
+        # accesorio. Se descubrió así, con la dirección verdadera.
+        largo = 'Calle muy larga que supera holgadamente el limite de sesenta caracteres del manual'
+        self.assertGreater(len(largo), 60)
+        transportista = self._data(
+            transportista_nombre='Fletes del Este',
+            transportista_direccion=largo,
+            conductor_nombre='Juan Perez',
+            conductor_documento='1234567')['transporte']['transportista']
+        self.assertLessEqual(len(transportista['direccion']), 60)
+        self.assertLessEqual(len(transportista['chofer']['direccion']), 60)
+
+    def test_sin_traslado_el_error_habla_del_traslado_y_no_de_la_direccion(self):
+        # El orden de los errores importa. `_cliente()` corre antes que el
+        # bloque de la remisión, así que si no se tuviera cuidado el mensaje
+        # sería "falta la dirección del receptor" — que es una consecuencia,
+        # no la causa, y manda a buscar el problema al lugar equivocado.
+        documento = self._documento_remision(None)
+        with self.assertRaises(payload.DatosIncompletos) as caso:
+            payload.construir_data(documento)
+        self.assertIn('traslado', str(caso.exception).lower())

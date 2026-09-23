@@ -211,6 +211,31 @@ def descomponer(cdc: str) -> dict:
     }
 
 
+def fecha_de_emision(cdc: str) -> date | None:
+    """
+    La fecha de emisión que lleva el CDC adentro (posiciones 26–33), o None
+    si esos ocho dígitos no forman una fecha.
+
+    Existe aparte de `descomponer()` porque no exige que el dígito
+    verificador cierre. El caso que la necesita es el evento del receptor:
+    ahí el CDC lo tipea una persona copiándolo de la factura de un
+    proveedor, y lo que se quiere saber —si el plazo de 45 días sigue
+    abierto— no debería depender de que además el DV valide. Un CDC con el
+    DV mal es un problema distinto, y lo reporta quien corresponda.
+
+    Nunca lanza: devuelve None y el que llama decide qué hacer con eso.
+    """
+    cdc = (cdc or '').strip()
+    if len(cdc) != LARGO_CDC or not cdc.isdigit():
+        return None
+    try:
+        return date(int(cdc[25:29]), int(cdc[29:31]), int(cdc[31:33]))
+    except ValueError:
+        # Ocho dígitos que no son una fecha (mes 00, día 32...). Pasa con un
+        # CDC mal copiado, y no es motivo para romper nada.
+        return None
+
+
 def formatear_legible(cdc: str) -> str:
     """Agrupa el CDC de a 4 para imprimirlo en el KuDE sin que sea ilegible."""
     cdc = (cdc or '').strip()

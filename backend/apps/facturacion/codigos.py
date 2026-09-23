@@ -17,6 +17,7 @@ Lo único que sigue sin cerrarse es el algoritmo del dígito verificador
 (módulo 11): el manual §10.2 remite a un PDF aparte cuyo enlace está caído.
 Ver docs/facturacion_electronica.md §5.2.
 """
+import re
 
 # ─── Tipo de documento electrónico (campo C002 iTiDE) ────────────────────────
 # La habilitación ante la DNIT se pide por los cinco tipos emitibles, así que
@@ -176,6 +177,7 @@ CONDICION_VENTA = {
 
 # ─── Medio de pago (campo iTiPago) ───────────────────────────────────────────
 PAGO_EFECTIVO          = 1
+PAGO_CHEQUE            = 2
 PAGO_TARJETA_CREDITO   = 3
 PAGO_TARJETA_DEBITO    = 4
 PAGO_TRANSFERENCIA     = 5
@@ -184,6 +186,7 @@ PAGO_TRANSFERENCIA     = 5
 # valores que guarda la columna medio_pago.
 MEDIO_PAGO = {
     'efectivo':      PAGO_EFECTIVO,
+    'cheque':        PAGO_CHEQUE,
     'credito':       PAGO_TARJETA_CREDITO,
     'debito':        PAGO_TARJETA_DEBITO,
     'transferencia': PAGO_TRANSFERENCIA,
@@ -233,6 +236,94 @@ def descripcion_tarjeta(denominacion: int, descripcion_libre: str = '') -> str:
     if denominacion == TARJETA_OTRA:
         return (descripcion_libre or 'Otro').strip()[:20]
     return DENOMINACION_TARJETA.get(denominacion, 'Otro')
+
+
+# ─── Pago con cheque (grupo E630 gPagCheq) ───────────────────────────────────
+# Mismo caso que el de tarjeta: el manual dice "se activa si E606 = 2", o sea
+# que en todo cobro con cheque el grupo es obligatorio, y sus dos campos
+# también (ocurrencia 1-1).
+#
+#   E631 dNumCheq  A(8)     número de cheque, "completar con 0 a la izquierda
+#                           hasta alcanzar 8 cifras"
+#   E632 dBcoEmi   A(4-20)  banco emisor
+#
+# El mínimo de 4 del banco no es un detalle: una sigla como "BNF" es más
+# corta y el SIFEN la rechazaría, así que el banco se guarda con su nombre.
+LARGO_NUMERO_CHEQUE = 8
+LARGO_MIN_BANCO = 4
+LARGO_MAX_BANCO = 20
+
+# Medios de pago que obligan a declarar el grupo de cheque.
+MEDIOS_CON_CHEQUE = (PAGO_CHEQUE,)
+
+
+def numero_cheque_sifen(numero) -> str:
+    """Número de cheque como lo quiere el campo E631: ocho dígitos justos."""
+    solo_digitos = ''.join(c for c in str(numero or '') if c.isdigit())
+    return solo_digitos[-LARGO_NUMERO_CHEQUE:].zfill(LARGO_NUMERO_CHEQUE)
+
+
+# ─── Correo del receptor (D216 dEmailRec) ────────────────────────────────────
+# Es el campo por el que el SIFEN manda el documento al cliente, así que deja
+# de ser un dato de contacto suelto y pasa a ser parte del comprobante.
+#
+# El Manual V150 lo define opcional (0-1) y de 3 a 80 caracteres. Las reglas
+# finas NO están en el manual: salen de leer la librería de referencia
+# (`jsonDeMainValidate.service.js` y `jsonDeMain.service.js` de
+# facturacionelectronicapy-xmlgen), que es la que efectivamente valida:
+#
+#   · vacío se omite del XML — no se manda un `dEmailRec` en blanco, que
+#     violaría el mínimo de 3;
+#   · no puede tener espacios;
+#   · tiene que pasar un formato de correo;
+#   · si vienen varios separados por coma, **se manda solo el primero**: el
+#     SIFEN no acepta comas en el campo.
+#
+# Esa última es la que conviene no descubrir en producción: la cajera escribe
+# dos correos separados por coma creyendo que le llega a los dos, y el
+# comprobante sale con uno.
+LARGO_MIN_EMAIL = 3
+LARGO_MAX_EMAIL = 80
+
+_RE_EMAIL = re.compile(r'^[^@\s]+@[^@\s]+\.[^@\s]+$')
+
+
+def normalizar_email_receptor(valor) -> str:
+    """
+    Deja el correo como va a viajar en el XML, o '' si no hay.
+
+    Aplica el recorte por coma acá y no en el sidecar para que lo que se
+    guarda en la base sea exactamente lo que se transmitió: si el recorte
+    quedara del lado de la librería, el comprobante diría una cosa y el
+    sistema tendría guardada otra.
+    """
+    texto = str(valor or '').strip()
+    if ',' in texto:
+        texto = texto.split(',')[0].strip()
+    return texto
+
+
+def validar_email_receptor(valor) -> str:
+    """
+    Devuelve el correo normalizado. Lanza ValueError si el SIFEN lo rechazaría.
+
+    Se valida al cobrar, con el cliente todavía en el mostrador, y no al
+    transmitir: un correo mal escrito descubierto por el worker al otro día
+    es un documento rechazado y nadie a quien preguntarle.
+    """
+    correo = normalizar_email_receptor(valor)
+    if not correo:
+        return ''
+
+    if ' ' in correo:
+        raise ValueError('El correo no puede tener espacios.')
+    if not (LARGO_MIN_EMAIL <= len(correo) <= LARGO_MAX_EMAIL):
+        raise ValueError(
+            f'El correo debe tener entre {LARGO_MIN_EMAIL} y '
+            f'{LARGO_MAX_EMAIL} caracteres (tiene {len(correo)}).')
+    if not _RE_EMAIL.match(correo):
+        raise ValueError(f'"{correo}" no parece un correo válido.')
+    return correo
 
 
 # ─── Reglas de las Notas Técnicas sobre el receptor ──────────────────────────

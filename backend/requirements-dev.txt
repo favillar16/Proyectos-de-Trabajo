@@ -8,3 +8,10 @@
 # corredor de pruebas que ya trae Django.
 
 ruff==0.16.4
+
+# Validacion del XML contra el XSD del SIFEN antes de transmitir
+# (apps/facturacion/esquema.py). Python puro: no necesita compilador ni DLLs.
+# Es opcional y esta aca y no en requirements.txt a proposito: hace falta para
+# la campania de pruebas de habilitacion, no para vender. Ademas necesita el
+# .xsd, que publica la DNIT aparte y no esta versionado.
+xmlschema==3.4.3

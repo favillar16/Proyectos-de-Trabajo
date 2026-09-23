@@ -15,9 +15,9 @@ que `apps/sync/cliente.py`: agregar una dependencia significa acordarse de
 instalarla a mano en cada equipo el día que se reinstala, y lo que hace falta
 acá es un POST con JSON.
 
-⚠️ El sidecar todavía no existe. Este módulo define el contrato que tendrá
-que cumplir; está escrito primero a propósito, para que el lado Node se
-escriba contra algo ya probado en vez de al revés.
+El sidecar vive en `sidecar/` y se levanta con `npm start` (ver su README).
+Este módulo se escribió ANTES que él, a propósito, para que el lado Node se
+escribiera contra un contrato ya probado en vez de al revés.
 """
 import json
 import logging
@@ -82,6 +82,16 @@ def _postear(ruta: str, cuerpo: dict) -> dict:
         return json.loads(crudo) if crudo else {}
     except error.HTTPError as e:
         detalle = e.read().decode('utf-8', errors='replace')[:800]
+        if e.code == 422:
+            # 422 es el código con el que el sidecar avisa que el problema es
+            # del pedido o de la configuración —falta el certificado, el CDC
+            # no tiene 44 dígitos, xmlgen rechazó el payload—, no de la red.
+            # Reintentarlo diez veces daría diez veces lo mismo y gastaría la
+            # cola tapando el error real. Se trata como terminal, igual que un
+            # rechazo del SIFEN. Ver sidecar/servidor.js, "mapeo de errores".
+            raise RechazoSifen(
+                f'El sidecar rechazó el pedido: {detalle}',
+                codigo='SIDECAR', respuesta=detalle) from e
         raise ErrorSidecar(f'El sidecar respondió HTTP {e.code}: {detalle}') from e
     except error.URLError as e:
         raise ErrorSidecar(
@@ -115,8 +125,14 @@ def generar_xml(params: dict, data: dict) -> str:
     respuesta = _postear('xml', {
         'params': params,
         'data': data,
-        # xmlgen marca el XML como de prueba según este flag. No es cosmético:
-        # el ambiente de test de la DNIT lo exige.
+        # Se manda el ambiente para que el sidecar no tenga que adivinarlo.
+        #
+        # ⚠️ Ojo con lo que este flag NO hace: en xmlgen `config.test` no marca
+        # el documento como de prueba. Es andamiaje de la NT 013 (2023), cuando
+        # una fórmula del IVA entró en test un mes antes que en producción; las
+        # dos fechas pasaron y hoy los dos caminos calculan igual. Lo que
+        # realmente distingue un documento de prueba es la leyenda obligatoria
+        # de la Guía de Pruebas §2, y esa la pone `payload._marcar_como_prueba()`.
         'test': _config().get('ambiente', 'test') != 'produccion',
     })
     return _exigir(respuesta, 'xml', 'xml')
@@ -177,12 +193,77 @@ def enviar(xml_firmado: str) -> dict:
     }
 
 
+def enviar_lote(xmls_firmados: list) -> dict:
+    """
+    Transmite varios DE de una vez por el web service asincrónico.
+
+    **No devuelve si los aprobó.** El SIFEN contesta un número de lote y lo
+    procesa cuando puede; el resultado se pide después con `consultar_lote()`.
+    Por eso acá no hay `RechazoSifen`: todavía no hay nada que rechazar. Lo
+    único que puede fallar en este paso es la recepción del lote.
+
+    Devuelve un dict con `lote` (el número) y el crudo de la respuesta.
+    """
+    respuesta = _postear('enviarLote', {'xmls': list(xmls_firmados)})
+
+    numero = (respuesta.get('lote')
+              or respuesta.get('numeroLote')
+              or respuesta.get('dProtConsLote'))
+    if not numero:
+        # Sin número de lote no hay forma de preguntar después por el
+        # resultado: los documentos quedarían transmitidos y huérfanos. Es
+        # preferible tratarlo como fallo de transporte y reintentar.
+        raise ErrorSidecar(
+            f'El SIFEN recibió el lote pero no devolvió su número. '
+            f'Respuesta: {str(respuesta)[:300]}')
+
+    return {
+        'lote': str(numero),
+        'codigo': str(respuesta.get('codigo') or ''),
+        'mensaje': respuesta.get('mensaje') or '',
+        'respuesta': respuesta.get('respuesta')
+                     or json.dumps(respuesta, ensure_ascii=False),
+    }
+
+
 def consultar(cdc: str) -> dict:
     """Consulta el estado de un DTE ya transmitido, por su CDC."""
     return _postear('consultar', {'cdc': cdc})
 
 
-def enviar_evento(tipo: str, data: dict) -> dict:
+def consultar_lote(numero_lote) -> dict:
+    """
+    Pide el resultado de un lote ya enviado.
+
+    El SIFEN puede contestar que todavía lo está procesando; eso no es un
+    error, es el flujo normal del asincrónico. Quien llame tiene que estar
+    preparado para volver a preguntar más tarde.
+    """
+    return _postear('consultarLote', {'lote': str(numero_lote)})
+
+
+def geografia(filtro: dict = None) -> dict:
+    """
+    Las tablas geográficas de la DNIT (departamentos, distritos, ciudades).
+
+    Vienen adentro de `xmlgen`, así que esto **no sale a internet ni usa el
+    certificado**: es un archivo de la librería que el sidecar ya tiene.
+    """
+    return _postear('geografia', filtro or {})
+
+
+def consultar_ruc(ruc: str) -> dict:
+    """
+    Consulta un RUC en el padrón de la DNIT.
+
+    Dos usos: es uno de los web services que la Guía de Pruebas exige
+    ejercitar, y sirve para validar el RUC del cliente **antes** de emitir,
+    en vez de enterarse por un rechazo.
+    """
+    return _postear('consultarRuc', {'ruc': ruc})
+
+
+def enviar_evento(tipo: str, data: dict, params: dict = None) -> dict:
     """
     Manda un evento (cancelación, inutilización, conformidad...).
 
@@ -190,8 +271,17 @@ def enviar_evento(tipo: str, data: dict) -> dict:
     ('cancelacion', 'inutilizacion', ...) y `data` el cuerpo que corresponde
     a ese evento. La forma de cada uno está en el README de
     facturacionelectronicapy-xmlgen.
+
+    `params` son los datos del emisor, los mismos que lleva un DE. Los pide
+    `xmlgen.generateXMLEvento*`, que recibe `(id, params, data)`. Si no se
+    pasan se arman de la configuración vigente — que es lo correcto para un
+    evento, porque un evento se emite hoy, no se retransmite del pasado.
     """
-    return _postear(f'evento/{tipo}', {'data': data})
+    from . import payload as _payload
+    return _postear(f'evento/{tipo}', {
+        'params': params if params is not None else _payload.construir_params(),
+        'data': data,
+    })
 
 
 def salud() -> dict:

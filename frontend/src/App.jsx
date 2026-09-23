@@ -14,6 +14,7 @@ import DashboardPage from './pages/DashboardPage'
 import InventarioPage from './pages/InventarioPage'
 import UsuariosPage from './pages/UsuariosPage'
 import CostosPage   from './pages/CostosPage'
+import FacturacionPage from './pages/FacturacionPage'
 
 // Styles
 import './styles/design-system.css'
@@ -90,6 +91,13 @@ export default function App() {
           <Route path="/costos" element={
             <ProtectedRoute roles={['admin']}>
               <CostosPage />
+            </ProtectedRoute>
+          } />
+          {/* Solo admin: cancelar un comprobante o declarar números
+              inutilizados son declaraciones ante la DNIT. */}
+          <Route path="/facturacion" element={
+            <ProtectedRoute roles={['admin']}>
+              <FacturacionPage />
             </ProtectedRoute>
           } />
 

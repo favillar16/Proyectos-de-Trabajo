@@ -373,4 +373,11 @@ SIFEN = {
     'url_consulta_qr': config(
         'SIFEN_URL_CONSULTA_QR',
         default='https://ekuatia.set.gov.py/consultas/qr'),
+
+    # XSD del SIFEN, para validar el XML antes de transmitirlo. Vacío =
+    # desactivado, que es lo normal: el esquema lo publica la DNIT en un .rar
+    # y no está versionado acá. Apuntarlo al .xsd principal activa la
+    # validación local, que ahorra rechazos durante la batería de pruebas.
+    # Ver apps/facturacion/esquema.py.
+    'xsd_path': config('SIFEN_XSD_PATH', default=''),
 }

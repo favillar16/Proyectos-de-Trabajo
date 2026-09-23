@@ -145,6 +145,9 @@ class Command(BaseCommand):
                         'firma el QR del KuDE')
             transmision.append('SIFEN_CSC')
 
+        # ── Sidecar ───────────────────────────────────────────────────────
+        self._revisar_sidecar()
+
         # ── CDC de prueba ─────────────────────────────────────────────────
         if opciones['cdc']:
             self._titulo('CDC DE PRUEBA')
@@ -202,6 +205,88 @@ class Command(BaseCommand):
                 '  automatizable: sidecar, worker y pruebas en ambiente test.\n'))
 
     # ── helpers de salida ────────────────────────────────────────────────
+    def _revisar_sidecar(self):
+        """
+        ¿Está levantado el proceso que firma y transmite? ¿Y vence pronto el .p12?
+
+        Lo del vencimiento no es un lujo: un certificado vencido frena la
+        facturación entera y no avisa solo. El primer síntoma sería un rechazo
+        del SIFEN a mitad de una jornada de ventas, con la cajera y el cliente
+        en el mostrador. Acá aparece cada vez que alguien corre el diagnóstico.
+
+        Que el sidecar no esté levantado NO es un error mientras la
+        facturación electrónica siga apagada: la tienda funcionó meses sin él
+        y el cobro nunca lo necesita. Por eso es aviso y no falta.
+        """
+        from apps.facturacion import sifen_client
+
+        self._titulo('SIDECAR (firma y transmisión)')
+        try:
+            estado = sifen_client.salud()
+        except sifen_client.ErrorSidecar as e:
+            self._linea(AVISO, 'sidecar',
+                        f'no responde — {str(e)[:90]}')
+            self.stdout.write(
+                '         Levantarlo con:  cd sidecar && npm start\n'
+                '         (iniciar.bat ya lo arranca si se corrió su npm install)')
+            return
+
+        self._linea(OK, 'sidecar', f'responde, ambiente {estado.get("ambiente")}')
+
+        cert = estado.get('certificado', {})
+        if cert.get('error'):
+            self._linea(FALTA, 'certificado', cert['error'])
+            return
+        if not cert.get('configurado'):
+            return
+
+        vence = cert.get('vence')
+        if not vence:
+            self._linea(AVISO, 'vencimiento',
+                        'no se pudo leer del .p12')
+            return
+
+        dias = self._dias_hasta(vence)
+        if dias is None:
+            self._linea(AVISO, 'vencimiento', str(vence))
+        elif dias < 0:
+            self._linea(FALTA, 'vencimiento',
+                        f'VENCIDO hace {-dias} días ({vence}). '
+                        f'No se puede firmar ni transmitir.')
+        elif dias <= 30:
+            self._linea(AVISO, 'vencimiento',
+                        f'vence en {dias} días ({vence}) — renovarlo YA')
+        else:
+            self._linea(OK, 'vencimiento', f'{vence} (faltan {dias} días)')
+
+    @staticmethod
+    def _dias_hasta(vence):
+        """
+        Días hasta el vencimiento, o None si la fecha no se entiende.
+
+        Acepta también un dict: `xmlsign.getExpiration()` no devuelve una
+        fecha sino `{notBefore, notAfter}`. El sidecar ya lo normaliza, pero
+        acá se tolera igual — este diagnóstico tiene que seguir funcionando
+        contra un sidecar de una versión distinta, que es justo el caso en el
+        que uno lo corre.
+        """
+        from datetime import datetime
+        if isinstance(vence, dict):
+            vence = (vence.get('vence') or vence.get('notAfter')
+                     or vence.get('notafter'))
+        if not vence:
+            return None
+        texto = str(vence).strip().replace('Z', '+00:00')
+        for intento in (texto, texto[:19], texto[:10]):
+            try:
+                fecha = datetime.fromisoformat(intento)
+            except ValueError:
+                continue
+            if fecha.tzinfo is not None:
+                fecha = fecha.replace(tzinfo=None)
+            return (fecha.date() - date.today()).days
+        return None
+
     def _titulo(self, texto):
         # Solo ASCII en la salida: la consola de la PC servidor es cp1252 y
         # revienta con UnicodeEncodeError ante los caracteres de caja.

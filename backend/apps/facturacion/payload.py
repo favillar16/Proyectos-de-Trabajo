@@ -86,6 +86,51 @@ AFECTACION_POR_TASA = {
 }
 
 
+# ─── Ambiente de pruebas de la DNIT ──────────────────────────────────────────
+#
+# La Guía de Pruebas §2 ("Set de Pruebas") exige que los documentos del
+# ambiente de test lleven un texto literal, en dos lugares:
+#
+#   · el nombre o razón social del EMISOR, y
+#   · la descripción del PRIMER ítem de mercadería.
+#
+# Es una marca para que un documento de prueba no pueda confundirse con uno
+# real. El resto de los datos —RUC, dirección, receptor— tienen que ser los
+# verdaderos, tal como figuran en Marangatú.
+#
+# ⚠️ Esto NO lo hace la librería. Se revisó `xmlgen` y su opción `config.test`
+# no marca el documento de ninguna manera: es andamiaje que quedó de la
+# implementación de la NT 013 en 2023, cuando la fórmula del IVA entró en test
+# un mes antes que en producción. Las dos fechas ya pasaron y hoy los dos
+# caminos calculan igual (ver jsonDteItem.service.js, "Vigencia en test y
+# produccion"). O sea que sin este bloque los documentos de prueba saldrían
+# sin la leyenda y la DNIT los devolvería.
+LEYENDA_AMBIENTE_PRUEBA = (
+    'DOCUMENTO ELECTRÓNICO SIN VALOR COMERCIAL NI FISCAL - '
+    'GENERADO EN AMBIENTE DE PRUEBA'
+)
+
+
+def en_ambiente_de_pruebas() -> bool:
+    """¿Se está emitiendo contra el ambiente de test de la DNIT?"""
+    return getattr(settings, 'SIFEN', {}).get('ambiente', 'test') != 'produccion'
+
+
+def _marcar_como_prueba(params: dict, data: dict) -> None:
+    """
+    Pone la leyenda obligatoria del ambiente de test.
+
+    Muta `params` y `data` al final del armado, a propósito: así el payload se
+    construye una sola vez, igual para los dos ambientes, y la marca es un
+    paso aparte que se ve y se puede probar. Si estuviera repartida adentro del
+    armado habría que acordarse de ella en cada tipo de documento.
+    """
+    params['razonSocial'] = LEYENDA_AMBIENTE_PRUEBA
+    params['nombreFantasia'] = LEYENDA_AMBIENTE_PRUEBA
+    if data.get('items'):
+        data['items'][0]['descripcion'] = LEYENDA_AMBIENTE_PRUEBA
+
+
 class DatosIncompletos(ValueError):
     """
     Falta información para armar el documento.
@@ -234,10 +279,75 @@ def _cliente(documento) -> dict:
     # La dirección del receptor obliga al domicilio desglosado. Si no se
     # tiene, es mejor no mandar dirección que mandarla sin departamento:
     # el SIFEN valida el grupo completo.
-    if not cliente['direccion']:
+    #
+    # Salvo en la nota de remisión, donde la dirección del receptor es
+    # OBLIGATORIA — y tiene sentido: una remisión declara adónde va la
+    # mercadería, así que sin dirección el documento no dice nada. Cuando el
+    # receptor no tiene una cargada se usa la de entrega del traslado, que es
+    # el dato correcto para este documento.
+    traslado = (getattr(documento.pago.pedido, 'datos_traslado', None)
+                if documento.tipo_documento == codigos.TIPO_DE_NOTA_REMISION
+                else None)
+
+    # Ojo con el orden de los errores: si NO hay datos de traslado, el mensaje
+    # útil es ese —"cargá el traslado"—, no "falta la dirección del receptor",
+    # que es una consecuencia. `_cliente()` corre antes que `_bloque_remision()`,
+    # así que acá se deja pasar el caso sin traslado para que el error salga
+    # del lugar que sabe explicarlo.
+    if traslado is not None:
+        if not cliente['direccion']:
+            cliente['direccion'] = traslado.direccion_entrega or ''
+        if not cliente['direccion']:
+            raise DatosIncompletos(
+                f'La nota de remisión {documento.numero_completo} no tiene '
+                f'dirección del receptor ni dirección de entrega cargada. El '
+                f'SIFEN la exige para este tipo de documento: una remisión '
+                f'tiene que decir adónde va la mercadería.')
+        # Declarar la dirección activa el grupo del domicilio completo: el
+        # SIFEN no acepta una calle sin ciudad, distrito y departamento. Se
+        # toman los del destino del traslado y, si no están cargados, los del
+        # local — que es un dato real y validable, no un relleno.
+        cliente.update(_domicilio_receptor_remision(traslado))
+    elif not cliente['direccion']:
         cliente.pop('direccion')
 
     return cliente
+
+
+# Largo máximo de los campos de dirección del grupo de transporte. Lo valida
+# xmlgen (4 a 60) y lo hereda del manual. La dirección del local supera los 60
+# caracteres, así que recortar no es opcional: sin esto el documento vuelve
+# rechazado por un campo que además es accesorio.
+LARGO_MAX_DIRECCION_TRANSPORTE = 60
+
+
+def _direccion_transporte(texto: str) -> str:
+    return str(texto or '').strip()[:LARGO_MAX_DIRECCION_TRANSPORTE]
+
+
+def _domicilio_receptor_remision(traslado) -> dict:
+    """
+    Domicilio desglosado del receptor, solo para la nota de remisión.
+
+    El SIFEN pide el grupo entero o nada: declarar la calle obliga a declarar
+    número de casa, ciudad, distrito y departamento. Se prefieren los datos
+    del destino real del traslado; si no están, los del local.
+    """
+    fiscal = _fiscal()
+    lee = lambda campo, alterno: getattr(traslado, campo, None) or fiscal.get(alterno)
+    return {
+        'numeroCasa': (getattr(traslado, 'entrega_numero_casa', '') or '0'),
+        'departamento': lee('entrega_departamento', 'departamento'),
+        'departamentoDescripcion': (
+            getattr(traslado, 'entrega_departamento_desc', '')
+            or fiscal.get('departamento_desc', '')),
+        'distrito': lee('entrega_distrito', 'distrito'),
+        'distritoDescripcion': (getattr(traslado, 'entrega_distrito_desc', '')
+                                or fiscal.get('distrito_desc', '')),
+        'ciudad': lee('entrega_ciudad', 'ciudad'),
+        'ciudadDescripcion': (getattr(traslado, 'entrega_ciudad_desc', '')
+                              or fiscal.get('ciudad_desc', '')),
+    }
 
 
 def _exigir_receptor_identificado(documento):
@@ -296,6 +406,19 @@ def _items(documento) -> list:
     grande. Sin eso el total del XML puede quedar 1 Gs corrido y el SIFEN
     rechaza el documento entero por un peso.
     """
+    # La autofactura no sale de un pedido: lo que se le compró a un particular
+    # no está en el catálogo. Sus ítems se escriben a mano y viven en el
+    # propio documento.
+    if documento.tipo_documento == codigos.TIPO_DE_AUTOFACTURA:
+        return _items_autofactura(documento)
+
+    # La nota de débito tampoco. Su monto es un importe NUEVO —un interés, un
+    # flete que no se facturó— y no una redistribución del pedido. Prorratear
+    # los ítems originales contra un total mayor da descuento negativo, que es
+    # exactamente lo que pasaba antes de esta rama.
+    if documento.tipo_documento == codigos.TIPO_DE_NOTA_DEBITO:
+        return _items_nota_debito(documento)
+
     pedido = documento.pago.pedido
     items = list(pedido.items.select_related('variante__producto').all())
     if not items:
@@ -436,6 +559,9 @@ def _condicion(documento) -> dict:
     if documento.medio_pago in codigos.MEDIOS_CON_TARJETA:
         entrega['infoTarjeta'] = _info_tarjeta(documento)
 
+    if documento.medio_pago in codigos.MEDIOS_CON_CHEQUE:
+        entrega['infoCheque'] = _info_cheque(documento)
+
     return {'tipo': codigos.CONDICION_CONTADO, 'entregas': [entrega]}
 
 
@@ -479,6 +605,30 @@ def _info_tarjeta(documento) -> dict:
     return info
 
 
+def _info_cheque(documento) -> dict:
+    """
+    Grupo E630 (`gPagCheq`), obligatorio en todo cobro con cheque.
+
+    El manual lo activa "si E606 = 2" y sus dos campos son de ocurrencia
+    1-1: el número (con ceros a la izquierda hasta ocho) y el banco emisor.
+
+    Los datos los captura caja al cobrar, del cheque mismo — y ahí se exigen
+    siempre, esté el SIFEN prendido o no, porque sin ellos el local tampoco
+    puede seguirle el rastro al papel (ver apps/caja/cheque.py).
+    """
+    datos = getattr(documento.pago, 'datos_cheque', None)
+    if datos is None:
+        raise DatosIncompletos(
+            f'El cobro {documento.pago.numero_ticket} fue con cheque pero no '
+            f'tiene los datos que el SIFEN exige (grupo E630): el número del '
+            f'cheque y el banco emisor.')
+
+    return {
+        'numeroCheque': codigos.numero_cheque_sifen(datos.numero),
+        'banco': datos.banco,
+    }
+
+
 def _bloque_por_tipo(documento) -> dict:
     """
     La parte del `data` que depende del tipo de documento.
@@ -507,16 +657,130 @@ def _bloque_por_tipo(documento) -> dict:
         }
 
     if tipo == codigos.TIPO_DE_AUTOFACTURA:
-        raise DatosIncompletos(
-            'La autofactura necesita los datos del vendedor no contribuyente '
-            '(nombre, documento, domicilio) y el lugar de la transacción. El '
-            'sistema no los captura todavía: hay que modelarlos y agregar la '
-            'pantalla de carga antes de poder emitirla.')
+        return _bloque_autofactura(documento)
 
     if tipo == codigos.TIPO_DE_NOTA_REMISION:
         return _bloque_remision(documento)
 
     raise DatosIncompletos(f'Tipo de documento electrónico desconocido: {tipo}')
+
+
+def _items_nota_debito(documento) -> list:
+    """
+    El único renglón de una nota de débito.
+
+    Un débito cobra **una cosa**: el interés, el flete, el ajuste. No es una
+    redistribución de la venta original, así que no tiene sentido repetir sus
+    ítems — y repetirlos rompía, porque el monto del débito es mayor que la
+    suma del pedido y el prorrateo daba descuento negativo.
+
+    La descripción sale del motivo declarado, que es lo que el SIFEN ya tiene
+    en el grupo E4: el papel dice lo mismo que el XML.
+    """
+    total = _dec(documento.total)
+    if total <= 0:
+        raise DatosIncompletos(
+            f'La nota de débito {documento.numero_completo} no tiene monto.')
+
+    if _dec(documento.iva_10) > 0:
+        tasa = codigos.TASA_10
+    elif _dec(documento.iva_5) > 0:
+        tasa = codigos.TASA_5
+    else:
+        tasa = codigos.TASA_0
+
+    descripcion = codigos.MOTIVOS_NOTA.get(
+        documento.motivo_nota, 'Ajuste sobre documento anterior')
+
+    return [{
+        'codigo': 'ND-001',
+        'descripcion': descripcion[:codigos.LARGO_MAX_DESCRIPCION_ITEM],
+        'unidadMedida': UNIDAD_MEDIDA_POR_DEFECTO,
+        'cantidad': 1.0,
+        'precioUnitario': float(total),
+        'descuento': 0,
+        'ivaTipo': AFECTACION_POR_TASA.get(tasa, codigos.IVA_GRAVADO),
+        'iva': tasa,
+        'ivaProporcion': 100,
+    }]
+
+
+def _bloque_autofactura(documento) -> dict:
+    """
+    Grupo E7 (`gCamAE`): quién vendió y dónde ocurrió la operación.
+
+    La autofactura documenta una **compra** a alguien que no puede emitir
+    factura, así que lo que describe no es un cliente sino una contraparte.
+    Los nombres de las claves son los de `xmlgen`, verificados contra
+    `jsonDteMain.service.js`.
+
+    El SIFEN pide el lugar de la transacción **aparte** del domicilio del
+    vendedor: no tienen por qué coincidir.
+    """
+    datos = getattr(documento, 'datos_autofactura', None)
+    if datos is None:
+        raise DatosIncompletos(
+            f'La autofactura {documento.numero_completo} no tiene cargados '
+            f'los datos del vendedor no contribuyente ni el lugar de la '
+            f'transacción. Sin eso no se puede armar el documento.')
+
+    return {
+        'autoFactura': {
+            'tipoVendedor': datos.naturaleza_vendedor,
+            'documentoTipo': datos.tipo_documento_vendedor,
+            'documentoNumero': datos.numero_documento_vendedor,
+            'nombre': datos.nombre_vendedor,
+            'direccion': datos.direccion_vendedor,
+            'numeroCasa': datos.numero_casa_vendedor or '0',
+            'departamento': datos.departamento_vendedor,
+            'departamentoDescripcion': datos.departamento_vendedor_desc,
+            'distrito': datos.distrito_vendedor,
+            'distritoDescripcion': datos.distrito_vendedor_desc,
+            'ciudad': datos.ciudad_vendedor,
+            'ciudadDescripcion': datos.ciudad_vendedor_desc,
+            'ubicacion': {
+                'lugar': datos.lugar_transaccion,
+                'departamento': datos.departamento_transaccion,
+                'departamentoDescripcion': datos.departamento_transaccion_desc,
+                'distrito': datos.distrito_transaccion,
+                'distritoDescripcion': datos.distrito_transaccion_desc,
+                'ciudad': datos.ciudad_transaccion,
+                'ciudadDescripcion': datos.ciudad_transaccion_desc,
+            },
+        },
+    }
+
+
+def _items_autofactura(documento) -> list:
+    """
+    Los ítems de una autofactura, que se escriben a mano.
+
+    No salen del pedido como los de los otros documentos: lo que se le compró
+    a un particular no está en el catálogo ni pasó por el stock. Por eso no
+    hay prorrateo de descuento acá — no hubo negociación sobre un precio de
+    lista, el precio es el que se pactó.
+    """
+    items = list(documento.items_autofactura.all())
+    if not items:
+        raise DatosIncompletos(
+            f'La autofactura {documento.numero_completo} no tiene ítems: hay '
+            f'que cargar qué se compró.')
+
+    salida = []
+    for posicion, item in enumerate(items, start=1):
+        salida.append({
+            'codigo': f'AF{posicion:04d}',
+            'descripcion': item.descripcion[:codigos.LARGO_MAX_DESCRIPCION_ITEM],
+            'unidadMedida': UNIDAD_MEDIDA_POR_DEFECTO,
+            'cantidad': float(item.cantidad),
+            'precioUnitario': float(_gs(item.precio_unitario)),
+            'descuento': 0,
+            'ivaTipo': AFECTACION_POR_TASA.get(item.tasa_iva,
+                                               codigos.IVA_EXENTO),
+            'iva': item.tasa_iva,
+            'ivaProporcion': 100,
+        })
+    return salida
 
 
 def _bloque_remision(documento) -> dict:
@@ -562,18 +826,28 @@ def _bloque_remision(documento) -> dict:
     else:
         vehiculo['numeroVehiculo'] = traslado.vehiculo_numero
 
+    # ⚠️ Los nombres de las dos fechas son `inicioEstimadoTranslado` y
+    # `finEstimadoTranslado` — con "Transl", no "Trasl". Parece un error de
+    # tipeo de la librería y lo es, pero es el nombre real de la clave
+    # (verificado en jsonDeMain.service.js y jsonDeMainValidate.service.js).
+    # Escribirlo "bien" hace que xmlgen no vea el campo y lo rechace por
+    # obligatorio, que es exactamente lo que pasaba.
+    #
+    # Las DOS son obligatorias. El sistema solo captura la de inicio, porque
+    # en la práctica la entrega es el mismo día; cuando no hay fecha de fin se
+    # declara la de inicio antes que omitir el campo y que el documento vuelva
+    # rechazado.
+    fin = traslado.fecha_fin_traslado or traslado.fecha_inicio_traslado
     transporte = {
         'tipo': traslado.tipo_transporte,
         'modalidad': traslado.modalidad,
         'responsableFlete': traslado.responsable_flete,
-        'inicioEstimadoTraslado': traslado.fecha_inicio_traslado.isoformat(),
+        'inicioEstimadoTranslado': traslado.fecha_inicio_traslado.isoformat(),
+        'finEstimadoTranslado': fin.isoformat(),
         'vehiculos': [vehiculo],
-        'salida': {'direccion': traslado.direccion_salida
-                   or _fiscal().get('direccion', '')},
+        'salida': _domicilio_salida(traslado),
         'entrega': _domicilio_entrega(traslado),
     }
-    if traslado.fecha_fin_traslado:
-        transporte['finEstimadoTraslado'] = traslado.fecha_fin_traslado.isoformat()
 
     # NT 007: en la nota de remisión el campo de información del Fisco
     # (B006 dInfoFisc) es OBLIGATORIO y tiene que llevar la leyenda del
@@ -590,24 +864,88 @@ def _bloque_remision(documento) -> dict:
             'contadora y cargarlo en FISCAL_LEYENDA_REMISION del .env.')
 
     if traslado.transportista_nombre:
-        transportista = {
-            'nombre': traslado.transportista_nombre,
-            'contribuyente': bool(codigos.es_ruc(traslado.transportista_ruc)),
-        }
-        if codigos.es_ruc(traslado.transportista_ruc):
-            transportista['ruc'] = traslado.transportista_ruc
-        elif traslado.transportista_documento:
-            transportista['documentoTipo'] = codigos.IDENTIDAD_CEDULA_PY
-            transportista['documentoNumero'] = traslado.transportista_documento
-        if traslado.conductor_nombre:
-            transportista['chofer'] = {
-                'nombre': traslado.conductor_nombre,
-                'documento': traslado.conductor_documento,
-            }
-        transporte['transportista'] = transportista
+        transporte['transportista'] = _transportista(traslado, documento)
 
     return {'remision': remision, 'transporte': transporte,
             'descripcion': leyenda}
+
+
+def _transportista(traslado, documento) -> dict:
+    """
+    Grupo E10.4: la empresa transportista y su chofer.
+
+    El SIFEN no acepta un transportista a medias. Si se declara uno, exige
+    identificarlo (tipo y número de documento, o RUC), su dirección, y —si
+    hay chofer— el documento y la dirección del chofer también. Son cinco
+    campos que la primera versión no mandaba, y cada uno de ellos solo hacía
+    falta para la remisión, que es el único documento que llegó a armarse sin
+    haberse probado nunca contra la librería.
+
+    Cuando el que traslada es el propio negocio —el caso normal acá, que
+    entrega con su camión— la dirección del transportista es la del local y
+    el documento es el RUC del emisor. Se completa con eso antes que dejar el
+    grupo incompleto.
+    """
+    fiscal = _fiscal()
+    propio = codigos.es_ruc(traslado.transportista_ruc)
+
+    transportista = {
+        'nombre': traslado.transportista_nombre,
+        'contribuyente': bool(propio),
+        'direccion': _direccion_transporte(
+            traslado.transportista_direccion or fiscal.get('direccion', '')),
+    }
+
+    if propio:
+        transportista['ruc'] = traslado.transportista_ruc
+    else:
+        # El SIFEN pide tipo Y número aunque no sea contribuyente. Si no se
+        # cargó la cédula del transportista, se declara el documento del
+        # emisor: el traslado lo hace el negocio con su propio vehículo, que
+        # es el caso habitual del rubro.
+        transportista['documentoTipo'] = codigos.IDENTIDAD_CEDULA_PY
+        transportista['documentoNumero'] = (
+            traslado.transportista_documento
+            or str(documento.emisor_ruc or fiscal.get('ruc', '')).split('-')[0])
+
+    if traslado.conductor_nombre:
+        transportista['chofer'] = {
+            'nombre': traslado.conductor_nombre,
+            'documento': traslado.conductor_documento,
+            # xmlgen los valida por separado del 'documento' de arriba.
+            'documentoNumero': traslado.conductor_documento,
+            'direccion': _direccion_transporte(
+                traslado.conductor_direccion
+                or traslado.transportista_direccion
+                or fiscal.get('direccion', '')),
+        }
+
+    return transportista
+
+
+def _domicilio_salida(traslado) -> dict:
+    """
+    Local de salida de la mercadería (grupo E10.1).
+
+    Casi siempre es el propio negocio, así que se cae en el domicilio fiscal.
+    `DatosTraslado` tiene campos propios para el caso en que salga de otro
+    lado —un depósito, la casa de un proveedor—, y ahí ganan esos.
+
+    El SIFEN exige ciudad y número de casa; la dirección sola no le alcanza.
+    """
+    fiscal = _fiscal()
+    return {
+        'direccion': traslado.direccion_salida or fiscal.get('direccion', ''),
+        'numeroCasa': (traslado.salida_numero_casa
+                       or str(fiscal.get('numero_casa') or '0')),
+        'ciudad': traslado.salida_ciudad or fiscal.get('ciudad'),
+        'ciudadDescripcion': (traslado.salida_ciudad_desc
+                              or fiscal.get('ciudad_desc', '')),
+        'distrito': fiscal.get('distrito'),
+        'distritoDescripcion': fiscal.get('distrito_desc', ''),
+        'departamento': fiscal.get('departamento'),
+        'departamentoDescripcion': fiscal.get('departamento_desc', ''),
+    }
 
 
 def _domicilio_entrega(traslado) -> dict:
@@ -679,8 +1017,13 @@ def _fecha_local(momento) -> str:
 def construir(documento) -> dict:
     """
     Atajo: devuelve {'params': ..., 'data': ...} para mandarle al sidecar.
+
+    Es el único punto por donde el payload sale hacia el sidecar, así que es
+    acá donde se aplica la marca del ambiente de pruebas: no hay forma de
+    armar un documento y saltearla por accidente.
     """
-    return {
-        'params': construir_params(documento),
-        'data': construir_data(documento),
-    }
+    params = construir_params(documento)
+    data = construir_data(documento)
+    if en_ambiente_de_pruebas():
+        _marcar_como_prueba(params, data)
+    return {'params': params, 'data': data}

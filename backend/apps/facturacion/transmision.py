@@ -26,9 +26,10 @@ import logging
 from django.db import transaction
 from django.utils import timezone
 
+from . import esquema, kude
 from . import payload as payload_mod
 from . import sifen_client
-from .models import DocumentoElectronico
+from .models import DocumentoElectronico, LoteTransmision
 
 logger = logging.getLogger(__name__)
 
@@ -86,26 +87,17 @@ def transmitir(documento) -> ResultadoTransmision:
     documento.ultimo_intento = timezone.now()
 
     try:
-        cuerpo = payload_mod.construir(documento)
+        # Armar, firmar y ponerle el QR: el mismo tramo que usa el camino de
+        # lote. Vive en `_firmar()` para que los dos no puedan separarse — si
+        # un día cambia el orden de firma y QR, cambia para los dos.
+        con_qr = _firmar(documento)
+        documento.save(update_fields=['intentos_envio', 'ultimo_intento'])
+
+        respuesta = sifen_client.enviar(con_qr)
+
     except payload_mod.DatosIncompletos as e:
         # No se puede armar: es terminal, reintentarlo no cambia nada.
         return _terminar(documento, str(e), codigo='PAYLOAD')
-
-    try:
-        xml = sifen_client.generar_xml(cuerpo['params'], cuerpo['data'])
-        documento.xml_generado = xml
-
-        firmado = sifen_client.firmar_xml(xml)
-        con_qr = sifen_client.generar_qr(firmado)
-        documento.xml_firmado = con_qr
-        documento.estado = DocumentoElectronico.ESTADO_FIRMADO
-        # Se guarda el firmado ANTES de transmitir: si el envío se corta a
-        # mitad de camino, el próximo intento no tiene que volver a firmar.
-        documento.save(update_fields=[
-            'xml_generado', 'xml_firmado', 'estado',
-            'intentos_envio', 'ultimo_intento'])
-
-        respuesta = sifen_client.enviar(con_qr)
 
     except sifen_client.RechazoSifen as e:
         return _terminar(documento, str(e), codigo=e.codigo, respuesta=e.respuesta)
@@ -139,8 +131,15 @@ def transmitir(documento) -> ResultadoTransmision:
                         else DocumentoElectronico.ESTADO_ENVIADO)
     documento.codigo_respuesta = respuesta['codigo'][:10]
     documento.respuesta_sifen = respuesta['respuesta'][:5000]
+    if documento.estado == DocumentoElectronico.ESTADO_APROBADO:
+        # Desde acá se cuenta el plazo para cancelar: 48 h en la factura,
+        # 168 en el resto (Manual §11.6.1). Sin esta marca no hay forma de
+        # saber si el plazo sigue abierto — `ultimo_intento` se pisa en cada
+        # reintento y `fecha_emision` es cuándo se cobró, no cuándo aprobó
+        # el SIFEN.
+        documento.fecha_aprobacion = timezone.now()
     documento.save(update_fields=[
-        'estado', 'codigo_respuesta', 'respuesta_sifen',
+        'estado', 'codigo_respuesta', 'respuesta_sifen', 'fecha_aprobacion',
         'intentos_envio', 'ultimo_intento'])
 
     logger.info('DE %s %s por el SIFEN (%s)', documento.numero_completo,
@@ -175,3 +174,210 @@ def transmitir_pendientes(limite=None):
         with transaction.atomic():
             resultados.append(transmitir(documento))
     return resultados
+
+
+# ─── Camino asincrónico: lotes ───────────────────────────────────────────────
+# El SIFEN tiene dos formas de recibir un DE, y no se diferencian solo en la
+# velocidad. El sincrónico contesta en el momento si lo aprobó. El asincrónico
+# contesta un **número de lote** y lo procesa cuando puede: el resultado se
+# pide después, en un segundo viaje.
+#
+# Eso cambia el diseño. En el sincrónico, `transmitir()` sale con el documento
+# ya resuelto. Acá el documento queda en `enviado` —ni aprobado ni rechazado—
+# y hay que volver a preguntar. Si el número de lote se pierde entre un viaje
+# y el otro, los documentos quedan transmitidos y huérfanos, sin forma de
+# saber qué pasó con ellos. Por eso lo primero que se hace con la respuesta es
+# guardarlo.
+#
+# La Guía de Pruebas lo exige (5 aprobados y 5 rechazados en lote, por cada
+# tipo de documento), pero además sirve en producción para mandar el cierre
+# del día de una vez en lugar de veinte llamadas sueltas.
+
+# Tope del Manual Técnico. El sidecar lo valida también; acá se corta antes
+# para no armar un envío que ya se sabe que va a ser rechazado.
+MAXIMO_POR_LOTE = 50
+
+
+def _firmar(documento):
+    """
+    Deja el documento firmado y con QR, listo para transmitir.
+
+    Es el tramo que comparten el camino sincrónico y el de lote. Guarda antes
+    de salir: si el envío se corta después, el próximo intento no tiene que
+    volver a firmar, y firmar cuesta abrir el .p12.
+
+    Devuelve el XML firmado. Lanza lo mismo que las funciones del cliente.
+    """
+    cuerpo = payload_mod.construir(documento)
+    xml = sifen_client.generar_xml(cuerpo['params'], cuerpo['data'])
+    documento.xml_generado = xml
+
+    # Contra el XSD del SIFEN, si está configurado. Se valida acá —antes de
+    # firmar— porque firmar cuesta abrir el .p12 y no tiene sentido firmar
+    # algo que ya se sabe que va a volver rechazado. `XmlInvalido` hereda de
+    # ValueError y lo atrapa el `except Exception` de quien llama, que lo
+    # trata como reintentable; se convierte en terminal acá, que es lo que
+    # es: el XML no va a mejorar solo.
+    try:
+        esquema.validar(xml)
+    except esquema.XmlInvalido as e:
+        raise payload_mod.DatosIncompletos(str(e)) from e
+
+    firmado = sifen_client.firmar_xml(xml)
+    con_qr = sifen_client.generar_qr(firmado)
+    documento.xml_firmado = con_qr
+    documento.enlace_qr = kude.enlace_qr_del_xml(con_qr)
+    documento.estado = DocumentoElectronico.ESTADO_FIRMADO
+    documento.save(update_fields=[
+        'xml_generado', 'xml_firmado', 'enlace_qr', 'estado'])
+    return con_qr
+
+
+def transmitir_lote(documentos, usuario=None):
+    """
+    Firma y manda varios documentos en un solo lote asincrónico.
+
+    Devuelve el `LoteTransmision` creado. Los documentos quedan en `enviado`
+    y apuntando al lote; el resultado se resuelve después con
+    `consultar_lote()`.
+
+    Un documento que no se pueda armar o firmar **no frena al lote**: se marca
+    rechazado, o se deja para el próximo, y el resto sigue. Lo contrario haría
+    que un dato mal cargado en una sola venta dejara sin transmitir a las
+    otras cuarenta y nueve.
+    """
+    documentos = list(documentos)
+    if not documentos:
+        raise ValueError('No hay documentos para armar el lote.')
+    if len(documentos) > MAXIMO_POR_LOTE:
+        raise ValueError(
+            f'Un lote admite hasta {MAXIMO_POR_LOTE} documentos, '
+            f'vinieron {len(documentos)}.')
+
+    xmls, incluidos = [], []
+    for documento in documentos:
+        documento.intentos_envio += 1
+        documento.ultimo_intento = timezone.now()
+        try:
+            xmls.append(_firmar(documento))
+            incluidos.append(documento)
+        except payload_mod.DatosIncompletos as e:
+            _terminar(documento, str(e), codigo='PAYLOAD')
+        except sifen_client.RechazoSifen as e:
+            _terminar(documento, str(e), codigo=e.codigo, respuesta=e.respuesta)
+        except Exception as e:
+            # No se pudo firmar: reintentable, queda para el próximo lote.
+            logger.warning('DE %s quedó fuera del lote: %s',
+                           documento.numero_completo, e)
+            documento.respuesta_sifen = f'No entró al lote: {e}'[:2000]
+            documento.save(update_fields=[
+                'respuesta_sifen', 'intentos_envio', 'ultimo_intento'])
+
+    if not xmls:
+        raise ValueError(
+            'Ningún documento del grupo se pudo firmar: no hay lote que enviar.')
+
+    respuesta = sifen_client.enviar_lote(xmls)
+
+    with transaction.atomic():
+        lote = LoteTransmision.objects.create(
+            numero=respuesta['lote'],
+            cantidad=len(incluidos),
+            codigo_respuesta=respuesta['codigo'][:10],
+            respuesta_sifen=respuesta['respuesta'][:5000],
+            creado_por=usuario,
+        )
+        for documento in incluidos:
+            documento.lote = lote
+            documento.estado = DocumentoElectronico.ESTADO_ENVIADO
+            documento.save(update_fields=[
+                'lote', 'estado', 'intentos_envio', 'ultimo_intento'])
+
+    logger.info('Lote %s enviado con %s documento(s)', lote.numero, lote.cantidad)
+    return lote
+
+
+def consultar_lote(lote) -> dict:
+    """
+    Pide el resultado de un lote y lo reparte entre sus documentos.
+
+    Devuelve un resumen: estado del lote, cuántos se resolvieron y cuántos
+    siguen pendientes.
+
+    Que el SIFEN conteste "todavía lo estoy procesando" **no es un error**: es
+    el flujo normal del asincrónico. En ese caso el lote queda como está y se
+    vuelve a preguntar más tarde. Se cuenta en `consultas`, aparte de los
+    intentos de envío, para poder avisar si un lote quedó sin resolverse sin
+    ensuciar el contador que decide si un documento se sigue reintentando.
+    """
+    lote.consultas += 1
+    respuesta = sifen_client.consultar_lote(lote.numero)
+    resultados = respuesta.get('documentos') or []
+
+    if not resultados:
+        lote.respuesta_sifen = str(respuesta)[:5000]
+        lote.save(update_fields=['consultas', 'respuesta_sifen'])
+        logger.info('Lote %s: el SIFEN todavía no devolvió resultados',
+                    lote.numero)
+        return {'estado': lote.estado, 'resueltos': 0,
+                'pendientes': lote.documentos.count(),
+                'detalle': 'El SIFEN todavía está procesando el lote.'}
+
+    # El resultado viene por CDC, que es lo único que identifica al documento
+    # de los dos lados. Se indexa por ahí y no por el orden del envío: el
+    # SIFEN no garantiza devolverlos en el mismo orden en que se mandaron.
+    por_cdc = {d.cdc: d for d in lote.documentos.all()}
+    resueltos = 0
+
+    with transaction.atomic():
+        for resultado in resultados:
+            documento = por_cdc.get(str(resultado.get('cdc') or ''))
+            if documento is None:
+                logger.warning('Lote %s: vino un resultado para el CDC %s, '
+                               'que no es de este lote', lote.numero,
+                               resultado.get('cdc'))
+                continue
+
+            estado = str(resultado.get('estado') or '')
+            if estado.startswith('aprobado'):
+                documento.estado = DocumentoElectronico.ESTADO_APROBADO
+                documento.fecha_aprobacion = timezone.now()
+            elif estado == 'rechazado':
+                documento.estado = DocumentoElectronico.ESTADO_RECHAZADO
+            else:
+                # Estado que no se entendió: se deja como está y se vuelve a
+                # preguntar. Dar por rechazado lo que no se entendió sería
+                # perder una venta ya cobrada.
+                continue
+
+            documento.codigo_respuesta = str(resultado.get('codigo') or '')[:10]
+            documento.respuesta_sifen = str(resultado.get('mensaje') or '')[:5000]
+            documento.save(update_fields=[
+                'estado', 'codigo_respuesta', 'respuesta_sifen',
+                'fecha_aprobacion'])
+            resueltos += 1
+
+        pendientes_ahora = lote.documentos.filter(
+            estado=DocumentoElectronico.ESTADO_ENVIADO).count()
+        if pendientes_ahora == 0:
+            lote.estado = LoteTransmision.ESTADO_PROCESADO
+            lote.fecha_resultado = timezone.now()
+        lote.codigo_respuesta = str(respuesta.get('codigo') or '')[:10]
+        lote.respuesta_sifen = str(respuesta.get('respuesta') or '')[:5000]
+        lote.save(update_fields=[
+            'estado', 'fecha_resultado', 'consultas',
+            'codigo_respuesta', 'respuesta_sifen'])
+
+    logger.info('Lote %s: %s documento(s) resueltos, %s pendientes',
+                lote.numero, resueltos, pendientes_ahora)
+    return {'estado': lote.estado, 'resueltos': resueltos,
+            'pendientes': pendientes_ahora,
+            'detalle': respuesta.get('mensaje') or ''}
+
+
+def lotes_sin_resultado(limite=None):
+    """Lotes enviados a los que todavía no les llegó el resultado."""
+    consulta = LoteTransmision.objects.filter(
+        estado=LoteTransmision.ESTADO_ENVIADO).order_by('fecha_envio')
+    return list(consulta[:limite] if limite else consulta)
+

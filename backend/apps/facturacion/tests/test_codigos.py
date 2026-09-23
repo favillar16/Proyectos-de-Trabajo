@@ -29,12 +29,15 @@ class TraduccionDeCodigosTests(SimpleTestCase):
 
     def test_medios_de_pago_conocidos(self):
         self.assertEqual(codigos.codigo_medio_pago('efectivo'), 1)
+        self.assertEqual(codigos.codigo_medio_pago('cheque'), 2)
         self.assertEqual(codigos.codigo_medio_pago('credito'), 3)
         self.assertEqual(codigos.codigo_medio_pago('debito'), 4)
         self.assertEqual(codigos.codigo_medio_pago('transferencia'), 5)
 
     def test_medio_desconocido_cae_en_efectivo(self):
-        for entrada in ('', None, 'cheque', '  '):
+        # 'giro' y 'vale' existen en la tabla E607 del manual, pero el
+        # sistema no los cobra: no están en Pago.MEDIOS ni mapeados acá.
+        for entrada in ('', None, 'giro', 'vale', '  '):
             with self.subTest(entrada=entrada):
                 self.assertEqual(codigos.codigo_medio_pago(entrada),
                                  codigos.PAGO_EFECTIVO)
