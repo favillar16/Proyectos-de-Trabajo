@@ -1,7 +1,8 @@
 """
 apps/caja/reportes.py
 Generación de reportes en PDF (reportlab) y Excel (openpyxl).
-Tres reportes: Stock, Balance de Ventas, Extracto de Caja.
+Cinco reportes: Stock, Balance de Ventas, Extracto de Caja, Productos
+comercializados y Arqueo de Caja.
 
 Cada función de reporte arma una estructura común:
   { 'titulo', 'subtitulo', 'columnas': [...], 'filas': [[...]], 'totales': {...} }
@@ -10,7 +11,8 @@ y luego se renderiza a PDF o XLSX con los helpers de abajo.
 import io
 from datetime import datetime, date
 from django.http import HttpResponse
-from django.db.models import Sum
+from django.db.models import Sum, Count
+from django.utils import timezone
 
 
 # ════════════════════════════════════════════════════════
@@ -21,6 +23,22 @@ def _gs(v):
         return f'Gs. {int(v):,}'.replace(',', '.')
     except (ValueError, TypeError):
         return 'Gs. 0'
+
+
+def _fecha(momento, formato='%d/%m/%Y %H:%M'):
+    """
+    Fecha y hora en la hora de Asunción.
+
+    La base guarda los datetime en UTC (USE_TZ=True), así que llamar a
+    strftime() sobre el campo tal cual imprime la hora corrida: una venta de
+    las 10 de la mañana salía "14:00" en el reporte. Todo lo que se imprima
+    para leer en el local pasa por acá.
+    """
+    if momento is None:
+        return ''
+    if timezone.is_aware(momento):
+        momento = timezone.localtime(momento)
+    return momento.strftime(formato)
 
 
 # ════════════════════════════════════════════════════════
@@ -260,7 +278,7 @@ def reporte_ventas(desde: date, hasta: date):
         medio = p.get_medio_pago_display()
         por_medio[medio] = por_medio.get(medio, 0) + monto
         filas.append([
-            p.fecha.strftime('%d/%m/%Y %H:%M'),
+            _fecha(p.fecha),
             p.numero_ticket or '—',
             p.pedido.numero if p.pedido else '—',
             p.pedido.cliente_nombre if p.pedido and p.pedido.cliente_nombre else 'Consumidor Final',
@@ -301,8 +319,8 @@ def reporte_caja(desde: date, hasta: date):
         ).aggregate(t=Sum('monto'))['t'] or 0
         total_ventas += float(ventas)
         filas.append([
-            s.fecha_apertura.strftime('%d/%m/%Y %H:%M'),
-            s.fecha_cierre.strftime('%d/%m/%Y %H:%M') if s.fecha_cierre else 'Abierta',
+            _fecha(s.fecha_apertura),
+            _fecha(s.fecha_cierre) if s.fecha_cierre else 'Abierta',
             s.cajero.nombre_completo,
             _gs(s.monto_apertura),
             _gs(s.monto_cierre) if s.monto_cierre is not None else '—',
@@ -320,6 +338,274 @@ def reporte_caja(desde: date, hasta: date):
         'totales': {
             'Sesiones': len(filas),
             'Total ventas del período': _gs(total_ventas),
+        },
+    }
+
+
+def _cantidad(valor, unidad=''):
+    """
+    Cantidad con dos decimales y su unidad.
+
+    Los productos que se venden por m² se piden en fracciones (media caja,
+    3,15 m²), así que redondear a entero cambia el número que la propietaria
+    usa para reponer. Se muestra el valor exacto, con la unidad al lado para
+    que se lea qué se está contando.
+    """
+    try:
+        texto = f'{float(valor):,.2f}'.replace(',', 'X').replace('.', ',').replace('X', '.')
+    except (ValueError, TypeError):
+        texto = '0,00'
+    return f'{texto} {unidad}'.strip()
+
+
+UNIDAD_CORTA = {
+    'm2': 'm²', 'pieza': 'u.', 'juego': 'jgo.', 'caja': 'cajas', 'ml': 'ml',
+}
+
+
+def _items_vendidos(desde: date, hasta: date):
+    """
+    Ítems efectivamente comercializados en el período, con la fecha del cobro.
+
+    La fecha que importa para "qué se vendió y cuándo" es la del cobro
+    confirmado, no la de creación del pedido: un presupuesto armado el lunes
+    y cobrado el jueves se vendió el jueves. Por eso se entra por Pago y no
+    por NotaPedido.
+    """
+    from apps.caja.models import Pago
+
+    pagos = Pago.objects.filter(
+        estado=Pago.ESTADO_CONFIRMADO,
+        fecha__date__gte=desde,
+        fecha__date__lte=hasta,
+    ).select_related('pedido').prefetch_related(
+        'pedido__items__variante__producto',
+        'pedido__items__variante__acabado',
+    ).order_by('fecha')
+
+    for pago in pagos:
+        if not pago.pedido:
+            continue
+        for item in pago.pedido.items.all():
+            yield pago, item
+
+
+def reporte_productos(desde: date, hasta: date, detalle: bool = False):
+    """
+    Qué productos se vendieron en el período.
+
+    Dos vistas del mismo dato, porque responden preguntas distintas:
+      · agregado (default) — cuánto se vendió de cada variante. Es el que
+        sirve para reponer: dice qué comprar y en qué cantidad.
+      · detalle  — una fila por venta, con la fecha. Es el que sirve para
+        rastrear una venta puntual o ver el ritmo de salida de un producto.
+
+    El Balance de Ventas sigue existiendo y no cambia: ahí una venta es una
+    línea con el número de pedido. Acá se abre en los productos que la
+    componen, que es justamente lo que ese reporte no muestra.
+    """
+    filas = []
+    total_ingresos = 0.0
+    subtitulo_rango = f'Del {desde.strftime("%d/%m/%Y")} al {hasta.strftime("%d/%m/%Y")}'
+
+    if detalle:
+        for pago, item in _items_vendidos(desde, hasta):
+            variante = item.variante
+            unidad = UNIDAD_CORTA.get(variante.producto.unidad_venta,
+                                      variante.producto.unidad_venta)
+            subtotal = float(item.subtotal)
+            total_ingresos += subtotal
+            filas.append([
+                _fecha(pago.fecha),
+                variante.producto.nombre,
+                str(variante),
+                variante.sku,
+                _cantidad(item.cantidad, unidad),
+                _gs(item.precio_unitario),
+                _gs(subtotal),
+                pago.pedido.cliente_nombre or 'Consumidor Final',
+                pago.pedido.numero,
+            ])
+
+        return {
+            'titulo':    'Productos comercializados — detalle por fecha',
+            'subtitulo': subtitulo_rango,
+            'hoja':      'Productos por fecha',
+            'columnas':  ['Fecha', 'Producto', 'Variante', 'SKU', 'Cantidad',
+                          'Precio unit.', 'Total', 'Cliente', 'Pedido'],
+            'cols_derecha': [4, 5, 6],
+            'filas':     filas,
+            'totales': {
+                'Líneas de venta': len(filas),
+                'Total facturado': _gs(total_ingresos),
+            },
+        }
+
+    # ── Agregado por variante ────────────────────────────────
+    acumulado = {}
+    for pago, item in _items_vendidos(desde, hasta):
+        variante = item.variante
+        registro = acumulado.setdefault(variante.id, {
+            'producto': variante.producto.nombre,
+            'variante': str(variante),
+            'sku':      variante.sku,
+            'unidad':   UNIDAD_CORTA.get(variante.producto.unidad_venta,
+                                         variante.producto.unidad_venta),
+            'cantidad': 0.0,
+            'ingresos': 0.0,
+            'ventas':   0,
+            'primera':  pago.fecha,
+            'ultima':   pago.fecha,
+        })
+        registro['cantidad'] += float(item.cantidad)
+        registro['ingresos'] += float(item.subtotal)
+        registro['ventas']   += 1
+        registro['primera'] = min(registro['primera'], pago.fecha)
+        registro['ultima']  = max(registro['ultima'],  pago.fecha)
+
+    for r in sorted(acumulado.values(), key=lambda r: -r['ingresos']):
+        total_ingresos += r['ingresos']
+        filas.append([
+            r['producto'],
+            r['variante'],
+            r['sku'],
+            _cantidad(r['cantidad'], r['unidad']),
+            r['ventas'],
+            _fecha(r['primera'], '%d/%m/%Y'),
+            _fecha(r['ultima'], '%d/%m/%Y'),
+            _gs(r['ingresos']),
+        ])
+
+    return {
+        'titulo':    'Productos comercializados',
+        'subtitulo': subtitulo_rango,
+        'hoja':      'Productos',
+        'columnas':  ['Producto', 'Variante', 'SKU', 'Cantidad vendida',
+                      'Ventas', 'Primera venta', 'Última venta', 'Ingresos'],
+        'cols_derecha': [3, 4, 7],
+        'filas':     filas,
+        'totales': {
+            'Variantes distintas vendidas': len(filas),
+            'Total facturado': _gs(total_ingresos),
+        },
+    }
+
+
+# Denominaciones del guaraní, para la planilla de conteo físico.
+# Se imprimen en blanco: las completa a mano quien cuenta la caja.
+DENOMINACIONES = [100000, 50000, 20000, 10000, 5000, 2000, 1000, 500, 100, 50]
+
+
+def reporte_arqueo(dia: date):
+    """
+    Arqueo de caja de un día: lo que el sistema dice que tiene que haber,
+    contra lo que se cuenta a mano.
+
+    Se arma como lista de conceptos y no como tabla de sesiones porque es una
+    planilla para completar en el mostrador, no un listado para leer: va
+    sesión por sesión, con el detalle de cobros por medio de pago, el efectivo
+    esperado, lo declarado al cierre y la diferencia. Al final lleva la
+    grilla de denominaciones en blanco para el conteo físico.
+
+    Solo el efectivo entra en la diferencia. Una tarjeta o una transferencia
+    no están en el cajón: confirmarlas contra el extracto es otra tarea, y
+    mezclarlas acá haría que un arqueo correcto parezca descuadrado.
+    """
+    from apps.caja.models import SesionCaja, Pago
+
+    sesiones = SesionCaja.objects.filter(
+        fecha_apertura__date=dia,
+    ).select_related('cajero').order_by('fecha_apertura')
+
+    filas = []
+    total_cobrado_dia = 0.0
+    total_efectivo_dia = 0.0
+    diferencia_dia = 0.0
+
+    for sesion in sesiones:
+        pagos = Pago.objects.filter(sesion_caja=sesion, estado=Pago.ESTADO_CONFIRMADO)
+
+        por_medio = {}
+        for medio, etiqueta in Pago.MEDIOS:
+            agg = pagos.filter(medio_pago=medio).aggregate(
+                total=Sum('monto'), cantidad=Count('id'))
+            monto = float(agg['total'] or 0)
+            if monto or agg['cantidad']:
+                por_medio[medio] = (etiqueta, monto, int(agg['cantidad'] or 0))
+
+        cobrado = sum(m for _, m, _ in por_medio.values())
+        efectivo = por_medio.get(Pago.MEDIO_EFECTIVO, ('', 0.0, 0))[1]
+        apertura = float(sesion.monto_apertura or 0)
+        esperado = apertura + efectivo
+
+        total_cobrado_dia  += cobrado
+        total_efectivo_dia += efectivo
+
+        cierre_txt = (_fecha(sesion.fecha_cierre, '%H:%M')
+                      if sesion.fecha_cierre else 'todavía abierta')
+        filas.append([
+            f'CAJA DE {sesion.cajero.nombre_completo.upper()}',
+            f'{_fecha(sesion.fecha_apertura, "%H:%M")} a {cierre_txt}',
+            '',
+        ])
+        filas.append(['   Monto de apertura', '', _gs(apertura)])
+
+        for etiqueta, monto, cantidad in por_medio.values():
+            plural = 's' if cantidad != 1 else ''
+            filas.append([
+                f'   Cobrado en {etiqueta.lower()}',
+                f'{cantidad} cobro{plural}',
+                _gs(monto),
+            ])
+        if not por_medio:
+            filas.append(['   Sin cobros registrados', '', _gs(0)])
+
+        filas.append(['   Total cobrado en el turno', '', _gs(cobrado)])
+        filas.append(['   Efectivo que debe haber en el cajón',
+                      'apertura + cobros en efectivo', _gs(esperado)])
+
+        if sesion.monto_cierre is not None:
+            declarado = float(sesion.monto_cierre)
+            diferencia = declarado - esperado
+            diferencia_dia += diferencia
+            if abs(diferencia) < 0.005:
+                leyenda = 'cuadra'
+            else:
+                leyenda = 'sobrante' if diferencia > 0 else 'faltante'
+            filas.append(['   Declarado al cerrar', '', _gs(declarado)])
+            filas.append(['   Diferencia', leyenda, _gs(abs(diferencia))])
+        else:
+            filas.append(['   Declarado al cerrar', 'la caja sigue abierta', '________'])
+            filas.append(['   Diferencia', 'se calcula al cerrar', '________'])
+
+        if sesion.observaciones_cierre:
+            filas.append(['   Observaciones del cierre', sesion.observaciones_cierre, ''])
+        filas.append(['', '', ''])
+
+    if not filas:
+        filas.append(['No hubo sesiones de caja este día', '', ''])
+        filas.append(['', '', ''])
+
+    # ── Conteo físico, para completar a mano ─────────────────
+    filas.append(['CONTEO FÍSICO DEL EFECTIVO', 'cantidad', 'importe'])
+    for valor in DENOMINACIONES:
+        filas.append([f'   {_gs(valor)}', '__________', '__________'])
+    filas.append(['   TOTAL CONTADO', '', '__________'])
+    filas.append(['', '', ''])
+    filas.append(['Cuenta el efectivo', 'firma', '__________________'])
+    filas.append(['Controla', 'firma', '__________________'])
+
+    return {
+        'titulo':    'Arqueo de Caja',
+        'subtitulo': f'Día {dia.strftime("%d/%m/%Y")} · {sesiones.count()} sesión(es)',
+        'hoja':      'Arqueo',
+        'columnas':  ['Concepto', 'Detalle', 'Monto'],
+        'cols_derecha': [2],
+        'filas':     filas,
+        'totales': {
+            'Total cobrado en el día':   _gs(total_cobrado_dia),
+            'De eso, en efectivo':       _gs(total_efectivo_dia),
+            'Diferencia acumulada':      _gs(diferencia_dia),
         },
     }
 

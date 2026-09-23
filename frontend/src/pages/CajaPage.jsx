@@ -14,11 +14,11 @@
 import { useState, useCallback, useRef, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
-  CreditCard, DollarSign, Banknote, ArrowRightLeft,
+  CreditCard, DollarSign, Banknote, ArrowRightLeft, ScrollText,
   CheckCircle, XCircle, Printer, Lock, Unlock,
   ChevronRight, Package, Clock, AlertCircle,
   RefreshCw, Receipt, X, Loader2, TrendingUp,
-  Wifi, WifiOff, Search, User, Copy, ClipboardCheck, ExternalLink, Eye,
+  Wifi, WifiOff, Search, User, Copy, ClipboardCheck, Eye,
 } from 'lucide-react'
 import Layout from '../components/layout/Layout'
 import { cajaApi, ventasApi } from '../services/api'
@@ -46,6 +46,27 @@ const MEDIOS = [
   { key:'debito',       label:'Tarjeta débito',    icon:<CreditCard size={18}/> },
   { key:'credito',      label:'Tarjeta crédito',   icon:<CreditCard size={18}/> },
   { key:'transferencia',label:'Transferencia',     icon:<ArrowRightLeft size={18}/> },
+  { key:'cheque',       label:'Cheque',            icon:<ScrollText size={18}/> },
+]
+
+// Bancos de plaza, para que la cajera no tipee el nombre a mano en cada
+// cobro. La lista es una comodidad, no una validación: si el cheque es de
+// otro banco se escribe. Lo que sí es una regla del SIFEN es el largo — el
+// campo E632 acepta de 4 a 20 caracteres, así que acá no entran siglas
+// como "BNF" (ver backend/apps/caja/cheque.py).
+const BANCOS = [
+  'Banco Continental',
+  'Banco Itaú',
+  'Banco Familiar',
+  'Banco Atlas',
+  'Banco Basa',
+  'Banco GNB',
+  'Banco Río',
+  'Banco Sudameris',
+  'Banco Nac. Fomento',
+  'Ueno Bank',
+  'Solar Banco',
+  'Bancop',
 ]
 
 // Denominaciones de tarjeta del SIFEN (campo E621 del Manual Técnico).
@@ -262,11 +283,16 @@ function PanelCobro({ pedido: pedidoResumen, sesion, onPagado, onCancelar }) {
   // factura: para un ticket no hace falta nada de esto.
   const [tarjeta, setTarjeta] = useState({
     denominacion: '', denominacion_descripcion: '', titular: '', ultimos_digitos: '' })
+  // Datos del cheque. Acá no depende de si se factura: un cheque sin banco
+  // ni número es un papel que después no se puede cruzar contra nada
+  // (ver backend/apps/caja/cheque.py).
+  const [cheque, setCheque] = useState({
+    numero: '', banco: '', titular: '', fecha_cobro: '' })
   const [tipoComprobante, setTipoComprobante] = useState('ticket')
   const [condicionVenta, setCondicionVenta] = useState('Contado')
   const [descuentoPct, setDescuentoPct] = useState('')   // % de descuento en caja
   // Datos del cliente para factura (se autocompletan desde el padrón)
-  const [cli, setCli] = useState({ id:null, razon_social:'', ruc:'', telefono:'', direccion:'' })
+  const [cli, setCli] = useState({ id:null, razon_social:'', ruc:'', telefono:'', email:'', direccion:'' })
   const queryClient = useQueryClient()
   const device = useDevice()
 
@@ -295,6 +321,13 @@ function PanelCobro({ pedido: pedidoResumen, sesion, onPagado, onCancelar }) {
   const esTarjeta = medio === 'debito' || medio === 'credito'
   // La marca de la tarjeta es obligatoria solo cuando la venta se factura.
   const faltaTarjeta = esTarjeta && tipoComprobante === 'factura' && !tarjeta.denominacion
+  const esCheque = medio === 'cheque'
+  // El banco va con nombre y no con sigla: el SIFEN pide de 4 a 20
+  // caracteres en el campo E632.
+  const faltaCheque = esCheque &&
+    !(cheque.numero.trim() && cheque.banco.trim().length >= 4)
+  const chequeDiferido = esCheque && Boolean(cheque.fecha_cobro) &&
+    cheque.fecha_cobro > new Date().toISOString().slice(0, 10)
 
   const mutation = useMutation({
     mutationFn: () => cajaApi.registrarPago({
@@ -307,12 +340,16 @@ function PanelCobro({ pedido: pedidoResumen, sesion, onPagado, onCancelar }) {
       cliente_razon_social: tipoComprobante === 'factura' ? cli.razon_social : '',
       cliente_telefono:   tipoComprobante === 'factura' ? cli.telefono : '',
       cliente_direccion:  tipoComprobante === 'factura' ? cli.direccion : '',
+      // Campo D216 del documento electronico: es por donde el SIFEN le
+      // manda la factura al cliente.
+      cliente_email:      tipoComprobante === 'factura' ? cli.email : '',
       guardar_cliente:    tipoComprobante === 'factura' && Boolean(cli.ruc && cli.razon_social),
       condicion_venta:    tipoComprobante === 'factura' ? condicionVenta : 'Contado',
       descuento_porcentaje: pct,
       datos_tarjeta: esTarjeta && tipoComprobante === 'factura'
         ? { ...tarjeta, codigo_autorizacion: referencia }
         : undefined,
+      datos_cheque: esCheque ? cheque : undefined,
     }).then(r => r.data),
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ['pedidos'] })
@@ -327,9 +364,28 @@ function PanelCobro({ pedido: pedidoResumen, sesion, onPagado, onCancelar }) {
   const facturaSinDatos = tipoComprobante === 'factura' &&
     !(cli.ruc.trim() && cli.razon_social.trim())
 
+  // Mismas reglas que valida el backend (codigos.validar_email_receptor), que
+  // a su vez salen del campo D216 del Manual y de la librería de la DNIT: sin
+  // espacios, de 3 a 80 caracteres y con formato de correo. Se chequea acá
+  // para avisar mientras se escribe; el backend igual lo vuelve a validar,
+  // porque la API se puede llamar sin pasar por esta pantalla.
+  //
+  // Vacío es válido: el correo es opcional para el SIFEN. Lo que no puede es
+  // estar mal escrito, porque entonces el documento vuelve rechazado.
+  const correoInvalido = (() => {
+    if (tipoComprobante !== 'factura') return false
+    const correo = (cli.email || '').split(',')[0].trim()
+    if (!correo) return false
+    if (/\s/.test(correo)) return true
+    if (correo.length < 3 || correo.length > 80) return true
+    return !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(correo)
+  })()
+
   const puedeConfirmar = pedido?.estado === 'listo' &&
     !facturaSinDatos &&
+    !correoInvalido &&
     !faltaTarjeta &&
+    !faltaCheque &&
     (medio !== 'efectivo' || Number(recibido) >= total || !recibido)
 
   return (
@@ -496,7 +552,8 @@ function PanelCobro({ pedido: pedidoResumen, sesion, onPagado, onCancelar }) {
             <BuscadorClienteCaja
               onSeleccionar={(c) => setCli({
                 id: c.id, razon_social: c.razon_social, ruc: c.ruc,
-                telefono: c.telefono || '', direccion: c.direccion || '',
+                telefono: c.telefono || '', email: c.email || '',
+                direccion: c.direccion || '',
               })}
             />
 
@@ -544,6 +601,43 @@ function PanelCobro({ pedido: pedidoResumen, sesion, onPagado, onCancelar }) {
                   onBlur={e => e.target.style.borderColor = C.border}
                 />
               </div>
+            </div>
+
+            {/* Correo: campo D216 del documento electrónico. No es un dato de
+                contacto más — es la dirección a la que el SIFEN le manda la
+                factura al cliente una vez que la facturación electrónica esté
+                en marcha. Por eso la etiqueta lo dice en vez de poner
+                "(opcional)" a secas: quien cobra tiene que entender que sin
+                esto el cliente no recibe nada. */}
+            <div style={{ marginBottom:'10px' }}>
+              <label style={{ display:'block', fontSize:'12px', fontWeight:'500',
+                color:C.textSec, marginBottom:'5px' }}>
+                Correo electrónico
+                <span style={{ color:C.textMuted, fontWeight:'400' }}>
+                  {' '}— a esta dirección se le envía la factura
+                </span>
+              </label>
+              <input
+                type="email"
+                inputMode="email"
+                autoCapitalize="off"
+                autoCorrect="off"
+                value={cli.email}
+                onChange={e => setCli(c => ({ ...c, email: e.target.value }))}
+                placeholder="cliente@correo.com"
+                style={{ width:'100%', height:'42px', padding:'0 12px',
+                  border:`1px solid ${correoInvalido ? C.danger : C.border}`,
+                  borderRadius:'8px',
+                  fontSize:'14px', color:C.text, background:C.bg, outline:'none' }}
+                onFocus={e => e.target.style.borderColor = correoInvalido ? C.danger : C.gold}
+                onBlur={e => e.target.style.borderColor = correoInvalido ? C.danger : C.border}
+              />
+              {correoInvalido && (
+                <p style={{ fontSize:'11.5px', color:C.danger, margin:'5px 0 0' }}>
+                  Revisá el correo: el SIFEN lo rechaza si tiene espacios, si no
+                  tiene formato de correo o si pasa los 80 caracteres.
+                </p>
+              )}
             </div>
 
             <div style={{ marginBottom:'10px' }}>
@@ -600,9 +694,13 @@ function PanelCobro({ pedido: pedidoResumen, sesion, onPagado, onCancelar }) {
         </p>
         <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'8px',
           marginBottom:'16px' }}>
-          {MEDIOS.map(m => (
+          {MEDIOS.map((m, i) => (
             <button key={m.key} onClick={() => setMedio(m.key)}
               style={{
+                // Con una cantidad impar de medios el último queda solo en
+                // su fila: que ocupe las dos columnas en vez de media.
+                gridColumn: (i === MEDIOS.length - 1 && MEDIOS.length % 2)
+                  ? 'span 2' : 'auto',
                 padding:'12px 10px', borderRadius:'10px', cursor:'pointer',
                 background: medio===m.key ? C.sidebar : 'transparent',
                 border:`1.5px solid ${medio===m.key ? C.gold : C.border}`,
@@ -750,6 +848,95 @@ function PanelCobro({ pedido: pedidoResumen, sesion, onPagado, onCancelar }) {
           </div>
         )}
 
+        {/* Datos del cheque — banco y número, siempre.
+            El SIFEN los exige (grupo E630) al facturar, pero acá se piden
+            aunque sea un ticket: un cheque es una promesa de pago y sin
+            estos dos datos el local no puede seguirle el rastro al papel.
+            Ver backend/apps/caja/cheque.py. */}
+        {esCheque && (
+          <div style={{ marginBottom:'12px' }}>
+            <label style={{ display:'block', fontSize:'12px', fontWeight:'500',
+              color:C.textSec, marginBottom:'6px' }}>
+              Datos del cheque
+              <span style={{ color:C.gold, fontWeight:'500' }}> *</span>
+            </label>
+
+            <div style={{ display:'flex', gap:'8px' }}>
+              <input
+                value={cheque.numero}
+                onChange={e => setCheque(v => ({
+                  ...v, numero: e.target.value.replace(/\D/g, '').slice(0, 8) }))}
+                placeholder="Nro. de cheque"
+                inputMode="numeric"
+                style={{ flex:1, height:device.isTouch?'46px':'40px', padding:'0 12px',
+                  border:`1px solid ${C.border}`, borderRadius:'10px',
+                  fontSize:'14px', color:C.text, background:C.bg, outline:'none' }}
+                onFocus={e=>e.target.style.borderColor=C.gold}
+                onBlur={e=>e.target.style.borderColor=C.border}
+              />
+              <input
+                value={cheque.banco}
+                onChange={e => setCheque(v => ({ ...v, banco: e.target.value.slice(0, 20) }))}
+                placeholder="Banco emisor"
+                list="bancos-cheque"
+                maxLength={20}
+                style={{ flex:1.4, height:device.isTouch?'46px':'40px', padding:'0 12px',
+                  border:`1px solid ${C.border}`, borderRadius:'10px',
+                  fontSize:'14px', color:C.text, background:C.bg, outline:'none' }}
+                onFocus={e=>e.target.style.borderColor=C.gold}
+                onBlur={e=>e.target.style.borderColor=C.border}
+              />
+              <datalist id="bancos-cheque">
+                {BANCOS.map(b => <option key={b} value={b} />)}
+              </datalist>
+            </div>
+
+            <div style={{ display:'flex', gap:'8px', marginTop:'8px' }}>
+              <input
+                value={cheque.titular}
+                onChange={e => setCheque(v => ({ ...v, titular: e.target.value }))}
+                placeholder="Librado por (opcional)"
+                maxLength={60}
+                style={{ flex:1.4, height:'40px', padding:'0 12px',
+                  border:`1px solid ${C.border}`, borderRadius:'10px',
+                  fontSize:'13px', color:C.text, background:C.bg, outline:'none' }}
+              />
+              <input
+                type="date"
+                value={cheque.fecha_cobro}
+                onChange={e => setCheque(v => ({ ...v, fecha_cobro: e.target.value }))}
+                title="Fecha de cobro — vacía si el cheque es a la vista"
+                style={{ flex:1, height:'40px', padding:'0 10px',
+                  border:`1px solid ${C.border}`, borderRadius:'10px',
+                  fontSize:'13px', color:cheque.fecha_cobro ? C.text : C.textMuted,
+                  background:C.bg, outline:'none' }}
+              />
+            </div>
+
+            {cheque.banco.trim() && cheque.banco.trim().length < 4 && (
+              <p style={{ fontSize:'11px', color:C.danger, marginTop:'6px' }}>
+                El banco va con nombre, no con sigla: el comprobante
+                electrónico necesita al menos 4 letras.
+              </p>
+            )}
+
+            {chequeDiferido ? (
+              <div style={{ marginTop:'8px', padding:'10px 14px',
+                background:C.warningBg, border:`1px solid ${C.warningBorder}`,
+                borderRadius:'10px', display:'flex', alignItems:'center', gap:'7px',
+                fontSize:'12.5px', color:C.warning }}>
+                <Clock size={15} />
+                Cheque diferido: recién se puede depositar el{' '}
+                {new Date(`${cheque.fecha_cobro}T00:00:00`).toLocaleDateString('es-PY')}.
+              </div>
+            ) : (
+              <p style={{ fontSize:'11px', color:C.textMuted, marginTop:'6px' }}>
+                Se copian del cheque. La fecha va solo si es diferido.
+              </p>
+            )}
+          </div>
+        )}
+
         {/* Referencia para tarjeta/transferencia */}
         {(medio === 'debito' || medio === 'credito' || medio === 'transferencia') && (
           <div style={{ marginBottom:'12px' }}>
@@ -807,11 +994,13 @@ function PanelCobro({ pedido: pedidoResumen, sesion, onPagado, onCancelar }) {
   )
 }
 
-// Bajo Solución Gratuita / e-Kuatia'í la factura legal se carga a mano en
-// el portal e-Kuatia'í (ver docs/facturacion_electronica_manual_operativo.md)
-// — no hay API, así que lo máximo que puede hacer el sistema es llevar a la
-// cajera directo ahí en una pestaña nueva.
-const URL_EKUATIAI = 'https://ekuatia.set.gov.py/ekuatiai/'
+// El botón que abría el portal e-Kuatia'í
+// (`https://ekuatia.set.gov.py/ekuatiai/`) salió el 20/09/2026: empezó la
+// migración a e-Kuatia completo, donde el comprobante lo emite este sistema
+// y nadie vuelve a cargarlo a mano en el portal. El cuadro de datos de abajo
+// se mantiene a propósito mientras `SIFEN_HABILITADO` siga apagado — hasta
+// que llegue el certificado, la cajera todavía transcribe la factura, y sin
+// los botones de copiar tendría que hacerlo mirando el papel.
 
 // Copia UN valor individual al portapapeles. Reemplaza el viejo "Copiar
 // todo" en una sola plantilla: e-Kuatia'i pide cada dato en un campo
@@ -879,6 +1068,12 @@ function AyudanteCargaPortal({ ticket }) {
           <b>RUC/CI:</b> {ticket.cliente_ruc || 'Sin especificar'}
           {ticket.cliente_ruc && <BotonCopiar valor={ticket.cliente_ruc} titulo="Copiar RUC/CI" />}
         </p>
+        {ticket.cliente_email && (
+          <p>
+            <b>Correo:</b> {ticket.cliente_email}
+            <BotonCopiar valor={ticket.cliente_email} titulo="Copiar correo" />
+          </p>
+        )}
         <p>
           <b>Condición de venta:</b> {ticket.condicion_venta}
           <BotonCopiar valor={ticket.condicion_venta} titulo="Copiar condición de venta" />
@@ -923,18 +1118,12 @@ function AyudanteCargaPortal({ ticket }) {
         <p>
           <b>Total:</b> {formatGs(ticket.total)}
           <BotonCopiar valor={ticket.total} titulo="Copiar total" />
-          <span style={{ marginLeft:'10px' }}><b>Medio de pago:</b> {ticket.medio_pago}</span>
+          <span style={{ marginLeft:'10px' }}>
+            <b>Medio de pago:</b> {ticket.medio_pago}
+            {ticket.detalle_pago ? ` (${ticket.detalle_pago})` : ''}
+          </span>
         </p>
       </div>
-
-      <a href={URL_EKUATIAI} target="_blank" rel="noopener noreferrer"
-        style={{ marginTop:'12px', height:'38px', borderRadius:'8px',
-          background:C.gold, border:`1px solid ${C.gold}`,
-          color:'#fff', fontSize:'12.5px', fontWeight:'500',
-          textDecoration:'none', cursor:'pointer',
-          display:'flex', alignItems:'center', justifyContent:'center', gap:'7px' }}>
-        <ExternalLink size={14}/> Generar factura electrónica
-      </a>
     </div>
   )
 }
@@ -1051,6 +1240,14 @@ function Ticket({ datos, onNuevo, onImprimir }) {
               <p><span style={{ color:C.textMuted }}>RUC/CI:  </span>
                 <span style={{ color:C.text }}>{datos.ticket.cliente_ruc}</span></p>
             )}
+            {/* El correo se muestra en pantalla pero NO se imprime: en el
+                papel no le aporta nada al cliente, que ya sabe su dirección.
+                Acá sirve para que quien cobra confirme adónde va a ir la
+                factura antes de que el cliente se vaya del mostrador. */}
+            {datos.tipo_comprobante === 'factura' && datos.ticket.cliente_email && (
+              <p><span style={{ color:C.textMuted }}>Correo:  </span>
+                <span style={{ color:C.text }}>{datos.ticket.cliente_email}</span></p>
+            )}
             <p><span style={{ color:C.textMuted }}>Pedido:  </span>
               <span style={{ color:C.text }}>{datos.ticket.pedido_numero}</span></p>
             <p><span style={{ color:C.textMuted }}>Cajero:  </span>
@@ -1098,7 +1295,12 @@ function Ticket({ datos, onNuevo, onImprimir }) {
             </div>
             <div style={{ display:'flex', justifyContent:'space-between',
               color:C.textSec, marginTop:'4px' }}>
-              <span>{datos.ticket.medio_pago}</span>
+              <span>
+                {datos.ticket.medio_pago}
+                {datos.ticket.detalle_pago && (
+                  <span style={{ color:C.textMuted }}> · {datos.ticket.detalle_pago}</span>
+                )}
+              </span>
               {datos.ticket.monto_recibido &&
                 <span>{formatGs(datos.ticket.monto_recibido)}</span>}
             </div>

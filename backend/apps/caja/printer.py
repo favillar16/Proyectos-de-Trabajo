@@ -23,6 +23,7 @@ import textwrap
 from datetime import datetime
 
 from django.conf import settings
+from django.utils import timezone
 
 logger = logging.getLogger(__name__)
 
@@ -197,6 +198,10 @@ class TicketBuilder:
         # ── Forma de pago ────────────────────────────────────
         buf += ALIGN_LEFT
         buf += self._2col('Medio de pago:', str(d.get('medio_pago', '')))
+        # Detalle del papel recibido (hoy: banco y número del cheque). Sin
+        # esto, "Cheque" a secas no se puede cruzar contra el extracto.
+        if d.get('detalle_pago'):
+            buf += self._wrap(str(d['detalle_pago']))
 
         if d.get('monto_recibido'):
             buf += self._2col('Recibido:', _formatGs(d['monto_recibido']))
@@ -337,6 +342,10 @@ class FacturaBuilder:
         # ── Forma de pago ────────────────────────────────────
         buf += ALIGN_LEFT
         buf += self._2col('Medio de pago:', str(d.get('medio_pago', '')))
+        # Detalle del papel recibido (hoy: banco y número del cheque). Sin
+        # esto, "Cheque" a secas no se puede cruzar contra el extracto.
+        if d.get('detalle_pago'):
+            buf += self._wrap(str(d['detalle_pago']))
         if d.get('monto_recibido'):
             buf += self._2col('Recibido:', _formatGs(d['monto_recibido']))
         if float(d.get('vuelto', 0)) > 0:
@@ -409,7 +418,9 @@ class TicketCierreBuilder:
         ahora = datetime.now().strftime('%d/%m/%Y %H:%M')
         buf += self._2col('Fecha cierre:', ahora)
         buf += self._2col('Cajero:', self.sesion.cajero.nombre_completo)
-        apertura = self.sesion.fecha_apertura.strftime('%d/%m/%Y %H:%M')
+        # Igual que arriba: el campo está en UTC, la hoja se lee en Asunción.
+        apertura = timezone.localtime(
+            self.sesion.fecha_apertura).strftime('%d/%m/%Y %H:%M')
         buf += self._2col('Apertura:', apertura)
         buf += self._sep('=')
 
@@ -663,6 +674,8 @@ def ticket_a_texto(datos_ticket: dict) -> str:
     lineas.append(total_str.center(cols))
     lineas.append(sep)
     lineas.append(r('Medio de pago:', str(d.get('medio_pago', ''))))
+    if d.get('detalle_pago'):
+        lineas.append(str(d['detalle_pago']))
 
     if d.get('monto_recibido'):
         lineas.append(r('Recibido:', g(d['monto_recibido'])))

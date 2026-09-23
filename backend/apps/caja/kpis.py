@@ -6,7 +6,7 @@ Agrupa en una sola llamada todos los datos que necesita la pantalla:
   - Ventas de hoy, semana y mes
   - Comparación con período anterior (para el % de cambio)
   - Desglose por medio de pago
-  - Top 5 productos más vendidos
+  - Top 5 productos más vendidos y unidades salidas por unidad de venta
   - Últimas ventas (feed de actividad)
   - Resumen de stock crítico
   - Pedidos activos por estado
@@ -21,6 +21,13 @@ from datetime import timedelta
 import logging
 
 logger = logging.getLogger(__name__)
+
+
+# Abreviatura legible de cada unidad de venta, para que el número del
+# tablero diga en qué está expresado.
+UNIDAD_CORTA = {
+    'm2': 'm²', 'pieza': 'u.', 'juego': 'jgo.', 'caja': 'cajas', 'ml': 'ml',
+}
 
 
 def _rango(dias_atras):
@@ -136,12 +143,15 @@ class KPIsDashboardView(views.APIView):
             })
 
         # ── Top 5 productos más vendidos (último mes) ─────────
+        # `unidad` viaja junto al número: 40 no significa lo mismo en m² que
+        # en piezas, y el dashboard mostraba solo "40 unidades" para los dos.
         top_qs = ItemPedido.objects.filter(
             pedido__estado=NotaPedido.ESTADO_PAGADO,
             pedido__fecha_creacion__gte=mes_ini,
         ).values(
             nombre=F('variante__producto__nombre'),
             codigo=F('variante__producto__codigo'),
+            unidad=F('variante__producto__unidad_venta'),
         ).annotate(
             unidades=Sum('cantidad'),
             ingresos=Sum(F('cantidad') * F('precio_unitario')),
@@ -152,10 +162,40 @@ class KPIsDashboardView(views.APIView):
                 'nombre':   item['nombre'],
                 'codigo':   item['codigo'],
                 'unidades': float(item['unidades'] or 0),
+                'unidad':   UNIDAD_CORTA.get(item['unidad'], item['unidad'] or ''),
                 'ingresos': float(item['ingresos'] or 0),
             }
             for item in top_qs
         ]
+
+        # ── Cuánta mercadería salió, no cuántas ventas hubo ───
+        # El pedido de la propietaria: el tablero decía "38 cobros" y no
+        # cuántos m² o piezas se habían ido de depósito. Se agrupa por unidad
+        # de venta porque sumar m² con inodoros no da ningún número útil.
+        vendidos_qs = ItemPedido.objects.filter(
+            pedido__estado=NotaPedido.ESTADO_PAGADO,
+            pedido__fecha_creacion__gte=mes_ini,
+        ).values(
+            unidad=F('variante__producto__unidad_venta'),
+        ).annotate(
+            cantidad=Sum('cantidad'),
+            lineas=Count('id'),
+        ).order_by('-cantidad')
+
+        productos_vendidos = {
+            'por_unidad': [
+                {
+                    'unidad':   UNIDAD_CORTA.get(v['unidad'], v['unidad'] or ''),
+                    'cantidad': float(v['cantidad'] or 0),
+                    'lineas':   int(v['lineas'] or 0),
+                }
+                for v in vendidos_qs
+            ],
+            'variantes_distintas': ItemPedido.objects.filter(
+                pedido__estado=NotaPedido.ESTADO_PAGADO,
+                pedido__fecha_creacion__gte=mes_ini,
+            ).values('variante_id').distinct().count(),
+        }
 
         # ── Últimas ventas (feed de actividad) ────────────────
         ultimas_qs = Pago.objects.filter(
@@ -171,7 +211,7 @@ class KPIsDashboardView(views.APIView):
                 'monto':   float(p.monto),
                 'medio':   dict(Pago.MEDIOS).get(p.medio_pago, p.medio_pago),
                 'cajero':  p.cajero.nombre_completo,
-                'fecha':   p.fecha.strftime('%d/%m %H:%M'),
+                'fecha':   timezone.localtime(p.fecha).strftime('%d/%m %H:%M'),
                 'hace':    _hace_cuanto(p.fecha, ahora),
             }
             for p in ultimas_qs
@@ -211,6 +251,7 @@ class KPIsDashboardView(views.APIView):
             },
 
             'top_productos': top_productos,
+            'productos_vendidos': productos_vendidos,
             'ultimas_ventas': ultimas,
 
             'stock': {
@@ -236,7 +277,7 @@ def _hace_cuanto(fecha, ahora):
     if diff < 60:    return 'ahora'
     if diff < 3600:  return f'hace {diff // 60} min'
     if diff < 86400: return f'hace {diff // 3600}h'
-    return fecha.strftime('%d/%m')
+    return timezone.localtime(fecha).strftime('%d/%m')
 
 
 def _resumen_costos(inicio, fin):

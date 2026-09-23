@@ -24,10 +24,12 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-from .models import DatosTarjeta, SesionCaja, Pago
+from .models import DatosCheque, DatosTarjeta, SesionCaja, Pago
 from .printer import imprimir_ticket, imprimir_factura, imprimir_cierre, ticket_a_texto
 from apps.ventas.models import NotaPedido
+from apps.facturacion import codigos
 from apps.facturacion import emisor as fe_emisor
+from . import cheque as cheque_mod
 from . import pos as pos_mod
 
 # Tope de descuento que puede aplicar un cajero al cobrar. Un 100% equivaldría
@@ -223,17 +225,85 @@ class RegistrarPagoView(views.APIView):
         "referencia_externa": ""    // para tarjeta/transferencia
       }
 
-    Flujo atómico:
+    Flujo atómico (`_registrar`):
       1. Valida que el pedido esté en estado 'listo'
       2. Crea el Pago
       3. Cambia el pedido a 'pagado'
       4. Descuenta el stock de cada ítem
       5. Emite WebSocket
+      6. Emite el documento electrónico si corresponde
+
+    Y **fuera** de la transacción (`post`): arma el comprobante y lo imprime.
+
+    Esa separación no es cosmética. `_registrar` toma el pedido con
+    `select_for_update()`, así que mientras la transacción esté abierta ese
+    pedido queda bloqueado y la conexión ocupada. Imprimir adentro metía una
+    llamada a `win32print` —que no tiene timeout— dentro de ese bloqueo: una
+    impresora colgada (apagada no, eso devuelve error enseguida; colgada, con
+    el spooler sin contestar) mantenía la transacción viva indefinidamente.
+    Con varias tablets cobrando a la vez, un cobro trabado podía frenar a los
+    demás.
+
+    El papel no es parte de la consistencia de la venta: si la impresión
+    falla, el cobro ya ocurrió igual y se reimprime desde "Cobros del turno".
+    Por eso puede —y debe— quedar afuera.
     """
     permission_classes = [EsAdminOCajero]
 
-    @transaction.atomic
     def post(self, request):
+        resultado = self._registrar(request)
+
+        # Validación fallida: `_registrar` ya devolvió la respuesta de error.
+        if isinstance(resultado, Response):
+            return resultado
+
+        pago = resultado['pago']
+        datos_ticket = _datos_ticket(
+            resultado['pedido'], pago, resultado['sesion'],
+            tipo_comprobante=resultado['tipo_comprobante'],
+            cliente_ruc=resultado['cliente_ruc'],
+            cliente_razon_social=resultado['cliente_razon_social'],
+            cliente_telefono=resultado['cliente_telefono'],
+            cliente_direccion=resultado['cliente_direccion'],
+            cliente_email=resultado['cliente_email'],
+            condicion_venta=resultado['condicion_venta'],
+            documento=resultado['documento_electronico'],
+        )
+        texto_ticket = ticket_a_texto(datos_ticket)
+
+        # ── Imprimir, ya con la transacción cerrada ───────────
+        if resultado['tipo_comprobante'] == 'factura':
+            resultado_impresion = imprimir_factura(datos_ticket)
+        else:
+            resultado_impresion = imprimir_ticket(datos_ticket)
+        if not resultado_impresion['ok']:
+            logger.warning(
+                f'Impresión fallida para {resultado["tipo_comprobante"]} '
+                f'{pago.numero_ticket}: {resultado_impresion.get("error")}'
+            )
+
+        documento_electronico = resultado['documento_electronico']
+        return Response({
+            'ok':              True,
+            'pago':            PagoSerializer(pago).data,
+            'tipo_comprobante':resultado['tipo_comprobante'],
+            'ticket':          datos_ticket,
+            'ticket_texto':    texto_ticket,
+            'impresion':       resultado_impresion,
+            'errores_stock':   resultado['errores_stock'],
+            # null cuando no se emitió DE (ticket, o SIFEN apagado). El
+            # frontend lo usa para mostrar el número legal y el estado
+            # frente al SIFEN; no debe asumir que siempre viene.
+            'documento_electronico': ({
+                'cdc':             documento_electronico.cdc,
+                'numero':          documento_electronico.numero_completo,
+                'estado':          documento_electronico.estado,
+                'estado_display':  documento_electronico.get_estado_display(),
+            } if documento_electronico is not None else None),
+        }, status=status.HTTP_201_CREATED)
+
+    @transaction.atomic
+    def _registrar(self, request):
         # ── Validar sesión activa ─────────────────────────────
         sesion = _sesion_activa(request.user)
         if not sesion:
@@ -285,6 +355,19 @@ class RegistrarPagoView(views.APIView):
         condicion_venta      = request.data.get('condicion_venta', 'Contado')
         guardar_cliente      = bool(request.data.get('guardar_cliente', False))
 
+        # El correo viaja al SIFEN en el campo D216 y es por donde el
+        # comprobante le llega al cliente. Se valida acá, con el cliente
+        # todavía en el mostrador: uno mal escrito descubierto por el worker
+        # al otro día es un documento rechazado y nadie a quien preguntarle.
+        # `validar_email_receptor` también recorta en la primera coma, porque
+        # el SIFEN no las acepta en ese campo.
+        try:
+            cliente_email = codigos.validar_email_receptor(
+                request.data.get('cliente_email', ''))
+        except ValueError as e:
+            return Response({'error': str(e)},
+                            status=status.HTTP_400_BAD_REQUEST)
+
         # La factura es un documento fiscal: RUC y razón social son
         # obligatorios acá, no solo en el frontend (que puede saltearse con
         # una llamada directa a la API).
@@ -304,6 +387,7 @@ class RegistrarPagoView(views.APIView):
                     defaults={
                         'razon_social': cliente_razon_social,
                         'telefono': cliente_telefono,
+                        'email': cliente_email,
                         'direccion': cliente_direccion,
                         'condicion_venta': 'credito' if condicion_venta.lower().startswith('cr') else 'contado',
                     },
@@ -315,6 +399,8 @@ class RegistrarPagoView(views.APIView):
                         cliente_obj.razon_social = cliente_razon_social; cambios = True
                     if cliente_telefono and not cliente_obj.telefono:
                         cliente_obj.telefono = cliente_telefono; cambios = True
+                    if cliente_email and not cliente_obj.email:
+                        cliente_obj.email = cliente_email; cambios = True
                     if cliente_direccion and not cliente_obj.direccion:
                         cliente_obj.direccion = cliente_direccion; cambios = True
                     if cambios:
@@ -383,6 +469,20 @@ class RegistrarPagoView(views.APIView):
                               f'{resultado_pos.mensaje or "sin detalle"}'},
                     status=status.HTTP_400_BAD_REQUEST)
 
+        # ── Cheque: banco y número, siempre ───────────────────
+        # A diferencia de la tarjeta, acá no se espera a que el SIFEN esté
+        # prendido: un cheque sin banco ni número es un papel que el local
+        # después no puede cruzar contra nada. La razón completa está en
+        # apps/caja/cheque.py.
+        datos_cheque = None
+        if cheque_mod.requiere_datos_de_cheque(medio):
+            try:
+                datos_cheque = cheque_mod.validar(
+                    request.data.get('datos_cheque') or {})
+            except cheque_mod.ErrorCheque as e:
+                return Response({'error': str(e)},
+                                status=status.HTTP_400_BAD_REQUEST)
+
         # ── Crear pago ────────────────────────────────────────
         pago = Pago(
             pedido           = pedido,
@@ -403,6 +503,7 @@ class RegistrarPagoView(views.APIView):
             cliente_razon_social = cliente_razon_social if tipo_comprobante == 'factura' else '',
             cliente_telefono     = cliente_telefono if tipo_comprobante == 'factura' else '',
             cliente_direccion    = cliente_direccion if tipo_comprobante == 'factura' else '',
+            cliente_email        = cliente_email if tipo_comprobante == 'factura' else '',
             condicion_venta      = condicion_venta if tipo_comprobante == 'factura' else 'Contado',
         )
         pago.save()
@@ -420,6 +521,15 @@ class RegistrarPagoView(views.APIView):
                 procesadora_razon_social=resultado_pos.procesadora_razon_social,
                 numero_boleta=resultado_pos.numero_boleta,
                 origen=pos_mod.obtener_terminal().nombre,
+            )
+
+        if datos_cheque is not None:
+            DatosCheque.objects.create(
+                pago=pago,
+                numero=datos_cheque.numero,
+                banco=datos_cheque.banco,
+                titular=datos_cheque.titular,
+                fecha_cobro=datos_cheque.fecha_cobro,
             )
 
         # ── Cambiar estado del pedido ─────────────────────────
@@ -458,51 +568,31 @@ class RegistrarPagoView(views.APIView):
                     'razon_social': cliente_razon_social,
                     'telefono':     cliente_telefono,
                     'direccion':    cliente_direccion,
+                    # Campo D216 del DE: por acá el SIFEN le manda el
+                    # comprobante al cliente.
+                    'email':        cliente_email,
                 },
                 condicion_venta=condicion_venta,
             )
 
-        # ── Generar datos del comprobante ─────────────────────
-        datos_ticket = _datos_ticket(pedido, pago, sesion,
-                                     tipo_comprobante=tipo_comprobante,
-                                     cliente_ruc=cliente_ruc,
-                                     cliente_razon_social=cliente_razon_social,
-                                     cliente_telefono=cliente_telefono,
-                                     cliente_direccion=cliente_direccion,
-                                     condicion_venta=condicion_venta,
-                                     documento=documento_electronico)
-        texto_ticket = ticket_a_texto(datos_ticket)
-
-        # ── Imprimir automáticamente según tipo ───────────────
-        if tipo_comprobante == 'factura':
-            resultado_impresion = imprimir_factura(datos_ticket)
-        else:
-            resultado_impresion = imprimir_ticket(datos_ticket)
-        if not resultado_impresion['ok']:
-            logger.warning(
-                f'Impresión fallida para {tipo_comprobante} {pago.numero_ticket}: '
-                f'{resultado_impresion.get("error")}'
-            )
-
-        # ── Respuesta con datos del comprobante ───────────────
-        return Response({
-            'ok':              True,
-            'pago':            PagoSerializer(pago).data,
-            'tipo_comprobante':tipo_comprobante,
-            'ticket':          datos_ticket,
-            'ticket_texto':    texto_ticket,
-            'impresion':       resultado_impresion,
-            'errores_stock':   errores_stock,
-            # null cuando no se emitió DE (ticket, o SIFEN apagado). El
-            # frontend lo usa para mostrar el número legal y el estado
-            # frente al SIFEN; no debe asumir que siempre viene.
-            'documento_electronico': ({
-                'cdc':             documento_electronico.cdc,
-                'numero':          documento_electronico.numero_completo,
-                'estado':          documento_electronico.estado,
-                'estado_display':  documento_electronico.get_estado_display(),
-            } if documento_electronico is not None else None),
-        }, status=status.HTTP_201_CREATED)
+        # Todo lo que `post` necesita para armar el comprobante e imprimirlo,
+        # ya fuera de la transacción. No se devuelve una Response acá a
+        # propósito: mientras esta función no termine, el pedido sigue
+        # bloqueado por el `select_for_update()` de más arriba.
+        return {
+            'pedido':               pedido,
+            'pago':                 pago,
+            'sesion':               sesion,
+            'tipo_comprobante':     tipo_comprobante,
+            'cliente_ruc':          cliente_ruc,
+            'cliente_razon_social': cliente_razon_social,
+            'cliente_telefono':     cliente_telefono,
+            'cliente_direccion':    cliente_direccion,
+            'cliente_email':        cliente_email,
+            'condicion_venta':      condicion_venta,
+            'errores_stock':        errores_stock,
+            'documento_electronico': documento_electronico,
+        }
 
 
 # Tope de resultados cuando se busca fuera del turno abierto. Sin esto una
@@ -767,6 +857,7 @@ def _reconstruir_comprobante(pago):
             cliente_razon_social=documento.receptor_razon_social,
             cliente_telefono=documento.receptor_telefono,
             cliente_direccion=documento.receptor_direccion,
+            cliente_email=documento.receptor_email,
             documento=documento,
         )
 
@@ -778,15 +869,31 @@ def _reconstruir_comprobante(pago):
             cliente_razon_social=pago.cliente_razon_social,
             cliente_telefono=pago.cliente_telefono,
             cliente_direccion=pago.cliente_direccion,
+            cliente_email=pago.cliente_email,
             condicion_venta=pago.condicion_venta or 'Contado',
         )
 
     return 'ticket', _datos_ticket(pago.pedido, pago, pago.sesion_caja)
 
 
+def _detalle_medio_pago(pago):
+    """
+    Línea extra bajo "Medio de pago", cuando el papel la necesita.
+
+    Hoy solo el cheque: el ticket es el único registro que le queda al local
+    de qué papel entró en la caja, y "Cheque" a secas no alcanza para
+    cruzarlo después contra el extracto del banco.
+    """
+    datos = getattr(pago, 'datos_cheque', None)
+    if datos is not None:
+        return datos.descripcion_corta
+    return ''
+
+
 def _datos_ticket(pedido, pago, sesion, tipo_comprobante='ticket',
                   cliente_ruc='', cliente_razon_social='', cliente_telefono='',
-                  cliente_direccion='', condicion_venta='Contado', documento=None):
+                  cliente_direccion='', cliente_email='',
+                  condicion_venta='Contado', documento=None):
     """
     Estructura los datos necesarios para imprimir el ticket o la factura.
 
@@ -832,7 +939,9 @@ def _datos_ticket(pedido, pago, sesion, tipo_comprobante='ticket',
 
     datos = {
         'numero_ticket':   pago.numero_ticket,
-        'fecha':           pago.fecha.strftime('%d/%m/%Y %H:%M'),
+        # localtime: el campo se guarda en UTC (USE_TZ=True) y el ticket
+        # salía con la hora corrida cuatro horas.
+        'fecha':           timezone.localtime(pago.fecha).strftime('%d/%m/%Y %H:%M'),
         'cajero':          pago.cajero.nombre_completo,
         'pedido_numero':   pedido.numero,
         'cliente':         nombre_cliente,
@@ -845,6 +954,7 @@ def _datos_ticket(pedido, pago, sesion, tipo_comprobante='ticket',
         'descuento_caja_pct': desc_pct_caja,
         'monto_sin_descuento_caja': float(getattr(pago, 'monto_sin_descuento', 0) or total),
         'medio_pago':      pago.get_medio_pago_display(),
+        'detalle_pago':    _detalle_medio_pago(pago),
         'monto_recibido':  float(pago.monto_recibido) if pago.monto_recibido else None,
         'vuelto':          float(pago.vuelto),
         'negocio':         'Oga Porã',
@@ -882,6 +992,7 @@ def _datos_ticket(pedido, pago, sesion, tipo_comprobante='ticket',
             'cliente_razon_social': nombre_cliente,
             'cliente_telefono': cliente_telefono or '',
             'cliente_direccion': cliente_direccion or '',
+            'cliente_email': cliente_email or '',
             'condicion_venta': condicion_venta,
             'iva_10':          float(totales_iva['iva_10']),
             'iva_5':           float(totales_iva['iva_5']),
@@ -974,3 +1085,44 @@ class ReporteCajaView(views.APIView):
         desde, hasta = _parse_rango(request)
         reporte = rep.reporte_caja(desde, hasta)
         return rep.responder_reporte(reporte, _formato(request), 'extracto_caja', tamanio=_tamanio(request))
+
+
+class ReporteProductosView(views.APIView):
+    """
+    Qué se vendió, producto por producto.
+
+    ?detalle=1 devuelve una fila por venta con su fecha; sin el parámetro,
+    el acumulado por variante del período. Son el mismo dato mirado de dos
+    maneras, así que van en un solo endpoint y no en dos.
+    """
+    permission_classes = [EsAdmin]
+
+    def get(self, request):
+        desde, hasta = _parse_rango(request)
+        detalle = request.query_params.get('detalle', '') in ('1', 'true', 'True', 'si')
+        reporte = rep.reporte_productos(desde, hasta, detalle=detalle)
+        nombre = 'productos_detalle' if detalle else 'productos_vendidos'
+        return rep.responder_reporte(reporte, _formato(request), nombre,
+                                     tamanio=_tamanio(request))
+
+
+class ReporteArqueoView(views.APIView):
+    """
+    Arqueo de un día concreto (?dia=YYYY-MM-DD, por defecto hoy).
+
+    Va por día y no por rango como los demás: un arqueo compara el efectivo
+    contado contra el esperado en un momento dado. Sumar una semana daría un
+    número que no se puede contar contra nada.
+    """
+    permission_classes = [EsAdmin]
+
+    def get(self, request):
+        dia_str = request.query_params.get('dia') or request.query_params.get('hasta')
+        try:
+            dia = datetime.strptime(dia_str, '%Y-%m-%d').date() if dia_str else date.today()
+        except ValueError:
+            dia = date.today()
+        reporte = rep.reporte_arqueo(dia)
+        return rep.responder_reporte(reporte, _formato(request),
+                                     f'arqueo_caja_{dia.strftime("%Y%m%d")}',
+                                     tamanio=_tamanio(request))

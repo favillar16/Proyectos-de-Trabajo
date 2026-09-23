@@ -60,12 +60,14 @@ class Pago(models.Model):
     MEDIO_TARJETA_DEBITO = 'debito'
     MEDIO_TARJETA_CREDITO = 'credito'
     MEDIO_TRANSFERENCIA = 'transferencia'
+    MEDIO_CHEQUE = 'cheque'
 
     MEDIOS = [
         (MEDIO_EFECTIVO, 'Efectivo'),
         (MEDIO_TARJETA_DEBITO, 'Tarjeta de débito'),
         (MEDIO_TARJETA_CREDITO, 'Tarjeta de crédito'),
         (MEDIO_TRANSFERENCIA, 'Transferencia bancaria'),
+        (MEDIO_CHEQUE, 'Cheque'),
     ]
 
     ESTADO_PENDIENTE = 'pendiente'
@@ -138,6 +140,12 @@ class Pago(models.Model):
     cliente_razon_social = models.CharField(max_length=200, blank=True)
     cliente_telefono = models.CharField(max_length=30, blank=True)
     cliente_direccion = models.CharField(max_length=255, blank=True)
+    # Correo del receptor. No es un dato de contacto más: es el campo D216
+    # (`dEmailRec`) del documento electrónico, por el que el comprobante le
+    # llega al cliente una vez que la facturación electrónica esté en marcha.
+    # 80 caracteres es el máximo que fija el Manual V150 para ese campo — no
+    # el largo de un EmailField cualquiera. Ver codigos.validar_email_receptor.
+    cliente_email = models.EmailField(max_length=80, blank=True)
     condicion_venta = models.CharField(max_length=20, blank=True, default='Contado')
 
     fecha = models.DateTimeField(auto_now_add=True)
@@ -252,3 +260,76 @@ class DatosTarjeta(models.Model):
         from apps.facturacion import codigos
         return codigos.descripcion_tarjeta(
             self.denominacion, self.denominacion_descripcion)
+
+
+class DatosCheque(models.Model):
+    """
+    Datos del cobro con cheque: qué papel recibió la caja.
+
+    Existe por dos motivos que apuntan al mismo lado. El primero es fiscal:
+    el grupo E630 (`gPagCheq`) del Manual Técnico **se activa
+    obligatoriamente** cuando el medio de pago es cheque, y sus dos campos
+    —número y banco emisor— son de ocurrencia 1-1. Sin ellos el documento
+    electrónico de esa venta vuelve rechazado.
+
+    El segundo es del negocio, y rige aunque el SIFEN esté apagado: a
+    diferencia de la tarjeta —donde la terminal ya autorizó el cobro y el
+    voucher queda impreso—, un cheque es una promesa de pago. Si la caja no
+    anota de qué banco es y qué número tiene, el local se queda con un papel
+    que después no puede cruzar contra nada. Por eso los dos campos se
+    exigen siempre, no solo al facturar.
+
+    Va en una tabla aparte, igual que `DatosTarjeta` y por la misma razón:
+    solo aplica a una parte de los cobros.
+    """
+    pago = models.OneToOneField(
+        Pago, on_delete=models.CASCADE, related_name='datos_cheque')
+
+    # ── Obligatorios para el SIFEN ───────────────────────────────────────
+    numero = models.CharField(
+        max_length=8,
+        help_text='Campo E631: ocho dígitos, completados con ceros a la '
+                  'izquierda. Se normaliza al guardar.')
+    banco = models.CharField(
+        max_length=20,
+        help_text='Campo E632: banco emisor, de 4 a 20 caracteres. El '
+                  'mínimo es del SIFEN, así que va el nombre y no la sigla.')
+
+    # ── Del negocio, no del SIFEN ────────────────────────────────────────
+    titular = models.CharField(
+        max_length=60, blank=True,
+        help_text='A nombre de quién está librado el cheque.')
+    fecha_cobro = models.DateField(
+        null=True, blank=True,
+        help_text='Fecha a partir de la cual el cheque se puede cobrar. '
+                  'Vacío = a la vista. Cargada = cheque diferido, que no es '
+                  'plata en el cajón todavía.')
+
+    fecha_creacion = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'caja_datos_cheque'
+        verbose_name = 'Datos de cheque'
+        verbose_name_plural = 'Datos de cheque'
+
+    def __str__(self):
+        return f'Cheque {self.numero} — {self.banco} — {self.pago.numero_ticket}'
+
+    def save(self, *args, **kwargs):
+        from apps.facturacion import codigos
+        self.numero = codigos.numero_cheque_sifen(self.numero)
+        super().save(*args, **kwargs)
+
+    @property
+    def es_diferido(self) -> bool:
+        """¿El cheque todavía no se puede depositar?"""
+        from django.utils import timezone
+        return bool(self.fecha_cobro and self.fecha_cobro > timezone.localdate())
+
+    @property
+    def descripcion_corta(self) -> str:
+        """Una línea para el ticket y las pantallas: 'Nro — Banco'."""
+        texto = f'{self.numero} — {self.banco}'
+        if self.fecha_cobro:
+            texto += f' (al {self.fecha_cobro.strftime("%d/%m/%Y")})'
+        return texto
