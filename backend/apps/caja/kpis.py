@@ -45,7 +45,13 @@ def _ventas_periodo(inicio, fin):
         fecha__lte=fin,
     )
     agg = qs.aggregate(total=Sum('monto'), cantidad=Count('id'))
-    return float(agg['total'] or 0), int(agg['cantidad'] or 0)
+    # Lo reintegrado por devoluciones no es venta: se resta. El crédito que
+    # pagó un cambio no hace falta restarlo, porque ese cobro ya viene neto.
+    from .models import Devolucion
+    reintegros = Devolucion.objects.filter(
+        fecha__gte=inicio, fecha__lte=fin,
+    ).aggregate(total=Sum('monto_reintegro'))['total'] or 0
+    return float(agg['total'] or 0) - float(reintegros), int(agg['cantidad'] or 0)
 
 
 def _pct_cambio(actual, anterior):

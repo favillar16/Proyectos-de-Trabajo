@@ -159,6 +159,44 @@ class BuscadorDePedidosTests(BaseVentas):
         respuesta = self.cliente_api.get(reverse('pedidos-list'))
         self.assertEqual(len(respuesta.data['results']), 2)
 
+    def test_sin_estado_no_lista_los_cancelados(self):
+        self.dos.estado = NotaPedido.ESTADO_CANCELADO
+        self.dos.save(update_fields=['estado'])
+        respuesta = self.cliente_api.get(reverse('pedidos-list'))
+        self.assertEqual([p['numero'] for p in respuesta.data['results']],
+                         [self.uno.numero])
+        self.assertEqual(self._buscar('Guaraní'), [])
+
+    def test_los_cancelados_siguen_en_su_pestana(self):
+        self.dos.estado = NotaPedido.ESTADO_CANCELADO
+        self.dos.save(update_fields=['estado'])
+        respuesta = self.cliente_api.get(reverse('pedidos-list'),
+                                         {'estado': 'cancelado'})
+        self.assertEqual([p['numero'] for p in respuesta.data['results']],
+                         [self.dos.numero])
+
+    def test_el_cajero_ve_los_pagados_en_su_pestana(self):
+        self.uno.estado = NotaPedido.ESTADO_LISTO
+        self.uno.save(update_fields=['estado'])
+        self.dos.estado = NotaPedido.ESTADO_PAGADO
+        self.dos.save(update_fields=['estado'])
+        cajero = crear_usuario('cajero_pagados', rol=Usuario.ROL_CAJERO)
+        self.cliente_api.force_authenticate(cajero)
+
+        def listar(**params):
+            r = self.cliente_api.get(reverse('pedidos-list'), params)
+            return [p['numero'] for p in r.data['results']]
+
+        self.assertEqual(listar(), [self.uno.numero])
+        self.assertEqual(listar(estado='pagado'), [self.dos.numero])
+        self.assertEqual(listar(estado='pagado', buscar='Guaraní'), [self.dos.numero])
+
+    def test_el_cajero_no_ve_otros_estados(self):
+        cajero = crear_usuario('cajero_alcance', rol=Usuario.ROL_CAJERO)
+        self.cliente_api.force_authenticate(cajero)
+        r = self.cliente_api.get(reverse('pedidos-list'), {'estado': 'pendiente'})
+        self.assertEqual(r.data['results'], [])
+
     def test_el_ruc_viaja_en_el_listado(self):
         """El buscador filtra por RUC: la lista tiene que poder mostrarlo."""
         respuesta = self.cliente_api.get(reverse('pedidos-list'), {'buscar': 'Rosa'})

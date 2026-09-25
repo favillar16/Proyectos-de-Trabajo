@@ -108,6 +108,14 @@ export const inventarioApi = {
   stockGeneral:   (params) => api.get('/inventario/stock/', { params }),
   movimientos:    (params) => api.get('/inventario/movimientos/', { params }),
   ajustar:        (data)   => api.post('/inventario/ajustes/', data),
+  // params: { desde, hasta, buscar } — los ajustes hechos a mano, de todos los productos
+  registroAjustes:(params) => api.get('/inventario/ajustes/', { params }),
+  // params: { producto_id } o { variante_id } — para quién está apartado el stock
+  reservas:       (params) => api.get('/inventario/reservas/', { params }),
+  // El mismo registro como reporte: formato 'pdf' o 'xlsx', con los mismos filtros
+  reporteAjustes: (formato, params) => api.get('/inventario/ajustes/', {
+    params: { ...params, formato }, responseType: 'blob',
+  }),
 }
 
 // ─── Ventas ───────────────────────────────────────────────────
@@ -151,6 +159,12 @@ export const cajaApi = {
   // es el que reabre el cuadro "Datos para cargar en e-Kuatia'í".
   comprobante:     (id)        => api.get(`/caja/pagos/${id}/comprobante/`),
   estadoImpresora: ()          => api.get('/caja/impresora/estado/'),
+
+  // Devoluciones y cambios
+  resumenDevolucion:     (pagoId)  => api.get(`/caja/pagos/${pagoId}/devolucion/`),
+  registrarDevolucion:   (data)    => api.post('/caja/devoluciones/', data),
+  listaDevoluciones:     (params)  => api.get('/caja/devoluciones/', { params }),
+  reimprimirDevolucion:  (id)      => api.post(`/caja/devoluciones/${id}/reimprimir/`),
 
   // Reportes — descargan un archivo (PDF o Excel)
   descargarReporte: (tipo, formato, params = {}) =>

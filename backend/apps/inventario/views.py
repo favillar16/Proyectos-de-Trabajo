@@ -274,9 +274,67 @@ class StockListView(views.APIView):
 class AjusteStockView(views.APIView):
     """
     POST /inventario/ajustes/
-    Registra un movimiento de stock (entrada, salida, ajuste, devolución).
+    Registra un movimiento de stock (entrada, salida, ajuste, devolución) y
+    devuelve el movimiento que quedó, para mostrarlo como constancia.
+
+    GET /inventario/ajustes/?desde=YYYY-MM-DD&hasta=YYYY-MM-DD&buscar=
+    El registro de los ajustes hechos a mano, de todos los productos, más
+    reciente primero. Existe porque después de guardar un ajuste no quedaba
+    ningún lugar donde ver qué se cambió sin saber de antemano en qué
+    producto buscarlo.
+
+    Con ?formato=pdf|xlsx devuelve el mismo registro, con los mismos filtros,
+    como reporte para imprimir — completo, sin el tope de la pantalla.
     """
     permission_classes = [EsAdminODeposito]
+
+    def get(self, request):
+        from datetime import datetime, time
+        from django.utils import timezone
+
+        qs = (MovimientoStock.objects
+              .filter(referencia_tipo='ajuste_manual')
+              .select_related('usuario', 'variante__producto'))
+
+        # Las fechas se leen como días de Asunción (la zona del proyecto).
+        dias = {}
+        for param, hora, filtro in (('desde', time.min, 'fecha__gte'),
+                                    ('hasta', time.max, 'fecha__lte')):
+            valor = request.query_params.get(param)
+            if valor:
+                try:
+                    dia = datetime.strptime(valor, '%Y-%m-%d').date()
+                except ValueError:
+                    return Response({'error': f'{param} debe ser YYYY-MM-DD.'},
+                                    status=status.HTTP_400_BAD_REQUEST)
+                dias[param] = dia
+                qs = qs.filter(**{filtro: timezone.make_aware(datetime.combine(dia, hora))})
+
+        buscar = (request.query_params.get('buscar') or '').strip()
+        if buscar:
+            qs = qs.filter(Q(variante__sku__icontains=buscar)
+                           | Q(variante__producto__nombre__icontains=buscar)
+                           | Q(observaciones__icontains=buscar))
+
+        formato = (request.query_params.get('formato') or '').lower()
+        if formato in ('pdf', 'xlsx'):
+            from apps.caja import reportes as rep
+            from .reportes import reporte_ajustes
+            reporte = reporte_ajustes(qs.order_by('-fecha'), dias.get('desde'),
+                                      dias.get('hasta'), buscar)
+            return rep.responder_reporte(reporte, formato, 'registro_ajustes')
+
+        total = qs.count()
+        movimientos = list(qs.order_by('-fecha')[:MAX_MOVIMIENTOS])
+        data = MovimientoStockSerializer(movimientos, many=True).data
+        for mov, fila in zip(movimientos, data):
+            v = mov.variante
+            fila['variante_id'] = v.id
+            fila['sku'] = v.sku
+            fila['producto_nombre'] = v.producto.nombre
+            fila['descripcion'] = ' — '.join(
+                x for x in (v.producto.nombre, v.dimension_display, v.color) if x)
+        return Response({'results': data, 'count': total})
 
     @transaction.atomic
     def post(self, request):
@@ -328,12 +386,15 @@ class AjusteStockView(views.APIView):
         except Exception as e:
             return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
+        movimiento = (MovimientoStock.objects.select_related('usuario')
+                      .filter(variante=stock.variante).latest('id'))
         return Response({
             'ok':        True,
             'variante':  stock.variante.sku,
             'cantidad':  str(stock.cantidad),
             'disponible':str(stock.cantidad_disponible),
             'estado':    stock.estado,
+            'movimiento': MovimientoStockSerializer(movimiento).data,
         })
 
 
@@ -345,19 +406,88 @@ class MovimientoStockListView(views.APIView):
     Historial de auditoría (entradas, salidas, ajustes, reservas) de una
     variante, más reciente primero. Es de solo lectura: MovimientoStock
     nunca se edita ni se borra.
+
+    Con ?tipo=salida quedan solo las ventas, y la respuesta suma el total
+    vendido: la propietaria controla contra su cuaderno qué se vendió, cuándo
+    y a quién, y así ve también qué sale más.
     """
     permission_classes = [TodosLosRoles]
 
     def get(self, request):
+        from django.db.models import Sum
+        from apps.ventas.models import NotaPedido
+
         variante_id = request.query_params.get('variante_id')
         if not variante_id:
             return Response({'error': 'variante_id es requerido.'}, status=status.HTTP_400_BAD_REQUEST)
 
-        qs = (
-            MovimientoStock.objects
-            .filter(variante_id=variante_id)
-            .select_related('usuario')
-            .order_by('-fecha')[:MAX_MOVIMIENTOS]
-        )
-        data = MovimientoStockSerializer(qs, many=True).data
-        return Response({'results': data, 'count': len(data)})
+        qs = MovimientoStock.objects.filter(variante_id=variante_id)
+        tipo = request.query_params.get('tipo')
+        if tipo:
+            qs = qs.filter(tipo=tipo)
+        total = qs.aggregate(total=Sum('cantidad'))['total']
+
+        movimientos = list(qs.select_related('usuario').order_by('-fecha')[:MAX_MOVIMIENTOS])
+        data = MovimientoStockSerializer(movimientos, many=True).data
+
+        # Las reservas, liberaciones y ventas apuntan a un NotaPedido: se le
+        # suma el cliente y el número, en una sola consulta.
+        ids_pedido = {m.referencia_id for m in movimientos
+                      if m.referencia_tipo in ('venta', 'pedido') and m.referencia_id}
+        pedidos = {
+            p['id']: p for p in
+            NotaPedido.objects.filter(id__in=ids_pedido).values('id', 'numero', 'cliente_nombre')
+        }
+        for mov, fila in zip(movimientos, data):
+            pedido = (pedidos.get(mov.referencia_id)
+                      if mov.referencia_tipo in ('venta', 'pedido') else None)
+            fila['pedido_numero']  = pedido['numero'] if pedido else None
+            fila['cliente_nombre'] = pedido['cliente_nombre'] if pedido else ''
+
+        return Response({'results': data, 'count': len(data), 'total': str(total or 0)})
+
+
+# ─── Reservas vigentes ─────────────────────────────────────────────────────────
+
+class ReservasVigentesView(views.APIView):
+    """
+    GET /inventario/reservas/?producto_id=<id>  (o ?variante_id=<id>)
+    Para quién está apartada la mercadería: los ítems de los pedidos que
+    todavía tienen su reserva viva (pendiente, en preparación o listo).
+
+    La reserva en sí ya existía —todo pedido aparta su stock al crearse—, pero
+    no se veía: otro vendedor encontraba menos disponible sin saber por qué ni
+    para quién estaba guardado.
+    """
+    permission_classes = [TodosLosRoles]
+
+    def get(self, request):
+        from apps.ventas.models import ItemPedido, NotaPedido
+
+        producto_id = request.query_params.get('producto_id')
+        variante_id = request.query_params.get('variante_id')
+        if not (producto_id or variante_id):
+            return Response({'error': 'producto_id o variante_id es requerido.'},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        qs = (ItemPedido.objects
+              .filter(pedido__estado__in=NotaPedido.ESTADOS_CON_RESERVA)
+              .select_related('pedido__vendedor', 'variante'))
+        if variante_id:
+            qs = qs.filter(variante_id=variante_id)
+        else:
+            qs = qs.filter(variante__producto_id=producto_id)
+
+        resultados = [{
+            'variante_id':    item.variante_id,
+            'sku':            item.variante.sku,
+            'cantidad':       str(item.cantidad),
+            'pedido_id':      item.pedido_id,
+            'pedido_numero':  item.pedido.numero,
+            'estado':         item.pedido.estado,
+            'estado_display': item.pedido.get_estado_display(),
+            'cliente_nombre': item.pedido.cliente_nombre,
+            'vendedor_nombre': item.pedido.vendedor.nombre_completo,
+            'fecha':          item.pedido.fecha_creacion,
+        } for item in qs.order_by('pedido__fecha_creacion')]
+        return Response({'results': resultados, 'count': len(resultados)})

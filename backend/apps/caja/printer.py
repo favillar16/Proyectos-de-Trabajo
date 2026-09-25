@@ -7,6 +7,7 @@ Arquitectura:
   WindowsPrinter  — envía los bytes a la impresora vía win32print
   imprimir_ticket — función de alto nivel para llamar desde las views
   imprimir_cierre — ticket de cierre de sesión
+  imprimir_devolucion — comprobante de una devolución o cambio
 
 ESC/POS Reference:
   https://escpos.readthedocs.io/
@@ -185,6 +186,12 @@ class TicketBuilder:
         if float(d.get('descuento', 0)) > 0:
             buf += self._2col('Subtotal:', _formatGs(d['subtotal']))
             buf += self._2col('Descuento:', '- ' + _formatGs(d['descuento']))
+            buf += self._sep()
+
+        # Cobro de un cambio: lo devuelto se tomó a cuenta.
+        if float(d.get('credito_devolucion', 0)) > 0:
+            buf += self._2col(f'A cuenta ({d.get("devolucion_numero", "")}):',
+                              '- ' + _formatGs(d['credito_devolucion']))
             buf += self._sep()
 
         # Total en doble tamaño
@@ -434,6 +441,20 @@ class TicketCierreBuilder:
 
         buf += self._sep()
         buf += self._2col('Total pagos:', str(self.resumen.get('total_pagos', 0)))
+
+        # Devoluciones: plata que salió de la caja. Sin esto el efectivo
+        # contado no cuadra con lo cobrado y el turno parece con faltante.
+        reintegros = self.resumen.get('reintegros_medios', {})
+        if reintegros:
+            buf += self._sep()
+            buf += BOLD_ON
+            buf += self._l('REINTEGROS POR DEVOLUCION')
+            buf += BOLD_OFF
+            for medio, monto in reintegros.items():
+                buf += self._2col(f'  {medio}:', '- ' + _formatGs(monto))
+            buf += self._2col('Neto del turno:', _formatGs(self.resumen.get('total_neto', 0)))
+            buf += self._sep()
+
         buf += self._2col('Apertura con:', _formatGs(self.sesion.monto_apertura))
 
         buf += self._sep('=')
@@ -464,6 +485,121 @@ class TicketCierreBuilder:
         buf += FEED_LINES(4)
         buf += CUT_PARTIAL
 
+        return bytes(buf)
+
+
+class TicketDevolucionBuilder:
+    """
+    Comprobante de una devolución o un cambio.
+
+    Un solo papel con las tres partes de la operación —lo que vuelve, lo que
+    se lleva y la diferencia— porque es lo que el cliente necesita para
+    entender qué pasó con su plata, y lo que la caja necesita para justificar
+    un reintegro al cierre.
+    """
+
+    def __init__(self, datos: dict):
+        self.datos    = datos
+        self.encoding = settings.IMPRESORA_TERMICA.get('encoding', 'cp850')
+        self.cols     = settings.IMPRESORA_TERMICA.get('caracteres_linea', 48)
+
+    def _e(self, t): return _enc(t, self.encoding)
+    def _l(self, t=''): return self._e(t) + LF
+    def _sep(self, c='-'): return self._e(c * self.cols) + LF
+    def _2col(self, i, d): return _dos_columnas(i, d, self.cols)
+
+    def _wrap(self, texto):
+        return b''.join(self._l(linea) for linea in (textwrap.wrap(texto, self.cols) or ['']))
+
+    def build(self) -> bytes:
+        d = self.datos
+        buf = bytearray()
+        buf += INIT + FONT_A
+
+        buf += ALIGN_CENTER
+        buf += BOLD_ON
+        buf += self._l(d.get('negocio', 'Oga Porã'))
+        buf += BOLD_OFF
+        buf += self._wrap(d.get('direccion', ''))
+        buf += self._l(d.get('telefono', ''))
+        buf += LF
+        buf += BOLD_ON
+        titulo = '- CAMBIO DE PRODUCTO -' if d.get('pedido_cambio') else '- DEVOLUCION -'
+        buf += self._l(titulo)
+        buf += BOLD_OFF
+        buf += self._l('Comprobante no fiscal')
+
+        buf += ALIGN_LEFT
+        buf += self._sep()
+        buf += self._2col('Nro:', d.get('numero', ''))
+        buf += self._2col('Fecha:', d.get('fecha', ''))
+        buf += self._2col('Cajero:', d.get('cajero', ''))
+        buf += self._2col('Cliente:', d.get('cliente', ''))
+        buf += self._2col('Venta original:', d.get('venta_pedido', ''))
+        buf += self._2col('Ticket original:', d.get('venta_ticket', ''))
+        buf += self._wrap(f'Motivo: {d.get("motivo", "")}')
+        buf += self._sep()
+
+        buf += BOLD_ON
+        buf += self._2col('DEVUELVE', 'CREDITO')
+        buf += BOLD_OFF
+        for item in d.get('devueltos', []):
+            buf += self._l(str(item.get('descripcion', ''))[:self.cols])
+            cant = f'{item.get("cantidad", 0):.2f}'.rstrip('0').rstrip('.')
+            buf += self._2col(f'  {cant} - {str(item.get("detalle", ""))[:22]}',
+                              _formatGs(item.get('subtotal', 0)))
+            if not item.get('reingresa_stock', True):
+                buf += self._l('  (no vuelve al stock: estado inadecuado)')
+        buf += self._2col('Total a favor del cliente:', _formatGs(d.get('total_credito', 0)))
+        buf += self._sep()
+
+        if d.get('pedido_cambio'):
+            buf += BOLD_ON
+            buf += self._2col(f'SE LLEVA ({d["pedido_cambio"]})', 'SUBTOTAL')
+            buf += BOLD_OFF
+            for item in d.get('llevados', []):
+                buf += self._l(str(item.get('descripcion', ''))[:self.cols])
+                cant = f'{item.get("cantidad", 0):.2f}'.rstrip('0').rstrip('.')
+                buf += self._2col(f'  {cant} x {_formatGs(item.get("precio_unit", 0))}',
+                                  _formatGs(item.get('subtotal', 0)))
+            buf += self._2col('Total del cambio:', _formatGs(d.get('total_nuevo', 0)))
+            buf += self._sep()
+
+        buf += ALIGN_CENTER
+        buf += DOUBLE_ON
+        if d.get('a_cobrar', 0) > 0:
+            buf += self._l('A PAGAR')
+            buf += self._l(_formatGs(d['a_cobrar']))
+        elif d.get('a_reintegrar', 0) > 0:
+            buf += self._l('REINTEGRO')
+            buf += self._l(_formatGs(d['a_reintegrar']))
+        else:
+            buf += self._l('SIN DIFERENCIA')
+        buf += DOUBLE_OFF
+        buf += ALIGN_LEFT
+
+        if d.get('a_cobrar', 0) > 0:
+            buf += self._2col('Medio de pago:', d.get('medio_cobro', ''))
+            if d.get('monto_recibido'):
+                buf += self._2col('Recibido:', _formatGs(d['monto_recibido']))
+            if float(d.get('vuelto', 0)) > 0:
+                buf += BOLD_ON
+                buf += self._2col('VUELTO:', _formatGs(d['vuelto']))
+                buf += BOLD_OFF
+        elif d.get('a_reintegrar', 0) > 0:
+            buf += self._2col('Reintegrado en:', d.get('medio_reintegro', ''))
+
+        if d.get('observaciones'):
+            buf += self._sep()
+            buf += self._wrap(d['observaciones'])
+
+        buf += self._sep('=')
+        buf += ALIGN_CENTER
+        buf += LF
+        buf += self._l('Firma del cliente: ______________')
+        buf += LF
+        buf += FEED_LINES(4)
+        buf += CUT_PARTIAL
         return bytes(buf)
 
 
@@ -629,6 +765,69 @@ def imprimir_cierre(sesion, resumen: dict) -> dict:
         return {'ok': False, 'error': str(e), 'metodo': 'error_interno'}
 
 
+def imprimir_devolucion(datos: dict) -> dict:
+    """Imprime el comprobante de una devolución o cambio."""
+    cfg = settings.IMPRESORA_TERMICA
+    if not cfg.get('auto_imprimir', True):
+        return {'ok': True, 'error': None, 'metodo': 'desactivado'}
+    try:
+        return WindowsPrinter().imprimir(TicketDevolucionBuilder(datos).build())
+    except Exception as e:
+        logger.exception(f'Error al imprimir la devolución {datos.get("numero")}: {e}')
+        return {'ok': False, 'error': str(e), 'metodo': 'error_interno'}
+
+
+def ticket_devolucion_a_texto(d: dict) -> str:
+    """Versión de texto del comprobante de devolución, para la pantalla."""
+    cols = settings.IMPRESORA_TERMICA.get('caracteres_linea', 48)
+    sep = '-' * cols
+
+    def g(v): return f'Gs. {int(v):,}'.replace(',', '.')
+    def r(i, d_): return i + ' ' * max(1, cols - len(i) - len(d_)) + d_
+    def c(v): return f'{v:.2f}'.rstrip('0').rstrip('.')
+
+    titulo = 'CAMBIO DE PRODUCTO' if d.get('pedido_cambio') else 'DEVOLUCION'
+    lineas = [
+        '=' * cols, d.get('negocio', '').center(cols), titulo.center(cols), '=' * cols,
+        r('Nro:', d.get('numero', '')),
+        r('Fecha:', d.get('fecha', '')),
+        r('Cajero:', d.get('cajero', '')),
+        r('Cliente:', d.get('cliente', '')),
+        r('Venta original:', d.get('venta_pedido', '')),
+        f'Motivo: {d.get("motivo", "")}',
+        sep, r('DEVUELVE', 'CREDITO'), sep,
+    ]
+    for item in d.get('devueltos', []):
+        lineas.append(item['descripcion'][:cols])
+        lineas.append(r(f'  {c(item["cantidad"])} - {item["detalle"][:22]}', g(item['subtotal'])))
+        if not item.get('reingresa_stock', True):
+            lineas.append('  (no vuelve al stock: estado inadecuado)')
+    lineas.append(r('Total a favor del cliente:', g(d.get('total_credito', 0))))
+
+    if d.get('pedido_cambio'):
+        lineas += [sep, r(f'SE LLEVA ({d["pedido_cambio"]})', 'SUBTOTAL'), sep]
+        for item in d.get('llevados', []):
+            lineas.append(item['descripcion'][:cols])
+            lineas.append(r(f'  {c(item["cantidad"])} x {g(item["precio_unit"])}', g(item['subtotal'])))
+        lineas.append(r('Total del cambio:', g(d.get('total_nuevo', 0))))
+
+    lineas.append(sep)
+    if d.get('a_cobrar', 0) > 0:
+        lineas.append(r('A PAGAR:', g(d['a_cobrar'])))
+        lineas.append(r('Medio de pago:', d.get('medio_cobro', '')))
+        if d.get('monto_recibido'):
+            lineas.append(r('Recibido:', g(d['monto_recibido'])))
+        if float(d.get('vuelto', 0)) > 0:
+            lineas.append(r('VUELTO:', g(d['vuelto'])))
+    elif d.get('a_reintegrar', 0) > 0:
+        lineas.append(r('REINTEGRO:', g(d['a_reintegrar'])))
+        lineas.append(r('Reintegrado en:', d.get('medio_reintegro', '')))
+    else:
+        lineas.append('SIN DIFERENCIA'.center(cols))
+    lineas.append('=' * cols)
+    return '\n'.join(lineas)
+
+
 def ticket_a_texto(datos_ticket: dict) -> str:
     """
     Versión de texto plano del ticket (sin ESC/POS).
@@ -668,6 +867,11 @@ def ticket_a_texto(datos_ticket: dict) -> str:
     if float(d.get('descuento', 0)) > 0:
         lineas.append(r('Subtotal:', g(d['subtotal'])))
         lineas.append(r('Descuento:', '- ' + g(d['descuento'])))
+        lineas.append(sep)
+
+    if float(d.get('credito_devolucion', 0)) > 0:
+        lineas.append(r(f'A cuenta ({d.get("devolucion_numero", "")}):',
+                        '- ' + g(d['credito_devolucion'])))
         lineas.append(sep)
 
     total_str = f'TOTAL: {g(d.get("total", 0))}'

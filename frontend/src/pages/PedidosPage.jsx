@@ -375,6 +375,19 @@ function PanelDetalle({ pedido: pedidoResumen, rol, puedeEditarPrecio, onCerrar 
                 </div>
               )}
 
+              {/* La mercadería del pedido está apartada para este cliente
+                  desde que se creó, hasta que se cobre o se cancele. */}
+              {['pendiente', 'en_preparacion', 'listo'].includes(pedido.estado) && (
+                <div style={{ padding:'9px 20px', borderBottom:`1px solid ${C.border}`,
+                  background:C.infoBg, display:'flex', alignItems:'center', gap:'7px' }}>
+                  <Package size={14} style={{ color:C.info, flexShrink:0 }} />
+                  <p style={{ fontSize:'12px', color:C.info }}>
+                    Stock reservado{pedido.cliente_nombre ? ` para ${pedido.cliente_nombre}` : ''}:
+                    nadie más puede venderlo hasta que el pedido se cobre o se cancele.
+                  </p>
+                </div>
+              )}
+
               {/* Ítems */}
               <div>
                 {pedido.items?.map(item => (

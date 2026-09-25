@@ -53,6 +53,18 @@ class SesionCaja(models.Model):
             total=models.Sum('monto')
         )['total'] or 0
 
+    def total_reintegros(self, medio=None):
+        """
+        Plata que salió de la caja en este turno por devoluciones.
+
+        Con `medio` se acota a uno: el arqueo solo resta el efectivo, porque
+        un reintegro por transferencia nunca salió del cajón.
+        """
+        qs = self.devoluciones.filter(monto_reintegro__gt=0)
+        if medio:
+            qs = qs.filter(medio_reintegro=medio)
+        return qs.aggregate(total=models.Sum('monto_reintegro'))['total'] or 0
+
 
 class Pago(models.Model):
     """Pago asociado a una nota de pedido"""
@@ -333,3 +345,141 @@ class DatosCheque(models.Model):
         if self.fecha_cobro:
             texto += f' (al {self.fecha_cobro.strftime("%d/%m/%Y")})'
         return texto
+
+
+class Devolucion(models.Model):
+    """
+    El cliente trae de vuelta mercadería de una venta ya cobrada.
+
+    Cubre tres casos que en el mostrador son uno solo:
+
+      · **Devolución sin cambio** — se le reintegra lo que pagó por lo que
+        trae. Sale plata de la caja (`monto_reintegro`).
+      · **Cambio por algo que vale más** — lo que trae queda como crédito a
+        favor del pedido nuevo (`pedido_cambio`) y se cobra solo la
+        diferencia, en un `Pago` normal (`pago_cambio`) cuyo monto ya viene
+        neto del crédito.
+      · **Cambio por algo que vale menos** — el pedido nuevo se da por pagado
+        con el crédito (su `Pago` es de 0) y el sobrante se reintegra.
+
+    Así, en cualquiera de los tres, la suma de los cobros menos los
+    reintegros es lo que realmente entró al negocio, y ningún reporte tiene
+    que conocer el crédito para cuadrar.
+
+    El crédito sale de lo que **se cobró** por cada ítem, no de su precio de
+    lista: si la venta tuvo descuento en caja o precio negociado, devolver al
+    precio de lista le daría al cliente más de lo que pagó. Ver
+    apps/caja/devoluciones.py.
+
+    Mientras no exista la nota de crédito parcial, una venta con factura
+    electrónica viva no se puede devolver por acá: el SIFEN seguiría teniendo
+    la venta entera. Ver `devoluciones.validar_fiscal`.
+    """
+    MOTIVO_CAMBIO            = 'cambio'
+    MOTIVO_ESTADO_INADECUADO = 'estado_inadecuado'
+    MOTIVO_OTRO              = 'otro'
+    MOTIVOS = [
+        (MOTIVO_CAMBIO,            'Cambio de producto'),
+        (MOTIVO_ESTADO_INADECUADO, 'Devolución por estado inadecuado'),
+        (MOTIVO_OTRO,              'Otro motivo'),
+    ]
+
+    numero = models.CharField(max_length=20, unique=True)
+    pago_original = models.ForeignKey(
+        Pago, on_delete=models.PROTECT, related_name='devoluciones',
+        help_text='El cobro de la venta de la que vuelve la mercadería.')
+    sesion_caja = models.ForeignKey(
+        SesionCaja, on_delete=models.PROTECT, related_name='devoluciones',
+        help_text='El turno por el que se movió la plata, no el de la venta.')
+    usuario = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.PROTECT,
+        related_name='devoluciones_registradas')
+
+    motivo = models.CharField(max_length=20, choices=MOTIVOS)
+    motivo_detalle = models.CharField(
+        max_length=200, blank=True,
+        help_text='Obligatorio con "Otro motivo"; opcional en el resto.')
+    observaciones = models.TextField(blank=True)
+
+    total_credito = models.DecimalField(
+        max_digits=14, decimal_places=2,
+        help_text='Lo que vale, a precio cobrado, la mercadería que volvió.')
+
+    pedido_cambio = models.OneToOneField(
+        'ventas.NotaPedido', on_delete=models.PROTECT,
+        null=True, blank=True, related_name='devolucion_de_cambio',
+        help_text='Lo que el cliente se lleva a cambio, si se lleva algo.')
+    pago_cambio = models.OneToOneField(
+        Pago, on_delete=models.PROTECT,
+        null=True, blank=True, related_name='devolucion_aplicada',
+        help_text='El cobro del pedido de cambio, ya neto del crédito.')
+
+    monto_reintegro = models.DecimalField(
+        max_digits=14, decimal_places=2, default=0,
+        validators=[MinValueValidator(0)],
+        help_text='Lo que salió de la caja hacia el cliente.')
+    medio_reintegro = models.CharField(
+        max_length=20, choices=Pago.MEDIOS, blank=True)
+
+    fecha = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'caja_devoluciones'
+        ordering = ['-fecha']
+        verbose_name = 'Devolución'
+        verbose_name_plural = 'Devoluciones'
+
+    def __str__(self):
+        return f'{self.numero} — {self.get_motivo_display()} — {self.total_credito}'
+
+    def save(self, *args, **kwargs):
+        if not self.numero:
+            from django.utils import timezone
+            hoy = timezone.now()
+            correlativo = Devolucion.objects.filter(
+                fecha__year=hoy.year, fecha__month=hoy.month).count() + 1
+            prefijo = f'DEV-{hoy.strftime("%Y%m")}-'
+            while Devolucion.objects.filter(
+                    numero=f'{prefijo}{correlativo:04d}').exists():
+                correlativo += 1
+            self.numero = f'{prefijo}{correlativo:04d}'
+        super().save(*args, **kwargs)
+
+    @property
+    def credito_aplicado(self):
+        """La parte del crédito que se usó para pagar el pedido de cambio."""
+        return self.total_credito - self.monto_reintegro
+
+    @property
+    def motivo_texto(self):
+        if self.motivo_detalle:
+            return f'{self.get_motivo_display()}: {self.motivo_detalle}'
+        return self.get_motivo_display()
+
+
+class ItemDevolucion(models.Model):
+    """Una línea de la venta original que volvió, total o parcialmente."""
+    devolucion = models.ForeignKey(
+        Devolucion, on_delete=models.CASCADE, related_name='items')
+    item_pedido = models.ForeignKey(
+        'ventas.ItemPedido', on_delete=models.PROTECT,
+        related_name='devoluciones')
+    variante = models.ForeignKey(
+        'productos.Variante', on_delete=models.PROTECT,
+        related_name='items_devueltos')
+    cantidad = models.DecimalField(max_digits=10, decimal_places=4)
+    monto = models.DecimalField(
+        max_digits=14, decimal_places=2,
+        help_text='Crédito por esta línea, a precio cobrado.')
+    reingresa_stock = models.BooleanField(
+        default=True,
+        help_text='False para mercadería dañada: vuelve al local pero no al '
+                  'stock vendible, o el showroom ofrecería piezas rotas.')
+
+    class Meta:
+        db_table = 'caja_items_devolucion'
+        verbose_name = 'Ítem devuelto'
+        verbose_name_plural = 'Ítems devueltos'
+
+    def __str__(self):
+        return f'{self.variante} × {self.cantidad} = {self.monto}'

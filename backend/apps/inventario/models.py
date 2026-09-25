@@ -237,8 +237,11 @@ class Stock(models.Model):
             self.cantidad = cantidad
 
         elif tipo == MovimientoStock.TIPO_DEVOLUCION:
+            # Solo vuelve al físico. Lo devuelto ya se había vendido, así que
+            # no tiene reserva propia: descontar de `cantidad_reservada` se
+            # comía las reservas de OTROS pedidos pendientes de la misma
+            # variante, que después se podían sobrevender.
             self.cantidad += cantidad
-            self.cantidad_reservada = max(self.cantidad_reservada - cantidad, 0)
 
         else:
             raise ValidationError(f'Tipo de movimiento desconocido: {tipo}')

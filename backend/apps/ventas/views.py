@@ -107,12 +107,24 @@ class NotaPedidoListCreateView(views.APIView):
                 NotaPedido.ESTADO_EN_PREPARACION,
             ])
         elif rol == 'cajero':
-            qs = qs.filter(estado=NotaPedido.ESTADO_LISTO)
+            # Por defecto, lo que hay para cobrar. Con ?estado=pagado, lo ya
+            # cobrado: la pantalla le ofrece esa pestaña, y filtrar "pagado"
+            # sobre un listado de solo "listo" la dejaba siempre vacía.
+            if request.query_params.get('estado') == NotaPedido.ESTADO_PAGADO:
+                qs = qs.filter(estado=NotaPedido.ESTADO_PAGADO)
+            else:
+                qs = qs.filter(estado=NotaPedido.ESTADO_LISTO)
 
         # Filtros opcionales
+        # Sin estado elegido no se listan los cancelados: la propietaria usa
+        # "Todos" para cruzar lo vendido contra caja y los cancelados solo
+        # ensucian. No se borran —tienen movimientos de stock asociados que
+        # son la auditoría— y siguen a mano en su propia pestaña.
         estado = request.query_params.get('estado')
         if estado:
             qs = qs.filter(estado=estado)
+        else:
+            qs = qs.exclude(estado=NotaPedido.ESTADO_CANCELADO)
 
         # Buscador: nombre del cliente, su CI/RUC o el número de pedido.
         # Los tres en un solo campo porque quien busca en el mostrador tiene

@@ -82,6 +82,10 @@ class NotaPedido(models.Model):
         (ESTADO_CANCELADO,      'Cancelado'),
     ]
 
+    # Los estados en que el pedido tiene su mercadería apartada: se reserva al
+    # crearlo y la reserva se consume al cobrar o se libera al cancelar.
+    ESTADOS_CON_RESERVA = (ESTADO_PENDIENTE, ESTADO_EN_PREPARACION, ESTADO_LISTO)
+
     numero  = models.CharField(max_length=20, unique=True)
     estado  = models.CharField(max_length=20, choices=ESTADOS, default=ESTADO_PENDIENTE, db_index=True)
 

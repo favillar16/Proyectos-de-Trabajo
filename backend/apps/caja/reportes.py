@@ -260,7 +260,24 @@ def reporte_stock():
     }
 
 
+def _reintegros(desde: date, hasta: date):
+    """Devoluciones del período que sacaron plata de la caja."""
+    from apps.caja.models import Devolucion
+    return Devolucion.objects.filter(
+        monto_reintegro__gt=0,
+        fecha__date__gte=desde,
+        fecha__date__lte=hasta,
+    ).select_related('pago_original__pedido', 'usuario').order_by('fecha')
+
+
 def reporte_ventas(desde: date, hasta: date):
+    """
+    Una línea por cobro, y una en negativo por cada reintegro de devolución.
+
+    El cobro de un cambio ya viene neto del crédito, así que con restar los
+    reintegros el total es lo que efectivamente entró — sin necesidad de
+    listar aparte los créditos que se usaron para pagar otro pedido.
+    """
     from apps.caja.models import Pago
 
     pagos = Pago.objects.filter(
@@ -269,28 +286,49 @@ def reporte_ventas(desde: date, hasta: date):
         fecha__date__lte=hasta,
     ).select_related('pedido', 'cajero').order_by('fecha')
 
-    filas = []
-    total_general = 0
-    por_medio = {}
+    movimientos = []
     for p in pagos:
-        monto = float(p.monto)
-        total_general += monto
-        medio = p.get_medio_pago_display()
-        por_medio[medio] = por_medio.get(medio, 0) + monto
-        filas.append([
+        movimientos.append((p.fecha, [
             _fecha(p.fecha),
             p.numero_ticket or '—',
             p.pedido.numero if p.pedido else '—',
             p.pedido.cliente_nombre if p.pedido and p.pedido.cliente_nombre else 'Consumidor Final',
-            medio,
+            p.get_medio_pago_display(),
             p.cajero.nombre_completo,
-            _gs(monto),
-        ])
+        ], float(p.monto)))
+    for d in _reintegros(desde, hasta):
+        pedido = d.pago_original.pedido
+        movimientos.append((d.fecha, [
+            _fecha(d.fecha),
+            d.numero,
+            f'Devolución {pedido.numero}',
+            pedido.cliente_nombre or 'Consumidor Final',
+            d.get_medio_reintegro_display(),
+            d.usuario.nombre_completo,
+        ], -float(d.monto_reintegro)))
+    movimientos.sort(key=lambda m: m[0])
+
+    filas = []
+    total_general = 0
+    total_reintegros = 0
+    cobros = 0
+    por_medio = {}
+    for _, fila, monto in movimientos:
+        total_general += monto
+        if monto < 0:
+            total_reintegros += -monto
+        else:
+            cobros += 1
+        medio = fila[4]
+        por_medio[medio] = por_medio.get(medio, 0) + monto
+        filas.append(fila + [_gs(monto) if monto >= 0 else f'- {_gs(-monto)}'])
 
     totales = {'Total de ventas': _gs(total_general),
-               'Cantidad de cobros': len(filas)}
+               'Cantidad de cobros': cobros}
+    if total_reintegros:
+        totales['Reintegros por devolución'] = f'- {_gs(total_reintegros)}'
     for medio, m in por_medio.items():
-        totales[f'  · {medio}'] = _gs(m)
+        totales[f'  · {medio}'] = _gs(m) if m >= 0 else f'- {_gs(-m)}'
 
     return {
         'titulo':    'Balance de Ventas',
@@ -313,11 +351,14 @@ def reporte_caja(desde: date, hasta: date):
 
     filas = []
     total_ventas = 0
+    total_reintegros = 0
     for s in sesiones:
         ventas = Pago.objects.filter(
             sesion_caja=s, estado=Pago.ESTADO_CONFIRMADO
         ).aggregate(t=Sum('monto'))['t'] or 0
+        reintegros = float(s.total_reintegros())
         total_ventas += float(ventas)
+        total_reintegros += reintegros
         filas.append([
             _fecha(s.fecha_apertura),
             _fecha(s.fecha_cierre) if s.fecha_cierre else 'Abierta',
@@ -325,6 +366,8 @@ def reporte_caja(desde: date, hasta: date):
             _gs(s.monto_apertura),
             _gs(s.monto_cierre) if s.monto_cierre is not None else '—',
             _gs(ventas),
+            f'- {_gs(reintegros)}' if reintegros else '—',
+            _gs(float(ventas) - reintegros),
             'Cerrada' if s.estado == 'cerrada' else 'Abierta',
         ])
 
@@ -332,12 +375,15 @@ def reporte_caja(desde: date, hasta: date):
         'titulo':    'Extracto de Caja',
         'subtitulo': f'Del {desde.strftime("%d/%m/%Y")} al {hasta.strftime("%d/%m/%Y")}',
         'hoja':      'Caja',
-        'columnas':  ['Apertura','Cierre','Cajero','M. Apertura','M. Cierre','Ventas','Estado'],
-        'cols_derecha': [3,4,5],
+        'columnas':  ['Apertura','Cierre','Cajero','M. Apertura','M. Cierre',
+                      'Cobros','Reintegros','Neto','Estado'],
+        'cols_derecha': [3,4,5,6,7],
         'filas':     filas,
         'totales': {
             'Sesiones': len(filas),
-            'Total ventas del período': _gs(total_ventas),
+            'Total cobrado del período': _gs(total_ventas),
+            'Reintegros por devolución': f'- {_gs(total_reintegros)}' if total_reintegros else _gs(0),
+            'Total neto del período': _gs(total_ventas - total_reintegros),
         },
     }
 
@@ -390,6 +436,25 @@ def _items_vendidos(desde: date, hasta: date):
             yield pago, item
 
 
+def _items_devueltos(desde: date, hasta: date):
+    """
+    Lo que volvió en el período, por la fecha de la devolución.
+
+    Resta en el reporte aunque la venta sea de otro período: el reporte dice
+    cuánto salió del local entre esas fechas, y lo que volvió en ellas ya no
+    salió.
+    """
+    from apps.caja.models import ItemDevolucion
+    return ItemDevolucion.objects.filter(
+        devolucion__fecha__date__gte=desde,
+        devolucion__fecha__date__lte=hasta,
+    ).select_related(
+        'devolucion__pago_original__pedido',
+        'variante__producto', 'variante__acabado',
+        'item_pedido',
+    ).order_by('devolucion__fecha')
+
+
 def reporte_productos(desde: date, hasta: date, detalle: bool = False):
     """
     Qué productos se vendieron en el período.
@@ -427,6 +492,25 @@ def reporte_productos(desde: date, hasta: date, detalle: bool = False):
                 pago.pedido.numero,
             ])
 
+        for dev_item in _items_devueltos(desde, hasta):
+            variante = dev_item.variante
+            devolucion = dev_item.devolucion
+            unidad = UNIDAD_CORTA.get(variante.producto.unidad_venta,
+                                      variante.producto.unidad_venta)
+            monto = float(dev_item.monto)
+            total_ingresos -= monto
+            filas.append([
+                _fecha(devolucion.fecha),
+                variante.producto.nombre,
+                str(variante),
+                variante.sku,
+                _cantidad(-dev_item.cantidad, unidad),
+                _gs(dev_item.item_pedido.precio_unitario),
+                f'- {_gs(monto)}',
+                devolucion.pago_original.pedido.cliente_nombre or 'Consumidor Final',
+                devolucion.numero,
+            ])
+
         return {
             'titulo':    'Productos comercializados — detalle por fecha',
             'subtitulo': subtitulo_rango,
@@ -462,6 +546,24 @@ def reporte_productos(desde: date, hasta: date, detalle: bool = False):
         registro['ventas']   += 1
         registro['primera'] = min(registro['primera'], pago.fecha)
         registro['ultima']  = max(registro['ultima'],  pago.fecha)
+
+    for dev_item in _items_devueltos(desde, hasta):
+        variante = dev_item.variante
+        fecha = dev_item.devolucion.fecha
+        registro = acumulado.setdefault(variante.id, {
+            'producto': variante.producto.nombre,
+            'variante': str(variante),
+            'sku':      variante.sku,
+            'unidad':   UNIDAD_CORTA.get(variante.producto.unidad_venta,
+                                         variante.producto.unidad_venta),
+            'cantidad': 0.0,
+            'ingresos': 0.0,
+            'ventas':   0,
+            'primera':  fecha,
+            'ultima':   fecha,
+        })
+        registro['cantidad'] -= float(dev_item.cantidad)
+        registro['ingresos'] -= float(dev_item.monto)
 
     for r in sorted(acumulado.values(), key=lambda r: -r['ingresos']):
         total_ingresos += r['ingresos']
@@ -535,11 +637,13 @@ def reporte_arqueo(dia: date):
 
         cobrado = sum(m for _, m, _ in por_medio.values())
         efectivo = por_medio.get(Pago.MEDIO_EFECTIVO, ('', 0.0, 0))[1]
+        # Solo el reintegro en efectivo salió del cajón.
+        reintegro_efectivo = float(sesion.total_reintegros(Pago.MEDIO_EFECTIVO))
         apertura = float(sesion.monto_apertura or 0)
-        esperado = apertura + efectivo
+        esperado = apertura + efectivo - reintegro_efectivo
 
         total_cobrado_dia  += cobrado
-        total_efectivo_dia += efectivo
+        total_efectivo_dia += efectivo - reintegro_efectivo
 
         cierre_txt = (_fecha(sesion.fecha_cierre, '%H:%M')
                       if sesion.fecha_cierre else 'todavía abierta')
@@ -561,8 +665,22 @@ def reporte_arqueo(dia: date):
             filas.append(['   Sin cobros registrados', '', _gs(0)])
 
         filas.append(['   Total cobrado en el turno', '', _gs(cobrado)])
+
+        reintegros = (sesion.devoluciones.filter(monto_reintegro__gt=0)
+                      .values('medio_reintegro')
+                      .annotate(total=Sum('monto_reintegro'), cantidad=Count('id')))
+        etiquetas = dict(Pago.MEDIOS)
+        for r in reintegros:
+            filas.append([
+                f'   Reintegrado en {etiquetas.get(r["medio_reintegro"], r["medio_reintegro"]).lower()}',
+                f'{r["cantidad"]} ' + ('devolución' if r['cantidad'] == 1 else 'devoluciones'),
+                f'- {_gs(r["total"])}',
+            ])
+
         filas.append(['   Efectivo que debe haber en el cajón',
-                      'apertura + cobros en efectivo', _gs(esperado)])
+                      ('apertura + cobros − reintegros en efectivo' if reintegro_efectivo
+                       else 'apertura + cobros en efectivo'),
+                      _gs(esperado)])
 
         if sesion.monto_cierre is not None:
             declarado = float(sesion.monto_cierre)
@@ -604,7 +722,7 @@ def reporte_arqueo(dia: date):
         'filas':     filas,
         'totales': {
             'Total cobrado en el día':   _gs(total_cobrado_dia),
-            'De eso, en efectivo':       _gs(total_efectivo_dia),
+            'Efectivo neto (sin reintegros)': _gs(total_efectivo_dia),
             'Diferencia acumulada':      _gs(diferencia_dia),
         },
     }

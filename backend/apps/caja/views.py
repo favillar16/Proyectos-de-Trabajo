@@ -24,12 +24,15 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-from .models import DatosCheque, DatosTarjeta, SesionCaja, Pago
-from .printer import imprimir_ticket, imprimir_factura, imprimir_cierre, ticket_a_texto
+from .models import DatosCheque, DatosTarjeta, Devolucion, SesionCaja, Pago
+from .printer import (imprimir_ticket, imprimir_factura, imprimir_cierre,
+                      imprimir_devolucion, ticket_a_texto,
+                      ticket_devolucion_a_texto)
 from apps.ventas.models import NotaPedido
 from apps.facturacion import codigos
 from apps.facturacion import emisor as fe_emisor
 from . import cheque as cheque_mod
+from . import devoluciones as devoluciones_mod
 from . import pos as pos_mod
 
 # Tope de descuento que puede aplicar un cajero al cobrar. Un 100% equivaldría
@@ -68,6 +71,11 @@ class PagoSerializer(serializers.ModelSerializer):
     pedido_cliente  = serializers.CharField(source='pedido.cliente_nombre',read_only=True)
     cajero_nombre   = serializers.CharField(source='cajero.nombre_completo',read_only=True)
     medio_display   = serializers.CharField(source='get_medio_pago_display', read_only=True)
+    # Si este cobro es el de un cambio, el número de la devolución cuyo
+    # crédito lo pagó en parte: sin eso un cobro de "Gs. 0" no se entiende.
+    devolucion_aplicada = serializers.SerializerMethodField()
+    # Devoluciones hechas SOBRE esta venta.
+    devoluciones = serializers.SerializerMethodField()
 
     class Meta:
         model  = Pago
@@ -78,7 +86,40 @@ class PagoSerializer(serializers.ModelSerializer):
             'monto', 'monto_recibido', 'vuelto',
             'estado', 'referencia_externa', 'fecha',
             'tipo_comprobante', 'cliente_ruc', 'cliente_razon_social',
+            'devolucion_aplicada', 'devoluciones',
         ]
+
+    def get_devolucion_aplicada(self, obj):
+        dev = getattr(obj, 'devolucion_aplicada', None)
+        return dev.numero if dev is not None else None
+
+    def get_devoluciones(self, obj):
+        return [d.numero for d in obj.devoluciones.all()]
+
+
+class DevolucionSerializer(serializers.ModelSerializer):
+    motivo_display  = serializers.CharField(source='get_motivo_display', read_only=True)
+    medio_reintegro_display = serializers.CharField(
+        source='get_medio_reintegro_display', read_only=True)
+    venta_ticket    = serializers.CharField(source='pago_original.numero_ticket', read_only=True)
+    venta_pedido    = serializers.CharField(source='pago_original.pedido.numero', read_only=True)
+    cliente         = serializers.CharField(source='pago_original.pedido.cliente_nombre', read_only=True)
+    pedido_cambio_numero = serializers.CharField(
+        source='pedido_cambio.numero', read_only=True, default='')
+    cobrado_diferencia = serializers.SerializerMethodField()
+    usuario_nombre  = serializers.CharField(source='usuario.nombre_completo', read_only=True)
+
+    class Meta:
+        model  = Devolucion
+        fields = [
+            'id', 'numero', 'fecha', 'motivo', 'motivo_display', 'motivo_detalle',
+            'venta_ticket', 'venta_pedido', 'cliente', 'usuario_nombre',
+            'total_credito', 'pedido_cambio_numero', 'cobrado_diferencia',
+            'monto_reintegro', 'medio_reintegro', 'medio_reintegro_display',
+        ]
+
+    def get_cobrado_diferencia(self, obj):
+        return float(obj.pago_cambio.monto) if obj.pago_cambio_id else 0.0
 
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -177,7 +218,9 @@ class CerrarCajaView(views.APIView):
             return Response({'error': 'La sesión ya está cerrada.'}, status=status.HTTP_400_BAD_REQUEST)
 
         sesion.estado             = SesionCaja.ESTADO_CERRADA
-        sesion.monto_cierre       = request.data.get('monto_cierre', sesion.total_ventas + sesion.monto_apertura)
+        sesion.monto_cierre       = request.data.get(
+            'monto_cierre',
+            sesion.total_ventas + sesion.monto_apertura - sesion.total_reintegros())
         sesion.observaciones_cierre = request.data.get('observaciones_cierre', '')
         sesion.fecha_cierre       = timezone.now()
         sesion.save()
@@ -188,17 +231,29 @@ class CerrarCajaView(views.APIView):
         for p in pagos:
             resumen_medios[p.medio_pago] = resumen_medios.get(p.medio_pago, 0) + float(p.monto)
 
+        # Reintegros por devolución: plata que salió de la caja en el turno.
+        reintegros_medios = {}
+        for d in sesion.devoluciones.filter(monto_reintegro__gt=0):
+            reintegros_medios[d.medio_reintegro] = (
+                reintegros_medios.get(d.medio_reintegro, 0) + float(d.monto_reintegro))
+        total_reintegros = sum(reintegros_medios.values())
+
         # La diferencia de arqueo compara el efectivo físico contado contra lo
-        # que debería haber en el cajón (apertura + ventas en efectivo). Ventas
-        # con tarjeta/transferencia nunca entran al cajón, así que no deben
-        # restarse acá o cualquier turno con ventas no-efectivo muestra un
-        # faltante ficticio.
-        total_efectivo = resumen_medios.get(Pago.MEDIO_EFECTIVO, 0)
+        # que debería haber en el cajón (apertura + ventas en efectivo −
+        # reintegros en efectivo). Ventas con tarjeta/transferencia nunca
+        # entran al cajón, así que no deben restarse acá o cualquier turno con
+        # ventas no-efectivo muestra un faltante ficticio. Por lo mismo, solo
+        # el reintegro en efectivo sale del cajón.
+        total_efectivo = (resumen_medios.get(Pago.MEDIO_EFECTIVO, 0)
+                          - reintegros_medios.get(Pago.MEDIO_EFECTIVO, 0))
 
         resumen_completo = {
             'resumen_medios': resumen_medios,
             'total_pagos':    pagos.count(),
             'total_ventas':   float(sesion.total_ventas),
+            'reintegros_medios': reintegros_medios,
+            'total_reintegros':  total_reintegros,
+            'total_neto':     float(sesion.total_ventas) - total_reintegros,
             'total_efectivo': total_efectivo,
         }
 
@@ -662,7 +717,9 @@ class ListaPagosView(views.APIView):
                 Q(numero_ticket__icontains=texto)
             )
 
-        qs = qs.select_related('pedido', 'cajero').order_by('-fecha')
+        qs = (qs.select_related('pedido', 'cajero', 'devolucion_aplicada')
+                .prefetch_related('devoluciones')
+                .order_by('-fecha'))
 
         # count() antes de recortar: el frontend necesita saber cuántos hay
         # en total para avisar que la lista quedó cortada.
@@ -808,6 +865,144 @@ class EstadoImpresora(views.APIView):
             resultado['error'] = str(e)
 
         return Response(resultado)
+
+
+# ─── Devoluciones y cambios ───────────────────────────────────────────────────
+
+class DevolucionResumenView(views.APIView):
+    """
+    GET /caja/pagos/<id>/devolucion/
+
+    Qué se puede devolver de esa venta: cada ítem con lo vendido, lo que ya
+    volvió en devoluciones anteriores y lo que vale a precio cobrado. Si la
+    venta no se puede devolver por acá (factura electrónica viva), `bloqueo`
+    trae el motivo y la pantalla no deja seguir.
+    """
+    permission_classes = [EsAdminOCajero]
+
+    def get(self, request, pk):
+        pago = get_object_or_404(
+            Pago.objects.select_related('pedido').prefetch_related('documentos_electronicos'),
+            pk=pk, estado=Pago.ESTADO_CONFIRMADO)
+        return Response(devoluciones_mod.resumen(pago))
+
+
+class DevolucionesView(views.APIView):
+    """
+    GET  /caja/devoluciones/?sesion=<id>   — las del turno (default: el abierto)
+    POST /caja/devoluciones/               — registrar una
+
+    Body del POST:
+      {
+        "pago_id": 42,                          // la venta original
+        "motivo": "cambio" | "estado_inadecuado" | "otro",
+        "motivo_detalle": "...",                // obligatorio con "otro"
+        "items": [{"item_id": 7, "cantidad": 2.52, "reingresa_stock": true}],
+        "pedido_cambio_id": 51,                 // opcional: lo que se lleva
+        "medio_pago": "efectivo",               // de la diferencia, si la hay
+        "monto_recibido": 100000,               // si se cobra en efectivo
+        "referencia_externa": "",
+        "observaciones": ""
+      }
+
+    Igual que el cobro, la transacción y el papel van separados: se imprime
+    con la transacción ya cerrada, porque una impresora colgada no puede
+    dejar bloqueados el pago original y el pedido de cambio.
+    """
+    permission_classes = [EsAdminOCajero]
+
+    def get(self, request):
+        sesion_id = request.query_params.get('sesion')
+        if sesion_id:
+            qs = Devolucion.objects.filter(sesion_caja_id=sesion_id)
+        else:
+            sesion = _sesion_activa(request.user)
+            qs = Devolucion.objects.filter(sesion_caja=sesion) if sesion else Devolucion.objects.none()
+        if request.user.rol != 'admin':
+            qs = qs.filter(sesion_caja__cajero=request.user)
+        qs = qs.select_related('pago_original__pedido', 'pedido_cambio',
+                               'pago_cambio', 'usuario')
+        return Response({'results': DevolucionSerializer(qs, many=True).data})
+
+    def post(self, request):
+        resultado = self._registrar(request)
+        if isinstance(resultado, Response):
+            return resultado
+
+        devolucion = resultado.devolucion
+        datos = devoluciones_mod.datos_comprobante(devolucion)
+        impresion = imprimir_devolucion(datos)
+        if not impresion['ok']:
+            logger.warning(f'No se pudo imprimir la devolución {devolucion.numero}: '
+                           f'{impresion.get("error")}')
+
+        if devolucion.pago_cambio_id:
+            _emitir_pago_ws(devolucion.pedido_cambio, devolucion.pago_cambio)
+
+        return Response({
+            'ok':            True,
+            'devolucion':    DevolucionSerializer(devolucion).data,
+            'comprobante':   datos,
+            'texto':         ticket_devolucion_a_texto(datos),
+            'impresion':     impresion,
+            'errores_stock': resultado.errores_stock,
+        }, status=status.HTTP_201_CREATED)
+
+    @transaction.atomic
+    def _registrar(self, request):
+        sesion = _sesion_activa(request.user)
+        if not sesion:
+            return Response(
+                {'error': 'No hay una sesión de caja abierta. Abrí la caja primero.'},
+                status=status.HTTP_400_BAD_REQUEST)
+
+        pago = get_object_or_404(Pago, pk=request.data.get('pago_id') or 0)
+
+        pedido_cambio = None
+        pedido_cambio_id = request.data.get('pedido_cambio_id')
+        if pedido_cambio_id:
+            pedido_cambio = get_object_or_404(NotaPedido, pk=pedido_cambio_id)
+
+        items = request.data.get('items') or []
+        if not isinstance(items, list) or not all(isinstance(i, dict) for i in items):
+            return Response({'error': 'items tiene que ser una lista de productos.'},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            return devoluciones_mod.registrar(
+                pago_original=pago,
+                sesion=sesion,
+                usuario=request.user,
+                motivo=request.data.get('motivo', ''),
+                motivo_detalle=request.data.get('motivo_detalle', ''),
+                observaciones=request.data.get('observaciones', ''),
+                items=items,
+                pedido_cambio=pedido_cambio,
+                medio_pago=request.data.get('medio_pago', ''),
+                monto_recibido=request.data.get('monto_recibido'),
+                referencia_externa=request.data.get('referencia_externa', ''),
+            )
+        except devoluciones_mod.DevolucionInvalida as e:
+            return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+
+class ReimprimirDevolucionView(views.APIView):
+    """POST /caja/devoluciones/<id>/reimprimir/"""
+    permission_classes = [EsAdminOCajero]
+
+    def post(self, request, pk):
+        qs = Devolucion.objects.all()
+        if request.user.rol != 'admin':
+            qs = qs.filter(sesion_caja__cajero=request.user)
+        devolucion = get_object_or_404(qs, pk=pk)
+        datos = devoluciones_mod.datos_comprobante(devolucion)
+        impresion = imprimir_devolucion(datos)
+        return Response({
+            'ok':          impresion['ok'],
+            'comprobante': datos,
+            'texto':       ticket_devolucion_a_texto(datos),
+            'impresion':   impresion,
+        })
 
 
 # ─── Helper de ticket ─────────────────────────────────────────────────────────
@@ -963,6 +1158,14 @@ def _datos_ticket(pedido, pago, sesion, tipo_comprobante='ticket',
         'email':           contacto.get('email', ''),
         'pie':             'Gracias por su compra',
     }
+
+    # Cobro de un cambio: el pedido vale más de lo que se cobró porque la
+    # mercadería devuelta se tomó a cuenta. Sin esta línea el ticket muestra
+    # ítems que suman más que el total y no se entiende por qué.
+    aplicada = getattr(pago, 'devolucion_aplicada', None)
+    if aplicada is not None:
+        datos['credito_devolucion'] = float(aplicada.credito_aplicado)
+        datos['devolucion_numero']  = aplicada.numero
 
     # Datos extra solo para factura
     if tipo_comprobante == 'factura':

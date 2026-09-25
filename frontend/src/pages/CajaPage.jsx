@@ -18,9 +18,10 @@ import {
   CheckCircle, XCircle, Printer, Lock, Unlock,
   ChevronRight, Package, Clock, AlertCircle,
   RefreshCw, Receipt, X, Loader2, TrendingUp,
-  Wifi, WifiOff, Search, User, Copy, ClipboardCheck, Eye,
+  Wifi, WifiOff, Search, User, Copy, ClipboardCheck, Eye, RotateCcw,
 } from 'lucide-react'
 import Layout from '../components/layout/Layout'
+import { PanelDevolucion, ComprobanteDevolucion } from '../components/caja/PanelDevolucion'
 import { cajaApi, ventasApi } from '../services/api'
 import { usePedidoSocket } from '../hooks/usePedidoSocket'
 import { useDevice } from '../hooks/useDevice'
@@ -1376,7 +1377,7 @@ function Ticket({ datos, onNuevo, onImprimir }) {
 }
 
 // ─── Panel de cierre de caja ──────────────────────────────────────────────────
-function PanelCierre({ sesion, pagos, onConfirmar, onCancelar, isLoading }) {
+function PanelCierre({ sesion, pagos, devoluciones = [], onConfirmar, onCancelar, isLoading }) {
   const [montoFinal, setMontoFinal] = useState('')
   const [observaciones, setObservaciones] = useState('')
 
@@ -1385,6 +1386,16 @@ function PanelCierre({ sesion, pagos, onConfirmar, onCancelar, isLoading }) {
     acc[p.medio_display] = (acc[p.medio_display] || 0) + Number(p.monto)
     return acc
   }, {})
+  // Reintegros por devolución: salieron de la caja. Solo los de efectivo
+  // salieron del cajón, así que son los únicos que bajan el monto esperado.
+  const reintegros = devoluciones.filter(d => Number(d.monto_reintegro) > 0)
+  const totalReintegros = reintegros.reduce((s, d) => s + Number(d.monto_reintegro), 0)
+  const reintegrosEfectivo = reintegros
+    .filter(d => d.medio_reintegro === 'efectivo')
+    .reduce((s, d) => s + Number(d.monto_reintegro), 0)
+  const efectivoCobrado = pagos
+    .filter(p => p.medio_pago === 'efectivo')
+    .reduce((s, p) => s + Number(p.monto), 0)
 
   return (
     <div style={{ maxWidth:'480px', margin:'0 auto', padding:'20px' }}>
@@ -1436,13 +1447,30 @@ function PanelCierre({ sesion, pagos, onConfirmar, onCancelar, isLoading }) {
               <span style={{ fontSize:'13px', color:C.textSec }}>{formatGs(monto)}</span>
             </div>
           ))}
+          {reintegros.length > 0 && (
+            <div style={{ display:'flex', justifyContent:'space-between',
+              marginBottom:'6px', marginTop:'4px' }}>
+              <span style={{ fontSize:'13px', color:C.textSec }}>
+                Reintegros por devolución ({reintegros.length})
+              </span>
+              <span style={{ fontSize:'13px', color:C.danger }}>− {formatGs(totalReintegros)}</span>
+            </div>
+          )}
           <div style={{ display:'flex', justifyContent:'space-between',
             paddingTop:'10px', borderTop:`2px solid ${C.border}`, marginTop:'6px' }}>
             <span style={{ fontSize:'14px', fontWeight:'600', color:C.text }}>
-              Total cobrado
+              {reintegros.length > 0 ? 'Total neto' : 'Total cobrado'}
             </span>
             <span style={{ fontSize:'18px', fontWeight:'700', color:C.goldDark }}>
-              {formatGs(totalVentas)}
+              {formatGs(totalVentas - totalReintegros)}
+            </span>
+          </div>
+          <div style={{ display:'flex', justifyContent:'space-between', marginTop:'8px' }}>
+            <span style={{ fontSize:'12px', color:C.textMuted }}>
+              Efectivo que debe haber en el cajón
+            </span>
+            <span style={{ fontSize:'13px', color:C.textSec, fontWeight:'500' }}>
+              {formatGs(Number(sesion?.monto_apertura || 0) + efectivoCobrado - reintegrosEfectivo)}
             </span>
           </div>
         </div>
@@ -1458,7 +1486,7 @@ function PanelCierre({ sesion, pagos, onConfirmar, onCancelar, isLoading }) {
           type="number" min="0" step="1000"
           value={montoFinal}
           onChange={e => setMontoFinal(e.target.value)}
-          placeholder={String(Number(sesion?.monto_apertura||0) + totalVentas)}
+          placeholder={String(Number(sesion?.monto_apertura||0) + efectivoCobrado - reintegrosEfectivo)}
           style={{ width:'100%', height:'46px', padding:'0 14px', textAlign:'right',
             border:`1px solid ${C.border}`, borderRadius:'10px',
             fontSize:'16px', color:C.text, background:C.bg, outline:'none',
@@ -1525,6 +1553,10 @@ export default function CajaPage() {
   // turnos cerrados, para cargar al portal del DNIT facturas de días
   // anteriores.
   const [alcancePagos,  setAlcancePagos]  = useState('turno')
+  // Devolución en curso (id del cobro original) y su comprobante ya
+  // registrado. Ocupan la columna derecha igual que un cobro.
+  const [devolucionPagoId, setDevolucionPagoId] = useState(null)
+  const [devolucionDatos,  setDevolucionDatos]  = useState(null)
   // Para hacer visible el comprobante cuando se reabre en tablet: con ancho
   // < 768px las columnas se apilan y el panel queda debajo de la lista.
   const panelComprobante = useRef(null)
@@ -1573,6 +1605,47 @@ export default function CajaPage() {
   })
   const pagos = pagosData?.results || []
 
+  // Los cobros del turno sin filtro de búsqueda: el cierre los necesita
+  // enteros aunque la lista de abajo esté filtrada o mirando turnos viejos.
+  const { data: pagosTurnoData } = useQuery({
+    queryKey: ['pagos-sesion', sesion?.id, '', 'turno'],
+    queryFn:  () => cajaApi.listaPagos({ sesion: sesion.id }).then(r => r.data),
+    enabled:  Boolean(sesion?.id),
+    staleTime: 10_000,
+  })
+  const pagosTurno = pagosTurnoData?.results || []
+
+  const { data: devolucionesData } = useQuery({
+    queryKey: ['devoluciones-turno', sesion?.id],
+    queryFn:  () => cajaApi.listaDevoluciones({ sesion: sesion.id }).then(r => r.data),
+    enabled:  Boolean(sesion?.id),
+    staleTime: 10_000,
+  })
+  const devolucionesTurno = devolucionesData?.results || []
+
+  const abrirDevolucion = (pagoId) => {
+    setDevolucionPagoId(pagoId)
+    setDevolucionDatos(null)
+    setPedidoActivo(null)
+    setTicketDatos(null)
+    requestAnimationFrame(() => {
+      panelComprobante.current?.scrollIntoView({ behavior:'smooth', block:'start' })
+    })
+  }
+
+  const reimprimirDevolucionMut = useMutation({
+    mutationFn: (id) => cajaApi.reimprimirDevolucion(id).then(r => r.data),
+    onSuccess: (data) => {
+      if (data.ok) toast.success('Comprobante de devolución reimpreso')
+      else toast.error(data.impresion?.error || 'La impresora no pudo reimprimir')
+      setDevolucionDatos(data)
+      setDevolucionPagoId(null)
+      setPedidoActivo(null)
+      setTicketDatos(null)
+    },
+    onError: (err) => toast.error(err.response?.data?.error || 'No se pudo reimprimir'),
+  })
+
   // Reabre el comprobante en el panel derecho. Es lo que hace útil volver a
   // un cobro viejo: trae de nuevo el cuadro "Datos para cargar en
   // e-Kuatia'í" con los botones de copiar, que antes solo existía en el
@@ -1580,6 +1653,8 @@ export default function CajaPage() {
   const abrirComprobante = useCallback((data) => {
     setTicketDatos({ ...data, origen: 'historial' })
     setPedidoActivo(null)
+    setDevolucionPagoId(null)
+    setDevolucionDatos(null)
     requestAnimationFrame(() => {
       panelComprobante.current?.scrollIntoView({ behavior:'smooth', block:'start' })
     })
@@ -1753,6 +1828,8 @@ export default function CajaPage() {
                   onClick={(ped) => {
                     setPedidoActivo(ped)
                     setTicketDatos(null)
+                    setDevolucionPagoId(null)
+                    setDevolucionDatos(null)
                   }}
                 />
               ))
@@ -1813,7 +1890,13 @@ export default function CajaPage() {
                         ? 'No hay cobros anteriores'
                         : 'Todavía no hay cobros en este turno')}
                 </p>
-              ) : pagos.map(p => (
+              ) : (
+                // Scroll propio: con muchos cobros la columna se estiraba y
+                // empujaba las devoluciones fuera de la vista.
+                <div style={{ maxHeight:'min(360px, 45vh)', overflowY:'auto',
+                  WebkitOverflowScrolling:'touch', overscrollBehavior:'contain',
+                  paddingRight:'2px' }}>
+                {pagos.map(p => (
                 <div key={p.id} style={{ display:'flex', justifyContent:'space-between',
                   alignItems:'center', gap:'8px', padding:'8px 10px', marginBottom:'4px',
                   background:C.bg, borderRadius:'8px', border:`1px solid ${C.border}` }}>
@@ -1826,6 +1909,22 @@ export default function CajaPage() {
                           borderRadius:'4px', background:C.goldMuted, color:C.goldDark,
                           fontFamily:'inherit', letterSpacing:'0.02em' }}>
                           FACTURA
+                        </span>
+                      )}
+                      {p.devolucion_aplicada && (
+                        <span title={`Cambio: se tomó a cuenta la devolución ${p.devolucion_aplicada}`}
+                          style={{ fontSize:'9.5px', fontWeight:'600', padding:'1px 5px',
+                          borderRadius:'4px', background:C.infoBg, color:C.info,
+                          fontFamily:'inherit', letterSpacing:'0.02em' }}>
+                          CAMBIO
+                        </span>
+                      )}
+                      {p.devoluciones?.length > 0 && (
+                        <span title={`Devoluciones: ${p.devoluciones.join(', ')}`}
+                          style={{ fontSize:'9.5px', fontWeight:'600', padding:'1px 5px',
+                          borderRadius:'4px', background:C.warningBg, color:C.warning,
+                          fontFamily:'inherit', letterSpacing:'0.02em' }}>
+                          DEVOLUCIÓN
                         </span>
                       )}
                     </p>
@@ -1866,10 +1965,66 @@ export default function CajaPage() {
                         opacity: reimprimirMut.isPending ? 0.5 : 1 }}>
                       <Printer size={13}/>
                     </button>
+                    {/* Devolución o cambio de esta venta */}
+                    <button onClick={() => abrirDevolucion(p.id)}
+                      title="Devolución o cambio"
+                      style={{ display:'flex', alignItems:'center', justifyContent:'center',
+                        width:'26px', height:'26px', borderRadius:'6px',
+                        border:`1px solid ${devolucionPagoId === p.id ? C.gold : C.border}`,
+                        background: devolucionPagoId === p.id ? C.goldMuted : C.bgSec,
+                        color:C.textSec, cursor:'pointer' }}>
+                      <RotateCcw size={13}/>
+                    </button>
                   </div>
                 </div>
-              ))}
+                ))}
+                </div>
+              )}
             </div>
+
+            {/* Devoluciones del turno — reimprimibles */}
+            {devolucionesTurno.length > 0 && (
+              <div style={{ marginTop:'16px' }}>
+                <p style={{ fontSize:'11px', fontWeight:'500', color:C.textMuted,
+                  textTransform:'uppercase', letterSpacing:'0.06em', marginBottom:'8px' }}>
+                  Devoluciones del turno ({devolucionesTurno.length})
+                </p>
+                {devolucionesTurno.map(d => (
+                  <div key={d.id} style={{ display:'flex', justifyContent:'space-between',
+                    alignItems:'center', gap:'8px', padding:'8px 10px', marginBottom:'4px',
+                    background:C.bg, borderRadius:'8px', border:`1px solid ${C.border}` }}>
+                    <div style={{ minWidth:0 }}>
+                      <p style={{ fontSize:'12px', fontWeight:'500', color:C.text,
+                        fontFamily:'monospace' }}>{d.numero}</p>
+                      <p style={{ fontSize:'11px', color:C.textMuted }}>
+                        {d.motivo_display} · {d.cliente || '—'}
+                      </p>
+                      <p style={{ fontSize:'10.5px', color:C.textMuted }}>
+                        venta {d.venta_pedido}{d.pedido_cambio_numero ? ` → ${d.pedido_cambio_numero}` : ''}
+                      </p>
+                    </div>
+                    <div style={{ display:'flex', alignItems:'center', gap:'6px', flexShrink:0 }}>
+                      <p style={{ fontSize:'13px', fontWeight:'600', marginRight:'2px',
+                        color: Number(d.monto_reintegro) > 0 ? C.danger : C.goldDark }}>
+                        {Number(d.monto_reintegro) > 0
+                          ? `− ${formatGs(d.monto_reintegro)}`
+                          : formatGs(d.cobrado_diferencia)}
+                      </p>
+                      <button onClick={() => reimprimirDevolucionMut.mutate(d.id)}
+                        disabled={reimprimirDevolucionMut.isPending}
+                        title="Reimprimir comprobante de devolución"
+                        style={{ display:'flex', alignItems:'center', justifyContent:'center',
+                          width:'26px', height:'26px', borderRadius:'6px',
+                          border:`1px solid ${C.border}`, background:C.bgSec,
+                          color:C.textSec, cursor:'pointer',
+                          opacity: reimprimirDevolucionMut.isPending ? 0.5 : 1 }}>
+                        <Printer size={13}/>
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         </div>
 
@@ -1877,6 +2032,32 @@ export default function CajaPage() {
         <div ref={panelComprobante}
           style={{ flex:1, display:'flex', flexDirection:'column',
           overflow:'hidden', background:C.bg }}>
+
+          {/* Devolución: comprobante ya registrado */}
+          {devolucionDatos && (
+            <ComprobanteDevolucion
+              datos={devolucionDatos}
+              onCerrar={() => setDevolucionDatos(null)}
+            />
+          )}
+
+          {/* Devolución en curso */}
+          {devolucionPagoId && !devolucionDatos && (
+            <PanelDevolucion
+              key={devolucionPagoId}
+              pagoId={devolucionPagoId}
+              pedidosListos={pedidosListos}
+              onCancelar={() => setDevolucionPagoId(null)}
+              onListo={(data) => {
+                setDevolucionPagoId(null)
+                setDevolucionDatos(data)
+                refetchPedidos()
+                queryClient.invalidateQueries({ queryKey: ['pagos-sesion'] })
+                queryClient.invalidateQueries({ queryKey: ['devoluciones-turno', sesion?.id] })
+                queryClient.invalidateQueries({ queryKey: ['devolucion-resumen'] })
+              }}
+            />
+          )}
 
           {/* Ticket post-pago */}
           {ticketDatos && (
@@ -1902,7 +2083,7 @@ export default function CajaPage() {
           )}
 
           {/* Estado vacío */}
-          {!pedidoActivo && !ticketDatos && (
+          {!pedidoActivo && !ticketDatos && !devolucionPagoId && !devolucionDatos && (
             <div style={{ display:'flex', flexDirection:'column', alignItems:'center',
               justifyContent:'center', height:'100%', color:C.textMuted, padding:'20px' }}>
               <Receipt size={48} style={{ margin:'0 auto 14px', opacity:0.15 }} />
@@ -1932,7 +2113,8 @@ export default function CajaPage() {
             animation:'slideIn 200ms ease' }}>
             <PanelCierre
               sesion={sesion}
-              pagos={pagos}
+              pagos={pagosTurno}
+              devoluciones={devolucionesTurno}
               onConfirmar={(data) => cerrarCajaMut.mutate(data)}
               onCancelar={() => setMostraCierre(false)}
               isLoading={cerrarCajaMut.isPending}

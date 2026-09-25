@@ -13,7 +13,8 @@ import {
   AlertCircle, XCircle, CheckCircle, Package,
   Search, SlidersHorizontal, RefreshCw, Plus,
   Minus, RotateCcw, History, X, ChevronDown,
-  Warehouse, TrendingDown, TrendingUp, ArrowUpDown,
+  Warehouse, TrendingDown, TrendingUp, ArrowUpDown, ClipboardList,
+  Printer, FileSpreadsheet, Lock,
 } from 'lucide-react'
 import Layout from '../components/layout/Layout'
 import { inventarioApi, productosApi } from '../services/api'
@@ -37,6 +38,19 @@ function formatFecha(iso) {
   return new Date(iso).toLocaleString('es-PY', {
     day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit',
   })
+}
+
+// Con año: el registro de ajustes mira meses hacia atrás.
+function formatFechaCompleta(iso) {
+  if (!iso) return ''
+  return new Date(iso).toLocaleString('es-PY', {
+    day:'2-digit', month:'2-digit', year:'numeric', hour:'2-digit', minute:'2-digit',
+  })
+}
+
+const TIPO_AJUSTE_LABEL = {
+  entrada:'Entrada de mercadería', salida:'Salida manual',
+  ajuste:'Ajuste a cantidad exacta', devolucion:'Devolución de cliente',
 }
 
 function useDebounce(v, d=380) {
@@ -78,8 +92,12 @@ const TIPO_CFG = {
 }
 
 // ─── Panel de ajuste de stock ─────────────────────────────────────────────────
-function PanelAjuste({ item, onCerrar }) {
+function PanelAjuste({ item, onCerrar, onVerRegistro }) {
   const queryClient = useQueryClient()
+  // Lo que devolvió el servidor al guardar. Mientras exista, el cuadro
+  // muestra la constancia del ajuste en vez del formulario: antes el aviso
+  // duraba dos segundos y no quedaba a la vista qué se había cambiado.
+  const [constancia, setConstancia] = useState(null)
   const [tipo,   setTipo]   = useState('entrada')
   const [cantidad, setCantidad] = useState('')
   const [obs,    setObs]    = useState('')
@@ -106,8 +124,9 @@ function PanelAjuste({ item, onCerrar }) {
     }).then(r => r.data),
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ['stock'] })
-      toast.success(`Stock actualizado: ${data.disponible} disponible`)
-      onCerrar()
+      queryClient.invalidateQueries({ queryKey: ['movimientos-stock', item.variante_id] })
+      queryClient.invalidateQueries({ queryKey: ['registro-ajustes'] })
+      setConstancia(data)
     },
     onError: (err) => toast.error(err.response?.data?.error || 'Error al ajustar stock'),
   })
@@ -148,6 +167,10 @@ function PanelAjuste({ item, onCerrar }) {
           </button>
         </div>
 
+        {constancia ? (
+          <ConstanciaAjuste constancia={constancia} item={item}
+            onCerrar={onCerrar} onVerRegistro={onVerRegistro} />
+        ) : (<>
         {/* Estado actual */}
         <div style={{ padding:'12px 16px', background:C.bgSec,
           border:`1px solid ${C.border}`, borderRadius:'10px', marginBottom:'16px' }}>
@@ -287,7 +310,256 @@ function PanelAjuste({ item, onCerrar }) {
             {mutation.isPending ? 'Guardando...' : 'Confirmar ajuste'}
           </button>
         </div>
+        </>)}
       </div>
+    </>
+  )
+}
+
+// ─── Constancia de un ajuste recién guardado ─────────────────────────────────
+function ConstanciaAjuste({ constancia, item, onCerrar, onVerRegistro }) {
+  const m = constancia.movimiento || {}
+  const filas = [
+    ['Producto',   item.descripcion],
+    ['Movimiento', TIPO_AJUSTE_LABEL[m.tipo] || m.tipo_display],
+    ['Cantidad',   Number(m.cantidad).toFixed(2)],
+    ['Motivo',     m.observaciones || 'Sin motivo cargado'],
+    ['Registrado por', m.usuario_nombre],
+    ['Fecha',      formatFechaCompleta(m.fecha)],
+  ]
+  return (
+    <div>
+      <div style={{ display:'flex', alignItems:'center', gap:'8px', marginBottom:'14px',
+        padding:'10px 14px', borderRadius:'10px', background:C.successBg,
+        border:`1px solid ${C.successBorder}` }}>
+        <CheckCircle size={18} style={{ color:C.success, flexShrink:0 }} />
+        <p style={{ fontSize:'13.5px', fontWeight:'500', color:C.text }}>Ajuste registrado</p>
+      </div>
+
+      <div style={{ display:'flex', alignItems:'center', justifyContent:'center', gap:'14px',
+        padding:'14px', marginBottom:'14px', borderRadius:'10px',
+        background:C.bgSec, border:`1px solid ${C.border}` }}>
+        <div style={{ textAlign:'center' }}>
+          <p style={{ fontSize:'10.5px', color:C.textMuted }}>Antes</p>
+          <p style={{ fontSize:'20px', fontWeight:'600', color:C.textSec }}>
+            {Number(m.cantidad_anterior).toFixed(2)}
+          </p>
+        </div>
+        <span style={{ fontSize:'18px', color:C.textMuted }}>→</span>
+        <div style={{ textAlign:'center' }}>
+          <p style={{ fontSize:'10.5px', color:C.textMuted }}>Ahora</p>
+          <p style={{ fontSize:'20px', fontWeight:'600', color:C.text }}>
+            {Number(m.cantidad_posterior).toFixed(2)}
+          </p>
+        </div>
+        <div style={{ textAlign:'center', paddingLeft:'14px', borderLeft:`1px solid ${C.border}` }}>
+          <p style={{ fontSize:'10.5px', color:C.textMuted }}>Disponible</p>
+          <p style={{ fontSize:'20px', fontWeight:'600', color:C.success }}>
+            {Number(constancia.disponible).toFixed(2)}
+          </p>
+        </div>
+      </div>
+
+      <div style={{ display:'flex', flexDirection:'column', gap:'6px', marginBottom:'18px' }}>
+        {filas.map(([l, v]) => (
+          <div key={l} style={{ display:'flex', gap:'10px', fontSize:'12.5px' }}>
+            <span style={{ width:'110px', flexShrink:0, color:C.textMuted }}>{l}</span>
+            <span style={{ color:C.text }}>{v}</span>
+          </div>
+        ))}
+      </div>
+
+      <div style={{ display:'flex', gap:'10px' }}>
+        <button onClick={onVerRegistro}
+          style={{ flex:1, height:'44px', borderRadius:'9px',
+            background:'transparent', border:`1px solid ${C.border}`,
+            color:C.textSec, fontSize:'13.5px', cursor:'pointer',
+            display:'flex', alignItems:'center', justifyContent:'center', gap:'6px' }}>
+          <ClipboardList size={15} /> Registro de ajustes
+        </button>
+        <button onClick={onCerrar}
+          style={{ flex:1, height:'44px', borderRadius:'9px',
+            background:C.sidebar, border:`1.5px solid ${C.gold}`,
+            color:C.gold, fontSize:'14px', fontWeight:'500', cursor:'pointer' }}>
+          Listo
+        </button>
+      </div>
+    </div>
+  )
+}
+
+// ─── Registro de ajustes: todos los ajustes manuales, con su motivo ──────────
+function PanelRegistroAjustes({ onCerrar }) {
+  const [buscar, setBuscar] = useState('')
+  const [desde,  setDesde]  = useState('')
+  const [hasta,  setHasta]  = useState('')
+  const buscarDebounced = useDebounce(buscar, 380)
+  const [generando, setGenerando] = useState(null)   // 'pdf' | 'xlsx' | null
+
+  const filtros = {
+    buscar: buscarDebounced || undefined,
+    desde:  desde || undefined,
+    hasta:  hasta || undefined,
+  }
+  const { data, isLoading, isError } = useQuery({
+    queryKey: ['registro-ajustes', buscarDebounced, desde, hasta],
+    queryFn: () => inventarioApi.registroAjustes(filtros).then(r => r.data),
+  })
+  const ajustes = data?.results || []
+
+  // El reporte sale con los mismos filtros que la lista en pantalla. El PDF
+  // se abre en una pestaña para imprimirlo; el Excel se descarga.
+  const generarReporte = async (formato) => {
+    setGenerando(formato)
+    try {
+      const res = await inventarioApi.reporteAjustes(formato, filtros)
+      if (formato === 'pdf') {
+        const url = window.URL.createObjectURL(new Blob([res.data], { type:'application/pdf' }))
+        window.open(url, '_blank', 'noopener')
+        setTimeout(() => window.URL.revokeObjectURL(url), 60_000)
+      } else {
+        const url = window.URL.createObjectURL(new Blob([res.data]))
+        const a = document.createElement('a')
+        a.href = url
+        a.download = `registro_ajustes_${new Date().toISOString().slice(0,10)}.xlsx`
+        document.body.appendChild(a)
+        a.click()
+        a.remove()
+        window.URL.revokeObjectURL(url)
+      }
+    } catch {
+      toast.error('No se pudo generar el reporte')
+    } finally {
+      setGenerando(null)
+    }
+  }
+  const sinDatos = !data || data.count === 0
+  const botonReporte = (activo) => ({
+    height:'36px', padding:'0 12px', borderRadius:'8px', fontSize:'13px',
+    display:'flex', alignItems:'center', gap:'6px', whiteSpace:'nowrap',
+    border:`1px solid ${activo ? C.gold : C.border}`,
+    background: activo ? C.sidebar : C.bg,
+    color: activo ? C.gold : C.textMuted,
+    cursor: activo ? 'pointer' : 'not-allowed',
+  })
+
+  const campo = { height:'36px', padding:'0 10px', border:`1px solid ${C.border}`,
+    borderRadius:'8px', fontSize:'13px', color:C.text, background:C.bg, outline:'none' }
+
+  return (
+    <>
+      <div onClick={onCerrar} style={{ position:'fixed', inset:0, zIndex:200,
+        background:'rgba(26,23,20,0.4)', backdropFilter:'blur(2px)' }} />
+      <div style={{ position:'fixed', top:0, right:0, bottom:0, zIndex:201,
+        width:'min(560px,95vw)', background:C.bg,
+        borderLeft:`1px solid ${C.border}`,
+        boxShadow:'-8px 0 32px rgba(0,0,0,0.12)',
+        display:'flex', flexDirection:'column',
+        animation:'slideIn 200ms ease' }}>
+        <div style={{ padding:'16px 20px', borderBottom:`1px solid ${C.border}`,
+          display:'flex', justifyContent:'space-between', alignItems:'flex-start', flexShrink:0 }}>
+          <div>
+            <h3 style={{ fontSize:'16px', fontWeight:'500', color:C.text,
+              fontFamily:'var(--font-display)' }}>
+              Registro de ajustes
+            </h3>
+            <p style={{ fontSize:'12px', color:C.textMuted, marginTop:'2px' }}>
+              Cada cambio de stock hecho a mano, con quién lo hizo y por qué
+            </p>
+          </div>
+          <button onClick={onCerrar} style={{ background:'transparent', border:'none',
+            cursor:'pointer', color:C.textMuted, padding:'4px', display:'flex', alignItems:'center' }}>
+            <X size={20} />
+          </button>
+        </div>
+
+        <div style={{ padding:'12px 20px', borderBottom:`1px solid ${C.border}`,
+          background:C.bgSec, display:'flex', flexWrap:'wrap', gap:'8px', flexShrink:0 }}>
+          <input value={buscar} onChange={e => setBuscar(e.target.value)}
+            placeholder="Producto, SKU o motivo..."
+            style={{ ...campo, flex:'1 1 180px' }} />
+          <label style={{ display:'flex', alignItems:'center', gap:'5px', fontSize:'12px', color:C.textMuted }}>
+            Desde <input type="date" value={desde} onChange={e => setDesde(e.target.value)} style={campo} />
+          </label>
+          <label style={{ display:'flex', alignItems:'center', gap:'5px', fontSize:'12px', color:C.textMuted }}>
+            Hasta <input type="date" value={hasta} onChange={e => setHasta(e.target.value)} style={campo} />
+          </label>
+          <div style={{ display:'flex', gap:'8px', width:'100%' }}>
+            <button onClick={() => generarReporte('pdf')}
+              disabled={sinDatos || !!generando}
+              title="Abre el reporte en PDF para imprimirlo"
+              style={botonReporte(!sinDatos && !generando)}>
+              <Printer size={14} /> {generando === 'pdf' ? 'Generando…' : 'Imprimir reporte'}
+            </button>
+            <button onClick={() => generarReporte('xlsx')}
+              disabled={sinDatos || !!generando}
+              title="Descarga el reporte en Excel"
+              style={{ ...botonReporte(!sinDatos && !generando),
+                background: C.bg, color: (!sinDatos && !generando) ? C.textSec : C.textMuted,
+                borderColor: C.border }}>
+              <FileSpreadsheet size={14} /> {generando === 'xlsx' ? 'Generando…' : 'Excel'}
+            </button>
+            <span style={{ fontSize:'11.5px', color:C.textMuted, alignSelf:'center' }}>
+              Con los filtros de arriba
+            </span>
+          </div>
+        </div>
+
+        <div style={{ flex:1, overflowY:'auto', padding:'14px 20px', WebkitOverflowScrolling:'touch' }}>
+          {isLoading && (
+            <p style={{ fontSize:'13px', color:C.textMuted, textAlign:'center', padding:'30px 0' }}>Cargando…</p>
+          )}
+          {isError && (
+            <p style={{ fontSize:'13px', color:C.danger, textAlign:'center', padding:'30px 0' }}>
+              No se pudo cargar el registro.
+            </p>
+          )}
+          {!isLoading && !isError && ajustes.length === 0 && (
+            <p style={{ fontSize:'13px', color:C.textMuted, textAlign:'center', padding:'30px 0' }}>
+              No hay ajustes {buscar || desde || hasta ? 'que coincidan con el filtro' : 'registrados'}.
+            </p>
+          )}
+          {data && data.count > ajustes.length && (
+            <p style={{ fontSize:'11.5px', color:C.textMuted, marginBottom:'10px' }}>
+              Mostrando los {ajustes.length} más recientes de {data.count}. Acotá las fechas para ver los anteriores.
+            </p>
+          )}
+
+          <div style={{ display:'flex', flexDirection:'column', gap:'10px' }}>
+            {ajustes.map(m => {
+              const cfg = TIPO_MOV_CFG[m.tipo] || { color:'textSec', signo:'' }
+              return (
+                <div key={m.id} style={{ padding:'10px 12px', borderRadius:'8px',
+                  border:`1px solid ${C.border}`, background:C.bgSec }}>
+                  <div style={{ display:'flex', justifyContent:'space-between', gap:'10px' }}>
+                    <div style={{ minWidth:0 }}>
+                      <p style={{ fontSize:'13px', fontWeight:'500', color:C.text }}>{m.descripcion}</p>
+                      <p style={{ fontSize:'11px', color:C.textMuted, fontFamily:'monospace' }}>{m.sku}</p>
+                    </div>
+                    <div style={{ textAlign:'right', flexShrink:0 }}>
+                      <p style={{ fontSize:'12px', fontWeight:'600', color:C[cfg.color] || C.text }}>
+                        {TIPO_AJUSTE_LABEL[m.tipo] || m.tipo_display}
+                      </p>
+                      <p style={{ fontSize:'13px', color:C.text, marginTop:'1px' }}>
+                        {Number(m.cantidad_anterior).toFixed(2)} → <strong>{Number(m.cantidad_posterior).toFixed(2)}</strong>
+                      </p>
+                    </div>
+                  </div>
+                  <p style={{ fontSize:'12.5px', marginTop:'6px',
+                    color: m.observaciones ? C.text : C.textMuted,
+                    fontStyle: m.observaciones ? 'normal' : 'italic' }}>
+                    {m.observaciones || 'Sin motivo cargado'}
+                  </p>
+                  <p style={{ fontSize:'11px', color:C.textMuted, marginTop:'3px' }}>
+                    {formatFechaCompleta(m.fecha)}{m.usuario_nombre ? ` · ${m.usuario_nombre}` : ''}
+                  </p>
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      </div>
+      <style>{`@keyframes slideIn{from{transform:translateX(100%)}to{transform:translateX(0)}}`}</style>
     </>
   )
 }
@@ -302,12 +574,26 @@ const TIPO_MOV_CFG = {
   ajuste:     { color: 'info',    signo: '' },
 }
 
+// "Ventas" deja solo las salidas por venta con el cliente y el total: la
+// propietaria lo usa para cruzar contra lo que anota en papel.
+const VISTAS_HISTORIAL = [
+  { id:'todo',   label:'Todo',   tipo:undefined },
+  { id:'ventas', label:'Ventas', tipo:'salida'  },
+]
+
 function PanelHistorial({ item, onCerrar }) {
+  const [vista, setVista] = useState('todo')
+  const tipo = VISTAS_HISTORIAL.find(v => v.id === vista).tipo
   const { data, isLoading, isError } = useQuery({
-    queryKey: ['movimientos-stock', item.variante_id],
-    queryFn: () => inventarioApi.movimientos({ variante_id: item.variante_id }).then(r => r.data),
+    queryKey: ['movimientos-stock', item.variante_id, vista],
+    queryFn: () => inventarioApi.movimientos({ variante_id: item.variante_id, tipo }).then(r => r.data),
   })
   const movimientos = data?.results || []
+  const { data: reservasData } = useQuery({
+    queryKey: ['reservas', 'variante', item.variante_id],
+    queryFn: () => inventarioApi.reservas({ variante_id: item.variante_id }).then(r => r.data),
+  })
+  const reservas = reservasData?.results || []
 
   return (
     <>
@@ -361,14 +647,51 @@ function PanelHistorial({ item, onCerrar }) {
               <Warehouse size={12} /> {item.ubicacion}
             </p>
           )}
+          {/* Para quién está apartado lo reservado */}
+          {reservas.length > 0 && (
+            <div style={{ marginTop:'10px', paddingTop:'10px', borderTop:`1px solid ${C.border}` }}>
+              <p style={{ fontSize:'10.5px', color:C.textMuted, marginBottom:'4px' }}>
+                Reservado para
+              </p>
+              {reservas.map(r => (
+                <p key={r.pedido_id} style={{ fontSize:'12px', color:C.text, marginTop:'3px',
+                  display:'flex', alignItems:'center', gap:'5px' }}>
+                  <Lock size={11} style={{ color:C.warning, flexShrink:0 }} />
+                  <strong style={{ color:C.warning }}>{Number(r.cantidad).toFixed(2)}</strong>
+                  {r.cliente_nombre || 'Cliente sin nombre'}
+                  <span style={{ color:C.textMuted }}>· {r.pedido_numero} · {r.estado_display}</span>
+                </p>
+              ))}
+            </div>
+          )}
         </div>
 
         <div style={{ flex:1, overflowY:'auto', padding:'14px 20px',
           WebkitOverflowScrolling:'touch' }}>
           <p style={{ fontSize:'11px', fontWeight:'500', color:C.textMuted,
-            textTransform:'uppercase', letterSpacing:'0.06em', marginBottom:'12px' }}>
+            textTransform:'uppercase', letterSpacing:'0.06em', marginBottom:'10px' }}>
             Historial de movimientos
           </p>
+
+          <div style={{ display:'flex', gap:'6px', marginBottom:'12px' }}>
+            {VISTAS_HISTORIAL.map(v => (
+              <button key={v.id} onClick={() => setVista(v.id)}
+                style={{ padding:'6px 14px', borderRadius:'16px', fontSize:'12.5px',
+                  cursor:'pointer', fontWeight: vista === v.id ? '600' : '400',
+                  border:`1px solid ${vista === v.id ? C.gold : C.border}`,
+                  background: vista === v.id ? C.goldMuted : 'transparent',
+                  color: vista === v.id ? C.goldDark : C.textSec }}>
+                {v.label}
+              </button>
+            ))}
+          </div>
+
+          {vista === 'ventas' && !isLoading && !isError && movimientos.length > 0 && (
+            <p style={{ fontSize:'12.5px', color:C.textSec, marginBottom:'12px' }}>
+              Total vendido: <strong style={{ color:C.text }}>{Number(data.total).toFixed(2)}</strong>
+              {' '}en {movimientos.length} {movimientos.length === 1 ? 'venta' : 'ventas'}
+            </p>
+          )}
 
           {isLoading && (
             <p style={{ fontSize:'13px', color:C.textMuted, textAlign:'center', padding:'30px 0' }}>
@@ -384,7 +707,9 @@ function PanelHistorial({ item, onCerrar }) {
 
           {!isLoading && !isError && movimientos.length === 0 && (
             <p style={{ fontSize:'13px', color:C.textMuted, textAlign:'center', padding:'30px 0' }}>
-              Todavía no hay movimientos registrados para esta variante.
+              {vista === 'ventas'
+                ? 'Todavía no hay ventas registradas para esta variante.'
+                : 'Todavía no hay movimientos registrados para esta variante.'}
             </p>
           )}
 
@@ -399,6 +724,11 @@ function PanelHistorial({ item, onCerrar }) {
                       <p style={{ fontSize:'12.5px', fontWeight:'600', color:C[cfg.color] || C.text }}>
                         {m.tipo_display}
                       </p>
+                      {m.cliente_nombre && (
+                        <p style={{ fontSize:'12.5px', color:C.text, marginTop:'1px' }}>
+                          {m.cliente_nombre}
+                        </p>
+                      )}
                       <p style={{ fontSize:'11px', color:C.textMuted, marginTop:'1px' }}>
                         {formatFecha(m.fecha)}{m.usuario_nombre ? ` · ${m.usuario_nombre}` : ''}
                       </p>
@@ -483,7 +813,9 @@ function FilaStock({ item, onAjustar, onVerHistorial }) {
         <EstadoBadge estado={item.estado} disponible={item.disponible} />
       </td>
       <td style={{ padding:'10px 14px', borderBottom:`1px solid ${C.border}` }}>
-        <div style={{ display:'flex', gap:'6px', opacity: hov ? 1 : 0, transition:'opacity 120ms' }}>
+        {/* Siempre visibles: en la tablet no hay hover y la propietaria
+            no encontraba el historial. */}
+        <div style={{ display:'flex', gap:'6px', opacity: hov ? 1 : 0.75, transition:'opacity 120ms' }}>
           <button
             onClick={() => onAjustar(item)}
             title="Ajustar stock"
@@ -522,6 +854,7 @@ export default function InventarioPage() {
   const [filtroCateg, setFiltroCateg] = useState('')
   const [itemAjuste,  setItemAjuste]  = useState(null)
   const [itemHistorial,setItemHistorial]=useState(null)
+  const [verRegistro, setVerRegistro] = useState(false)
   const [pagina,      setPagina]      = useState(1)
   const busquedaDebounced = useDebounce(busqueda, 380)
   const PAGE = 40
@@ -721,6 +1054,13 @@ export default function InventarioPage() {
           </button>
         )}
 
+        <button onClick={() => setVerRegistro(true)}
+          style={{ height:'38px', padding:'0 14px', borderRadius:'9px',
+            background:'transparent', border:`1px solid ${C.border}`,
+            cursor:'pointer', color:C.textSec, fontSize:'13px', whiteSpace:'nowrap',
+            display:'flex', alignItems:'center', gap:'6px' }}>
+          <ClipboardList size={15}/> Registro de ajustes
+        </button>
         <button onClick={()=>refetch()}
           style={{ width:'38px', height:'38px', borderRadius:'9px',
             background:'transparent', border:`1px solid ${C.border}`,
@@ -791,8 +1131,11 @@ export default function InventarioPage() {
 
       {/* Panel de ajuste */}
       {itemAjuste && (
-        <PanelAjuste item={itemAjuste} onCerrar={() => setItemAjuste(null)} />
+        <PanelAjuste item={itemAjuste} onCerrar={() => setItemAjuste(null)}
+          onVerRegistro={() => { setItemAjuste(null); setVerRegistro(true) }} />
       )}
+
+      {verRegistro && <PanelRegistroAjustes onCerrar={() => setVerRegistro(false)} />}
 
       {/* Panel de historial */}
       {itemHistorial && (

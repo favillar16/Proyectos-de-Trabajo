@@ -13,13 +13,13 @@
  */
 import { useState, useEffect, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   Search, X, Grid3X3, List, SlidersHorizontal,
   ChevronLeft, ChevronRight, Package, Layers,
   Star, CheckCircle, AlertCircle, XCircle,
   ArrowUpDown, Tag, Building2, RotateCcw, ChevronDown,
-  ScanLine, ShoppingCart, Plus, Minus, Trash2, Send, Loader2,
+  ScanLine, ShoppingCart, Plus, Minus, Trash2, Send, Loader2, Lock,
 } from 'lucide-react'
 import Layout from '../components/layout/Layout'
 import GaleriaImagenes from '../components/showroom/GaleriaImagenes'
@@ -27,7 +27,7 @@ import ConsultaStock from '../components/showroom/ConsultaStock'
 import { useShowroom, VISTA, ORDEN } from '../hooks/useShowroom'
 import { useDevice } from '../hooks/useDevice'
 import { useAuthStore } from '../store/authStore'
-import { ventasApi } from '../services/api'
+import { ventasApi, inventarioApi } from '../services/api'
 import { mensajeErrorApi } from '../utils/apiErrors'
 import toast from 'react-hot-toast'
 
@@ -74,10 +74,43 @@ function fmtCant(v, unidad) {
  * "10 cajas de 2,52 m²" — el mismo stock dicho como lo pide el cliente.
  * Devuelve null si la variante no tiene rendimiento por caja cargado.
  */
-// Cuánto suma cada toque de +/− sobre un ítem ya cargado en el carrito:
-// una caja si es un producto por m² con rendimiento conocido, si no una unidad.
+/**
+ * m² de una pieza: largo × ancho, o lo que rinde la caja dividido sus piezas.
+ * null si la variante no trae ninguno de los dos datos.
+ */
+function m2PorPieza(v) {
+  if (Number(v?.largo_cm) > 0 && Number(v?.ancho_cm) > 0) {
+    return (Number(v.largo_cm) / 100) * (Number(v.ancho_cm) / 100)
+  }
+  if (Number(v?.m2_calculado) > 0 && Number(v?.piezas_por_caja) > 0) {
+    return Number(v.m2_calculado) / Number(v.piezas_por_caja)
+  }
+  return null
+}
+
+// "3 piezas" si la cantidad es un número entero de piezas, "≈ 2,5 piezas" si no.
+function equivalenciaPiezas(cantidad, m2Pieza) {
+  if (!m2Pieza) return null
+  const n = Number(cantidad) / m2Pieza
+  const entero = Math.round(n)
+  if (entero > 0 && Math.abs(n - entero) < 0.03) return `${entero} pieza${entero !== 1 ? 's' : ''}`
+  return `≈ ${n.toLocaleString('es-PY', { maximumFractionDigits:1 })} piezas`
+}
+
+// Cuánto suma cada toque de +/− sobre un ítem ya cargado en el carrito: una
+// pieza si se cargó de a piezas, una caja si es un producto por m² con
+// rendimiento conocido, si no una unidad.
 function pasoItem(item) {
+  if (item?.modo === 'pieza' && item?.m2_pieza) return item.m2_pieza
   return item?.unidad === 'm2' && Number(item?.m2_caja) > 0 ? Number(item.m2_caja) : 1
+}
+
+// Lo mínimo que deja el "−" del carrito: una pieza si se conoce su medida, si
+// no una fracción de metro (o una unidad fuera de m²). Antes el piso era una
+// caja, y en un ítem de menos de una caja el "−" terminaba sumando.
+function minimoItem(item) {
+  if (item?.unidad !== 'm2') return 1
+  return item?.m2_pieza ? Math.round(item.m2_pieza * 100) / 100 : 0.01
 }
 
 function equivalenciaCajas(disponible, m2Caja) {
@@ -284,11 +317,27 @@ function ProductoFila({ producto, onClick, isTouch }) {
 function PanelDetalle({ producto, detalle, stock, cargando, onCerrar, device, onAgregar, puedeCrearPedido }) {
   const [varianteSel, setVarianteSel] = useState(null)
   const [cantidad, setCantidad] = useState(1)
+  // 'caja' o 'pieza': de a cuánto suma el +/− en un producto por m². Para
+  // vender una sola pieza antes había que tipear sus m² a mano.
+  const [modo, setModo] = useState('caja')
+
+  // Para quién está apartada la mercadería de este producto. Todo pedido
+  // reserva su stock al crearse; sin esto, otro vendedor veía menos
+  // disponible sin saber por qué ni para quién estaba guardado.
+  const { data: reservasData } = useQuery({
+    queryKey: ['reservas', 'producto', producto?.id],
+    queryFn: () => inventarioApi.reservas({ producto_id: producto.id }).then(r => r.data),
+    enabled: !!producto?.id,
+    staleTime: 15_000,
+  })
+  const reservasDe = (varianteId) =>
+    (reservasData?.results || []).filter(r => r.variante_id === varianteId)
 
   // Resetear selección cuando cambia el producto
   useEffect(() => {
     setVarianteSel(null)
     setCantidad(1)
+    setModo('caja')
   }, [producto?.id])
 
   // Stock disponible de la variante elegida — limita cuánto se puede pedir.
@@ -302,11 +351,21 @@ function PanelDetalle({ producto, detalle, stock, cargando, onCerrar, device, on
   // por m² y tiene rendimiento cargado (que es como se pide en el mostrador),
   // o una unidad en el resto de los casos.
   const pasoDe = (v) => (esM2 && Number(v?.m2_calculado) > 0 ? Number(v.m2_calculado) : 1)
-  const paso = pasoDe(varianteSel)
-  // Mínimo vendible: una fracción de metro se puede vender (un recorte, el
-  // resto de una caja abierta), así que el piso es 0,01 y no una caja.
-  const minimo = esM2 ? 0.01 : 1
   const redondear = (n) => Math.round(Number(n) * 100) / 100
+  const m2Pieza = esM2 ? m2PorPieza(varianteSel) : null
+  const dePiezas = modo === 'pieza' && !!m2Pieza
+  const paso = dePiezas ? m2Pieza : pasoDe(varianteSel)
+  // Mínimo vendible: una fracción de metro se puede vender (un recorte, el
+  // resto de una caja abierta), así que el piso es 0,01 y no una caja. De a
+  // piezas, el piso es una pieza.
+  const minimo = esM2 ? (dePiezas ? redondear(m2Pieza) : 0.01) : 1
+
+  // Al cambiar de modo se propone una unidad del modo nuevo: una pieza o una caja.
+  const cambiarModo = (nuevo) => {
+    setModo(nuevo)
+    const base = nuevo === 'pieza' ? m2PorPieza(varianteSel) : pasoDe(varianteSel)
+    setCantidad(redondear(Math.min(base, stockSel)))
+  }
 
   if (!producto) return null
 
@@ -490,6 +549,7 @@ function PanelDetalle({ producto, detalle, stock, cargando, onCerrar, device, on
                       disabled={sinStock}
                       onClick={() => {
                         setVarianteSel(v)
+                        setModo('caja')
                         // Al elegir la variante se propone **una caja**, que
                         // es la compra típica; el vendedor la edita si el
                         // cliente lleva otra cosa. Sin Math.floor: en m² el
@@ -524,6 +584,16 @@ function PanelDetalle({ producto, detalle, stock, cargando, onCerrar, device, on
                               : ''}
                           </p>
                         )}
+                        {reservasDe(v.id).map(r => (
+                          <p key={`${r.pedido_id}-${r.variante_id}`}
+                            title={`Pedido ${r.pedido_numero} · ${r.estado_display} · cargado por ${r.vendedor_nombre}`}
+                            style={{ fontSize:'10.5px', color:C.warning, marginTop:'2px',
+                              display:'flex', alignItems:'center', gap:'4px' }}>
+                            <Lock size={10} style={{ flexShrink:0 }} />
+                            Reservado {fmtCant(r.cantidad, producto.unidad_venta)} para{' '}
+                            {r.cliente_nombre || 'cliente sin nombre'} · {r.pedido_numero}
+                          </p>
+                        ))}
                       </div>
                       {sel && <CheckCircle size={17} style={{ color:C.gold, flexShrink:0 }} />}
                     </button>
@@ -532,13 +602,37 @@ function PanelDetalle({ producto, detalle, stock, cargando, onCerrar, device, on
               </div>
 
               {/* Cantidad + agregar */}
+              {m2Pieza && (
+                <div style={{ display:'flex', alignItems:'center', gap:'8px', marginBottom:'8px' }}>
+                  <span style={{ fontSize:'11.5px', color:C.textMuted }}>Vender de a</span>
+                  {[['caja','Cajas'], ['pieza','Piezas']].map(([k, etiqueta]) => (
+                    <button key={k} onClick={() => cambiarModo(k)}
+                      style={{ padding:'0 14px', height: device.isTouch?'36px':'30px',
+                        borderRadius:'8px', fontSize:'13px', cursor:'pointer',
+                        fontWeight: modo === k ? '600' : '400',
+                        border:`1.5px solid ${modo === k ? C.gold : C.border}`,
+                        background: modo === k ? C.goldMuted : C.bg,
+                        color: modo === k ? C.goldDark : C.textSec,
+                        WebkitTapHighlightColor:'transparent' }}>
+                      {etiqueta}
+                    </button>
+                  ))}
+                  {dePiezas && (
+                    <span style={{ fontSize:'12px', color:C.goldDark, fontWeight:'500' }}>
+                      = {equivalenciaPiezas(cantidad, m2Pieza)}
+                    </span>
+                  )}
+                </div>
+              )}
               {varianteSel && stockSel < Infinity && (
                 <p style={{ fontSize:'10.5px', color:C.textMuted, marginBottom:'6px' }}>
                   Máximo disponible: {fmtCant(stockSel, producto.unidad_venta)}
                   {equivalenciaCajas(stockSel, varianteSel.m2_calculado)
                     ? ` (${equivalenciaCajas(stockSel, varianteSel.m2_calculado)})`
                     : ''}
-                  {paso !== 1 && ` · cada caja son ${paso.toFixed(2)} m²`}
+                  {dePiezas
+                    ? ` · cada pieza son ${m2Pieza.toFixed(2)} m²`
+                    : paso !== 1 && ` · cada caja son ${paso.toFixed(2)} m²`}
                 </p>
               )}
               <div style={{ display:'flex', alignItems:'center', gap:'10px' }}>
@@ -583,9 +677,10 @@ function PanelDetalle({ producto, detalle, stock, cargando, onCerrar, device, on
                   disabled={!varianteSel}
                   onClick={() => {
                     if (!varianteSel) return
-                    onAgregar(producto, varianteSel, cantidad)
+                    onAgregar(producto, varianteSel, cantidad, modo)
                     setVarianteSel(null)
                     setCantidad(1)
+                    setModo('caja')
                   }}
                   style={{
                     flex:1, height: device.isTouch?'52px':'44px', borderRadius:'12px',
@@ -838,6 +933,7 @@ function CarritoShowroom({ items, onCambiarCantidad, onEliminar, onVaciar, onCer
     }).then(r => r.data),
     onSuccess: (pedido) => {
       queryClient.invalidateQueries({ queryKey: ['pedidos'] })
+      queryClient.invalidateQueries({ queryKey: ['reservas'] })
       toast.success(`Nota ${pedido.numero} creada — revisala en Pedidos antes de mandarla a caja`)
       onVaciar()
       onCerrar()
@@ -902,7 +998,7 @@ function CarritoShowroom({ items, onCambiarCantidad, onEliminar, onVaciar, onCer
               <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between' }}>
                 <div style={{ display:'flex', alignItems:'center', gap:'6px' }}>
                   <button onClick={() => onCambiarCantidad(idx,
-                    Math.max(pasoItem(item), Number(item.cantidad) - pasoItem(item)))}
+                    Math.max(minimoItem(item), Number(item.cantidad) - pasoItem(item)))}
                     style={{ width:'32px', height:'32px', borderRadius:'8px', background:C.bgSec,
                       border:`1px solid ${C.border}`, cursor:'pointer', color:C.textSec,
                       display:'flex', alignItems:'center', justifyContent:'center' }}>
@@ -934,9 +1030,11 @@ function CarritoShowroom({ items, onCambiarCantidad, onEliminar, onVaciar, onCer
               {item.unidad === 'm2' && (
                 <p style={{ fontSize:'10.5px', color:C.textMuted, marginTop:'4px' }}>
                   {fmtCant(item.cantidad, item.unidad)}
-                  {equivalenciaCajas(item.cantidad, item.m2_caja)
-                    ? ` · ${equivalenciaCajas(item.cantidad, item.m2_caja)}`
-                    : ''}
+                  {item.modo === 'pieza' && item.m2_pieza
+                    ? ` · ${equivalenciaPiezas(item.cantidad, item.m2_pieza)}`
+                    : equivalenciaCajas(item.cantidad, item.m2_caja)
+                      ? ` · ${equivalenciaCajas(item.cantidad, item.m2_caja)}`
+                      : ''}
                 </p>
               )}
               {item.stock_disponible != null && Number(item.cantidad) >= item.stock_disponible && (
@@ -1020,7 +1118,7 @@ export default function ShowroomPage() {
   const [carrito, setCarrito] = useState([])
   const [carritoAbierto, setCarritoAbierto] = useState(false)
 
-  const agregarAlCarrito = useCallback((producto, variante, cantidad) => {
+  const agregarAlCarrito = useCallback((producto, variante, cantidad, modo = 'caja') => {
     // Tope de stock disponible al momento de agregar/mergear — evita que el
     // carrito acumule más cantidad de la que realmente hay, aunque el ítem
     // ya esté en el carrito (antes solo se validaba al elegir la variante).
@@ -1047,6 +1145,8 @@ export default function ShowroomPage() {
         // "12,60 m²" y el +/− siga sumando de a una caja.
         unidad:          producto?.unidad_venta,
         m2_caja:         Number(variante.m2_calculado) > 0 ? Number(variante.m2_calculado) : null,
+        m2_pieza:        producto?.unidad_venta === 'm2' ? m2PorPieza(variante) : null,
+        modo,
       }]
     })
     toast.success('Agregado al pedido', { duration: 1200 })

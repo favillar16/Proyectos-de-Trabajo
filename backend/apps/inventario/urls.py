@@ -1,7 +1,7 @@
 from django.urls import path
 from .views import (
     ConsultaRapidaStockView, StockListView, AjusteStockView,
-    MovimientoStockListView,
+    MovimientoStockListView, ReservasVigentesView,
 )
 
 urlpatterns = [
@@ -9,4 +9,5 @@ urlpatterns = [
     path('stock/',       StockListView.as_view(),            name='stock-list'),
     path('ajustes/',     AjusteStockView.as_view(),          name='stock-ajuste'),
     path('movimientos/', MovimientoStockListView.as_view(),  name='stock-movimientos'),
+    path('reservas/',    ReservasVigentesView.as_view(),     name='stock-reservas'),
 ]
