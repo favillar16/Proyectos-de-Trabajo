@@ -17,6 +17,41 @@ from django.db.models.signals import post_save
 from django.dispatch import receiver
 
 
+def _avisar_cambio_de_stock(stock):
+    """
+    Avisa por WebSocket (room `stock`) que esta variante cambió.
+
+    Todo movimiento pasa por `Stock.registrar_movimiento()`, así que es el
+    único lugar donde hace falta: reservas, liberaciones, ventas, ajustes y
+    devoluciones quedan cubiertos sin tocar cada vista. Sale en
+    `on_commit` por dos motivos: si la transacción se revierte (un pedido
+    sin stock suficiente) no hay nada que avisar, y el que recibe el aviso
+    vuelve a pedir el stock por REST — tiene que encontrarlo ya guardado.
+    Un aviso perdido no rompe nada: las pantallas igual refrescan solas.
+    """
+    datos = {
+        'tipo':        'stock_actualizado',
+        'variante_id': stock.variante_id,
+        'producto_id': stock.variante.producto_id,
+        'disponible':  float(stock.cantidad_disponible),
+        'estado':      stock.estado,
+    }
+
+    def enviar():
+        try:
+            from asgiref.sync import async_to_sync
+            from channels.layers import get_channel_layer
+            from apps.inventario.consumers import ROOM_STOCK
+            layer = get_channel_layer()
+            if layer:
+                async_to_sync(layer.group_send)(
+                    ROOM_STOCK, {'type': 'stock_actualizado', 'data': datos})
+        except Exception:
+            pass  # el WS nunca bloquea un movimiento de stock
+
+    transaction.on_commit(enviar)
+
+
 class Stock(models.Model):
     """
     Stock actual por variante. Relación OneToOne con Variante.
@@ -259,6 +294,8 @@ class Stock(models.Model):
             usuario           = usuario,
             observaciones     = observaciones,
         )
+
+        _avisar_cambio_de_stock(self)
 
         return self
 

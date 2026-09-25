@@ -1,9 +1,12 @@
 /**
  * usePedidoSocket
  * Hook que mantiene una conexión WebSocket con reconexión automática.
- * Dos modos:
+ * Tres modos:
  *   - pedido específico: usePedidoSocket({ pedidoId: 42 })
  *   - canal de rol:      usePedidoSocket({ rol: 'deposito' })
+ *   - stock en vivo:     usePedidoSocket({ canal: 'stock' })
+ *     Cualquier rol. Cada movimiento de stock del servidor refresca las
+ *     consultas de stock de esta pantalla (ver utils/stockCache.js).
  */
 import { useEffect, useRef, useCallback } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
@@ -11,8 +14,9 @@ import { invalidarStock } from '../utils/stockCache'
 import { useAuthStore } from '../store/authStore'
 import { baseUrlWs } from '../services/servidor'
 
-export function usePedidoSocket({ pedidoId, rol, onMensaje } = {}) {
+export function usePedidoSocket({ pedidoId, rol, canal, onMensaje } = {}) {
   const ws          = useRef(null)
+  const refrescoStock = useRef(null)
   const timeoutId   = useRef(null)
   const intentos    = useRef(0)
   // Cada montaje del efecto se lleva su propio número de generación. La
@@ -36,7 +40,9 @@ export function usePedidoSocket({ pedidoId, rol, onMensaje } = {}) {
     const token = useAuthStore.getState().token
     const base = pedidoId
       ? `${wsBase}/ws/pedidos/${pedidoId}/`
-      : `${wsBase}/ws/pedidos/rol/${rol}/`
+      : canal === 'stock'
+        ? `${wsBase}/ws/stock/`
+        : `${wsBase}/ws/pedidos/rol/${rol}/`
     const url = token ? `${base}?token=${encodeURIComponent(token)}` : base
 
     // Se guarda la instancia en una variable local además de en el ref: el
@@ -53,6 +59,12 @@ export function usePedidoSocket({ pedidoId, rol, onMensaje } = {}) {
     socket.onmessage = (e) => {
       try {
         const msg = JSON.parse(e.data)
+        // Un pedido de 10 ítems son 10 movimientos y 10 avisos seguidos: se
+        // agrupan en un solo refresco para no pedir el catálogo 10 veces.
+        if (msg.tipo === 'stock_actualizado') {
+          clearTimeout(refrescoStock.current)
+          refrescoStock.current = setTimeout(() => invalidarStock(queryClient), 300)
+        }
         // Invalidar la query correspondiente para refrescar datos
         if (msg.pedido?.id) {
           queryClient.invalidateQueries({ queryKey: ['pedidos'] })
@@ -86,10 +98,10 @@ export function usePedidoSocket({ pedidoId, rol, onMensaje } = {}) {
     socket.onerror = () => {
       socket.close()
     }
-  }, [pedidoId, rol, onMensaje, queryClient])
+  }, [pedidoId, rol, canal, onMensaje, queryClient])
 
   useEffect(() => {
-    if (!pedidoId && !rol) return
+    if (!pedidoId && !rol && !canal) return
     const gen = (generacion.current += 1)
     conectar(gen)
     return () => {
@@ -97,11 +109,12 @@ export function usePedidoSocket({ pedidoId, rol, onMensaje } = {}) {
       // descubrimiento del servidor.
       generacion.current += 1
       clearTimeout(timeoutId.current)
+      clearTimeout(refrescoStock.current)
       const socket = ws.current
       ws.current = null
       socket?.close()
     }
-  }, [pedidoId, rol])
+  }, [pedidoId, rol, canal])
 
   return {
     enviar: (data) => {

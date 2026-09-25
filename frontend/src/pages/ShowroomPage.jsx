@@ -26,6 +26,7 @@ import GaleriaImagenes from '../components/showroom/GaleriaImagenes'
 import ConsultaStock from '../components/showroom/ConsultaStock'
 import { useShowroom, VISTA, ORDEN } from '../hooks/useShowroom'
 import { useDevice } from '../hooks/useDevice'
+import { usePedidoSocket } from '../hooks/usePedidoSocket'
 import { useAuthStore } from '../store/authStore'
 import { ventasApi, inventarioApi } from '../services/api'
 import { mensajeErrorApi } from '../utils/apiErrors'
@@ -1115,6 +1116,9 @@ function CarritoShowroom({ items, onCambiarCantidad, onEliminar, onVaciar, onCer
 // ─── Página ───────────────────────────────────────────────────────────────────
 export default function ShowroomPage() {
   const showroom = useShowroom()
+  // Stock en vivo: lo que otra tablet reserva, caja cobra o depósito ajusta
+  // se ve acá al instante, sin esperar a que venzan las consultas.
+  usePedidoSocket({ canal: 'stock' })
   const device   = useDevice()
   const { usuario } = useAuthStore()
   // Admin, Encargada de Ventas y vendedor pueden crear notas de pedido

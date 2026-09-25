@@ -12,13 +12,14 @@ django_asgi_app = get_asgi_application()
 from apps.usuarios.ws_auth import JWTAuthMiddleware
 from apps.ventas.routing import websocket_urlpatterns as ventas_ws
 from apps.caja.routing import websocket_urlpatterns as caja_ws
+from apps.inventario.routing import websocket_urlpatterns as inventario_ws
 
 application = ProtocolTypeRouter({
     'http': django_asgi_app,
     # JWT (no sesión/cookie) — el mismo token que usa la API REST.
     'websocket': JWTAuthMiddleware(
         URLRouter(
-            ventas_ws + caja_ws
+            ventas_ws + caja_ws + inventario_ws
         )
     ),
 })

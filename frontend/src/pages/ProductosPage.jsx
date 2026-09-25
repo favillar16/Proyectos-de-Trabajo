@@ -9,6 +9,7 @@ import { Plus, Search, Package, Image, Edit2, Eye, Trash2, X, SlidersHorizontal,
 import toast from 'react-hot-toast'
 import { productosApi } from '../services/api'
 import Layout from '../components/layout/Layout'
+import { usePedidoSocket } from '../hooks/usePedidoSocket'
 import ProductoForm from '../components/productos/ProductoForm'
 import GestionCatalogos from '../components/productos/GestionCatalogos'
 import { useProductoForm } from '../hooks/useProductoForm'
@@ -270,6 +271,9 @@ function PanelLateral({ abierto, onCerrar, hook, productoEdicion }) {
 // ─── Página principal ─────────────────────────────────────────────────────────
 
 export default function ProductosPage() {
+  // El disponible de cada tarjeta se actualiza al instante con cada
+  // movimiento de stock del servidor, igual que en Showroom e Inventario.
+  usePedidoSocket({ canal: 'stock' })
   const [busqueda,       setBusqueda]       = useState('')
   const [categoriaFiltro,setCategoriaFiltro]= useState('')
   const [soloConStock,   setSoloConStock]   = useState(false)

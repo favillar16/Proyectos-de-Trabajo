@@ -866,6 +866,10 @@ export default function InventarioPage() {
   const busquedaDebounced = useDebounce(busqueda, 380)
   const PAGE = 40
 
+  // Stock en vivo para cualquier rol: el canal de depósito de abajo solo
+  // admite depósito y admin, y trae los avisos de alerta, no cada movimiento.
+  usePedidoSocket({ canal: 'stock' })
+
   // Actualizar en tiempo real cuando hay ventas o ajustes
   usePedidoSocket({
     rol: 'deposito',
