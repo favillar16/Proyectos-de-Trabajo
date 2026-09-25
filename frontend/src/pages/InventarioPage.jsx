@@ -9,6 +9,7 @@
  */
 import { useState, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useSearchParams } from 'react-router-dom'
 import {
   AlertCircle, XCircle, CheckCircle, Package,
   Search, SlidersHorizontal, RefreshCw, Plus,
@@ -20,6 +21,7 @@ import Layout from '../components/layout/Layout'
 import { inventarioApi, productosApi } from '../services/api'
 import { usePedidoSocket } from '../hooks/usePedidoSocket'
 import toast from 'react-hot-toast'
+import { invalidarStock } from '../utils/stockCache'
 
 const C = {
   sidebar:'#453941', sidebarHov:'#362F31',
@@ -123,8 +125,7 @@ function PanelAjuste({ item, onCerrar, onVerRegistro }) {
       observaciones:  obs,
     }).then(r => r.data),
     onSuccess: (data) => {
-      queryClient.invalidateQueries({ queryKey: ['stock'] })
-      queryClient.invalidateQueries({ queryKey: ['movimientos-stock', item.variante_id] })
+      invalidarStock(queryClient)
       queryClient.invalidateQueries({ queryKey: ['registro-ajustes'] })
       setConstancia(data)
     },
@@ -850,7 +851,13 @@ function FilaStock({ item, onAjustar, onVerHistorial }) {
 export default function InventarioPage() {
   const queryClient = useQueryClient()
   const [busqueda,    setBusqueda]    = useState('')
-  const [filtroEstado,setFiltroEstado]= useState('')
+  // El tablero enlaza a /inventario?estado=… — sin leerlo, la tarjeta
+  // "Sin stock" del tablero abría Inventario sin filtrar.
+  const [searchParams] = useSearchParams()
+  const [filtroEstado,setFiltroEstado]= useState(() => {
+    const e = searchParams.get('estado')
+    return ['disponible','bajo','critico','sin_stock'].includes(e) ? e : ''
+  })
   const [filtroCateg, setFiltroCateg] = useState('')
   const [itemAjuste,  setItemAjuste]  = useState(null)
   const [itemHistorial,setItemHistorial]=useState(null)
@@ -864,7 +871,7 @@ export default function InventarioPage() {
     rol: 'deposito',
     onMensaje: (msg) => {
       if (msg.tipo === 'alerta_stock') {
-        queryClient.invalidateQueries({ queryKey: ['stock'] })
+        invalidarStock(queryClient)
         if (msg.estado === 'sin_stock') {
           toast.error(`Sin stock: ${msg.nombre} (${msg.sku})`, { duration: 6000 })
         } else if (msg.estado === 'critico') {
@@ -901,11 +908,16 @@ export default function InventarioPage() {
   const total    = data?.count   || 0
   const paginas  = data?.pages   || 1
 
-  // Stats
-  const conStock  = items.filter(i => i.estado === 'disponible').length
-  const bajo      = items.filter(i => i.estado === 'bajo').length
-  const critico   = items.filter(i => i.estado === 'critico').length
-  const sinStock  = items.filter(i => i.estado === 'sin_stock').length
+  // Stats — del conteo del backend sobre todas las variantes que coinciden
+  // con búsqueda y categoría, no de la página visible: contar `items`
+  // daba solo las 40 filas cargadas y no coincidía con el tablero.
+  const resumen   = data?.resumen || {}
+  const totalVar  = resumen.total      ?? total
+  const conStock  = resumen.disponible ?? 0
+  const bajo      = resumen.bajo       ?? 0
+  const critico   = resumen.critico    ?? 0
+  const sinStock  = resumen.sin_stock  ?? 0
+  const filtrarEstado = (e) => { setFiltroEstado(e); setPagina(1) }
 
   return (
     <Layout pageTitle="Inventario" breadcrumbs={['Inventario']}>
@@ -923,7 +935,7 @@ export default function InventarioPage() {
                 <strong>{sinStock} variante{sinStock!==1?'s':''} sin stock</strong>
                 {' '}— sin mercadería disponible para vender.
               </p>
-              <button onClick={() => setFiltroEstado('sin_stock')}
+              <button onClick={() => filtrarEstado('sin_stock')}
                 style={{ padding:'5px 12px', background:'transparent',
                   border:`1px solid ${C.danger}`, borderRadius:'7px',
                   color:C.danger, fontSize:'12px', cursor:'pointer', whiteSpace:'nowrap' }}>
@@ -941,7 +953,7 @@ export default function InventarioPage() {
                 <strong>{critico} variante{critico!==1?'s':''} en stock crítico</strong>
                 {' '}— quedan al 15% o menos del stock inicial.
               </p>
-              <button onClick={() => setFiltroEstado('critico')}
+              <button onClick={() => filtrarEstado('critico')}
                 style={{ padding:'5px 12px', background:'transparent',
                   border:`1px solid ${C.danger}`, borderRadius:'7px',
                   color:C.danger, fontSize:'12px', cursor:'pointer', whiteSpace:'nowrap' }}>
@@ -959,7 +971,7 @@ export default function InventarioPage() {
                 <strong>{bajo} variante{bajo!==1?'s':''} con stock bajo</strong>
                 {' '}— quedan al 25% o menos del stock inicial.
               </p>
-              <button onClick={() => setFiltroEstado('bajo')}
+              <button onClick={() => filtrarEstado('bajo')}
                 style={{ padding:'5px 12px', background:'transparent',
                   border:`1px solid ${C.warning}`, borderRadius:'7px',
                   color:C.warning, fontSize:'12px', cursor:'pointer', whiteSpace:'nowrap' }}>
@@ -974,11 +986,11 @@ export default function InventarioPage() {
       <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(130px,1fr))',
         gap:'10px', marginBottom:'20px' }}>
         {[
-          { l:'Total variantes', v:total,    c:C.text,    onClick:()=>setFiltroEstado('') },
-          { l:'Con stock',       v:conStock,  c:C.success, onClick:()=>setFiltroEstado('disponible') },
-          { l:'Stock bajo (25%)',    v:bajo,    c:C.warning, onClick:()=>setFiltroEstado('bajo') },
-          { l:'Stock crítico (15%)', v:critico, c:C.danger,  onClick:()=>setFiltroEstado('critico') },
-          { l:'Sin stock',       v:sinStock,  c:C.danger,  onClick:()=>setFiltroEstado('sin_stock') },
+          { l:'Total variantes', v:totalVar,    c:C.text,    onClick:()=>filtrarEstado('') },
+          { l:'Con stock',       v:conStock,  c:C.success, onClick:()=>filtrarEstado('disponible') },
+          { l:'Stock bajo (25%)',    v:bajo,    c:C.warning, onClick:()=>filtrarEstado('bajo') },
+          { l:'Stock crítico (15%)', v:critico, c:C.danger,  onClick:()=>filtrarEstado('critico') },
+          { l:'Sin stock',       v:sinStock,  c:C.danger,  onClick:()=>filtrarEstado('sin_stock') },
         ].map(s=>(
           <div key={s.l}
             onClick={s.onClick}

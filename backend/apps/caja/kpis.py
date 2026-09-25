@@ -224,12 +224,15 @@ class KPIsDashboardView(views.APIView):
         ]
 
         # ── Stock ─────────────────────────────────────────────
-        stock_total    = Stock.objects.count()
-        stock_critico  = Stock.objects.filter(
-            cantidad__gt=0, cantidad__lte=F('stock_minimo')
-        ).count()
-        stock_sin      = Stock.objects.filter(cantidad__lte=0).count()
-        stock_ok       = stock_total - stock_critico - stock_sin
+        # Mismo universo y mismo criterio que Inventario (`Stock.estado`,
+        # variantes y productos activos): cada tarjeta lleva a ese filtro de
+        # Inventario y tiene que mostrar el mismo número. Antes contaba el
+        # físico contra `stock_minimo` y sumaba variantes desactivadas.
+        conteo_stock = {'disponible': 0, 'bajo': 0, 'critico': 0, 'sin_stock': 0}
+        for s in Stock.objects.filter(variante__activa=True,
+                                      variante__producto__activo=True):
+            conteo_stock[s.estado] += 1
+        stock_total = sum(conteo_stock.values())
 
         # ── Pedidos activos ───────────────────────────────────
         pedidos_qs = NotaPedido.objects.values('estado').annotate(
@@ -261,10 +264,11 @@ class KPIsDashboardView(views.APIView):
             'ultimas_ventas': ultimas,
 
             'stock': {
-                'total':   stock_total,
-                'ok':      stock_ok,
-                'critico': stock_critico,
-                'sin_stock': stock_sin,
+                'total':     stock_total,
+                'ok':        conteo_stock['disponible'],
+                'bajo':      conteo_stock['bajo'],
+                'critico':   conteo_stock['critico'],
+                'sin_stock': conteo_stock['sin_stock'],
             },
 
             # ── Costos del período ───────────────────────────────────

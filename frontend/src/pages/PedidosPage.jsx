@@ -23,6 +23,7 @@ import { ventasApi, facturacionApi } from '../services/api'
 import { useAuthStore } from '../store/authStore'
 import { usePedidoSocket } from '../hooks/usePedidoSocket'
 import toast from 'react-hot-toast'
+import { invalidarStock } from '../utils/stockCache'
 
 const C = {
   sidebar:'#453941', sidebarHov:'#362F31',
@@ -246,6 +247,7 @@ function PanelDetalle({ pedido: pedidoResumen, rol, puedeEditarPrecio, onCerrar 
     onSuccess: (pedidoActualizado) => {
       queryClient.setQueryData(['pedido', pedidoActualizado.id], pedidoActualizado)
       queryClient.invalidateQueries({ queryKey: ['pedidos'] })
+      invalidarStock(queryClient)
     },
     onError: (err) => toast.error(err.response?.data?.error || 'Error al cambiar estado'),
   })
@@ -259,6 +261,7 @@ function PanelDetalle({ pedido: pedidoResumen, rol, puedeEditarPrecio, onCerrar 
       setItemAQuitar(null)
       queryClient.invalidateQueries({ queryKey: ['pedido', pedidoResumen.id] })
       queryClient.invalidateQueries({ queryKey: ['pedidos'] })
+      invalidarStock(queryClient)
       const liberado = Number(data?.liberado || 0)
       toast.success(liberado > 0
         ? `Producto quitado — se liberaron ${liberado.toLocaleString('es-PY', { maximumFractionDigits: 2 })} al stock`

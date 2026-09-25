@@ -19,6 +19,7 @@ import { useDevice } from '../../hooks/useDevice'
 import { useAuthStore } from '../../store/authStore'
 import { mensajeErrorApi } from '../../utils/apiErrors'
 import toast from 'react-hot-toast'
+import { invalidarStock } from '../../utils/stockCache'
 
 const C = {
   sidebar:'#453941', sidebarHov:'#362F31',
@@ -570,6 +571,7 @@ export default function NuevoPedidoForm({ onPedidoCreado, onCancelar }) {
     }).then(r => r.data),
     onSuccess: (pedido) => {
       queryClient.invalidateQueries({ queryKey: ['pedidos'] })
+      invalidarStock(queryClient)
       toast.success(`Nota ${pedido.numero} enviada a caja`)
       onPedidoCreado?.(pedido)
     },

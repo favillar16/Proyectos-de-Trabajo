@@ -250,6 +250,17 @@ class StockListView(views.APIView):
         estado = request.query_params.get('estado')
         # Filtrado por estado en Python (no en SQL para aprovechar properties)
         stocks_list = list(qs)
+
+        # Conteo por estado sobre TODO lo que coincide con búsqueda y
+        # categoría, antes de filtrar por estado y de paginar. Las tarjetas
+        # de Inventario contaban solo la página visible (40 filas), así que
+        # con más variantes que eso no coincidían con el tablero ni con el
+        # filtro al que llevan.
+        resumen = {'disponible': 0, 'bajo': 0, 'critico': 0, 'sin_stock': 0}
+        for s in stocks_list:
+            resumen[s.estado] += 1
+        resumen['total'] = len(stocks_list)
+
         if estado in ('sin_stock', 'critico', 'bajo', 'disponible'):
             stocks_list = [s for s in stocks_list if s.estado == estado]
 
@@ -265,6 +276,7 @@ class StockListView(views.APIView):
             'count':    total,
             'page':     page,
             'pages':    (total + page_size - 1) // page_size,
+            'resumen':  resumen,
             'results':  [_stock_a_dict(s, request) for s in pagina],
         })
 

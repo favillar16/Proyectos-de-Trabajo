@@ -22,7 +22,15 @@ class ProductoFilter(django_filters.FilterSet):
 
     def filter_con_stock(self, queryset, name, value):
         if value:
-            return queryset.filter(
-                variantes__stock__cantidad__gt=0
-            ).distinct()
+            # Con algo VENDIBLE en una variante activa: mismo criterio que el
+            # "Sin stock" de Inventario. Antes miraba el físico, así que un
+            # producto con todo reservado por pedidos aparecía "con stock".
+            from django.db.models import Exists, F, OuterRef
+            from apps.inventario.models import Stock
+            vendible = Stock.objects.filter(
+                variante__producto=OuterRef('pk'),
+                variante__activa=True,
+                cantidad__gt=F('cantidad_reservada'),
+            )
+            return queryset.filter(Exists(vendible))
         return queryset

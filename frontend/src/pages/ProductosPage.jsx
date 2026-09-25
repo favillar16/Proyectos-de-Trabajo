@@ -38,11 +38,14 @@ const C = {
 
 // ─── Card de producto ─────────────────────────────────────────────────────────
 
+// Lo vendible del producto (físico menos reservado), el mismo número que el
+// Showroom y la columna "Disponible" de Inventario. Antes mostraba el físico
+// y a menos de 5 decía "Stock bajo", un criterio que ninguna otra pantalla
+// usaba; el estado por variante (25% / 15%) vive en Inventario.
 function EstadoStock({ stock }) {
   const val = Number(stock)
   if (val <= 0)   return <span style={{ fontSize:'11px', fontWeight:'500', color: C.danger }}>Sin stock</span>
-  if (val < 5)    return <span style={{ fontSize:'11px', fontWeight:'500', color: C.warning }}>Stock bajo</span>
-  return <span style={{ fontSize:'11px', fontWeight:'500', color: C.success }}>{val.toFixed(2)} en stock</span>
+  return <span style={{ fontSize:'11px', fontWeight:'500', color: C.success }}>{val.toFixed(2)} disponible</span>
 }
 
 function ProductoCard({ producto, onEditar, onVerDetalle, onEliminar }) {
@@ -145,7 +148,7 @@ function ProductoCard({ producto, onEditar, onVerDetalle, onEliminar }) {
                 </span>
               </p>
             )}
-            <EstadoStock stock={producto.stock_total} />
+            <EstadoStock stock={producto.stock_disponible ?? producto.stock_total} />
             <p style={{ fontSize:'11px', color: C.textMuted, marginTop:'2px' }}>
               {producto.variantes_count} variante{producto.variantes_count !== 1 ? 's' : ''}
             </p>
@@ -343,8 +346,8 @@ export default function ProductosPage() {
 
   const stats = [
     { label: 'Total',     valor: data?.count || 0,                                                    color: C.text    },
-    { label: 'Con stock', valor: productos.filter(p => Number(p.stock_total) > 0).length,             color: C.success },
-    { label: 'Sin stock', valor: productos.filter(p => Number(p.stock_total) === 0).length,           color: C.danger  },
+    { label: 'Con stock', valor: productos.filter(p => Number(p.stock_disponible ?? p.stock_total) > 0).length,             color: C.success },
+    { label: 'Sin stock', valor: productos.filter(p => Number(p.stock_disponible ?? p.stock_total) <= 0).length,           color: C.danger  },
     { label: 'Destacados',valor: productos.filter(p => p.destacado).length,                           color: C.goldDark},
   ]
 

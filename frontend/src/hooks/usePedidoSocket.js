@@ -7,6 +7,7 @@
  */
 import { useEffect, useRef, useCallback } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
+import { invalidarStock } from '../utils/stockCache'
 import { useAuthStore } from '../store/authStore'
 import { baseUrlWs } from '../services/servidor'
 
@@ -56,6 +57,9 @@ export function usePedidoSocket({ pedidoId, rol, onMensaje } = {}) {
         if (msg.pedido?.id) {
           queryClient.invalidateQueries({ queryKey: ['pedidos'] })
           queryClient.invalidateQueries({ queryKey: ['pedido', msg.pedido.id] })
+          // Un pedido que se crea, cancela o cobra en OTRO equipo mueve el
+          // disponible que esta pantalla está mostrando.
+          invalidarStock(queryClient)
           // Actualizar la cache directamente con los datos frescos
           queryClient.setQueryData(['pedido', msg.pedido.id], msg.pedido)
         }

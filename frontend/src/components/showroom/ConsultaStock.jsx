@@ -54,11 +54,19 @@ function EstadoBadge({ estado, disponible, grande = false }) {
       icon: <CheckCircle size={grande ? 14 : 11} />,
       label: `${Number(disponible).toFixed(2)} disponible`,
     },
-    critico: {
+    // Sin 'bajo' una variante al 25% caía en el fallback y se leía
+    // "Sin stock" con mercadería disponible. Mismos nombres que Inventario.
+    bajo: {
       bg: C.warningBg, color: C.warning,
       border: C.warningBorder,
       icon: <AlertCircle size={grande ? 14 : 11} />,
       label: `${Number(disponible).toFixed(2)} — stock bajo`,
+    },
+    critico: {
+      bg: C.dangerBg, color: C.danger,
+      border: C.dangerBorder,
+      icon: <AlertCircle size={grande ? 14 : 11} />,
+      label: `${Number(disponible).toFixed(2)} — stock crítico`,
     },
     sin_stock: {
       bg: C.dangerBg, color: C.danger,

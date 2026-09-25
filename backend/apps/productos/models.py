@@ -355,6 +355,22 @@ class Producto(ModeloSincronizable):
         return resultado['total'] or 0
 
     @property
+    def stock_disponible(self):
+        """
+        Suma de lo vendible (físico menos reservado) de las variantes activas.
+
+        Es el número que muestran Showroom y Productos. `stock_total` incluye
+        lo reservado por pedidos abiertos: con él la tarjeta del showroom
+        decía "220 m² disp." de un piso con 133 vendibles, y el vendedor
+        recién se enteraba al querer cargar el pedido. Se suma variante por
+        variante con `Stock.cantidad_disponible` —que no baja de cero— para
+        que el total sea exactamente la suma de lo que muestra Inventario.
+        """
+        from apps.inventario.models import Stock
+        stocks = Stock.objects.filter(variante__producto=self, variante__activa=True)
+        return sum((s.cantidad_disponible for s in stocks), 0)
+
+    @property
     def margen_bruto(self):
         """Margen bruto en % si existe precio de costo."""
         if self.precio_costo and self.precio_costo > 0:

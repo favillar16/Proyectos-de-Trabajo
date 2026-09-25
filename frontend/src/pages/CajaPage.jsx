@@ -26,6 +26,7 @@ import { cajaApi, ventasApi } from '../services/api'
 import { usePedidoSocket } from '../hooks/usePedidoSocket'
 import { useDevice } from '../hooks/useDevice'
 import toast from 'react-hot-toast'
+import { invalidarStock } from '../utils/stockCache'
 
 const C = {
   sidebar:'#453941', sidebarHov:'#362F31',
@@ -355,6 +356,7 @@ function PanelCobro({ pedido: pedidoResumen, sesion, onPagado, onCancelar }) {
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ['pedidos'] })
       queryClient.invalidateQueries({ queryKey: ['sesion-caja'] })
+      invalidarStock(queryClient)
       onPagado(data)
     },
     onError: (err) => {
@@ -2055,6 +2057,7 @@ export default function CajaPage() {
                 queryClient.invalidateQueries({ queryKey: ['pagos-sesion'] })
                 queryClient.invalidateQueries({ queryKey: ['devoluciones-turno', sesion?.id] })
                 queryClient.invalidateQueries({ queryKey: ['devolucion-resumen'] })
+                invalidarStock(queryClient)
               }}
             />
           )}

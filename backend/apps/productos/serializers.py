@@ -281,6 +281,7 @@ class ProductoListSerializer(serializers.ModelSerializer):
     marca_nombre     = serializers.CharField(source='marca.nombre',     read_only=True, allow_null=True)
     imagen_principal = ImagenProductoSerializer(read_only=True)
     stock_total      = serializers.DecimalField(max_digits=10, decimal_places=4, read_only=True)
+    stock_disponible = serializers.DecimalField(max_digits=10, decimal_places=4, read_only=True)
     variantes_count  = serializers.SerializerMethodField()
     margen_bruto     = serializers.SerializerMethodField()
     precio_costo     = serializers.SerializerMethodField()
@@ -292,7 +293,7 @@ class ProductoListSerializer(serializers.ModelSerializer):
             'id', 'codigo', 'nombre', 'slug',
             'categoria_nombre', 'categoria_tipo', 'marca_nombre',
             'precio_base', 'precio_costo', 'unidad_venta',
-            'imagen_principal', 'stock_total', 'variantes_count',
+            'imagen_principal', 'stock_total', 'stock_disponible', 'variantes_count',
             'destacado', 'activo', 'visible_showroom',
             'margen_bruto', 'pedido_pendiente',
             'fecha_creacion',
@@ -322,6 +323,7 @@ class ProductoDetailSerializer(serializers.ModelSerializer):
     imagenes          = ImagenProductoSerializer(many=True, read_only=True)
     variantes         = VarianteReadSerializer(many=True, read_only=True)
     stock_total       = serializers.DecimalField(max_digits=10, decimal_places=4, read_only=True)
+    stock_disponible  = serializers.DecimalField(max_digits=10, decimal_places=4, read_only=True)
     precio_costo      = serializers.SerializerMethodField()
     margen_bruto      = serializers.SerializerMethodField()
     pedido_pendiente  = serializers.SerializerMethodField()
@@ -333,7 +335,7 @@ class ProductoDetailSerializer(serializers.ModelSerializer):
             'categoria', 'marca',
             'precio_base', 'precio_costo', 'unidad_venta',
             'destacado', 'activo', 'visible_showroom',
-            'notas_internas', 'stock_total', 'margen_bruto', 'pedido_pendiente',
+            'notas_internas', 'stock_total', 'stock_disponible', 'margen_bruto', 'pedido_pendiente',
             'imagenes', 'variantes',
             'fecha_creacion', 'fecha_actualizacion',
         ]

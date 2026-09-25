@@ -30,6 +30,7 @@ import { useAuthStore } from '../store/authStore'
 import { ventasApi, inventarioApi } from '../services/api'
 import { mensajeErrorApi } from '../utils/apiErrors'
 import toast from 'react-hot-toast'
+import { invalidarStock } from '../utils/stockCache'
 
 const C = {
   sidebar:    '#453941', sidebarHov:'#362F31',
@@ -126,8 +127,13 @@ function equivalenciaCajas(disponible, m2Caja) {
 // ─── Badge de stock ───────────────────────────────────────────────────────────
 function BadgeStock({ estado, cantidad, unidad, grande = false }) {
   const cfg = {
+    // 'bajo' faltaba: una variante al 25% caía en el `|| cfg.sin_stock` de
+    // abajo y el showroom la mostraba "Sin stock" mientras Inventario la
+    // tenía con mercadería. Bajo y crítico muestran la cantidad igual: es lo
+    // que el vendedor necesita para saber si le alcanza al cliente.
     disponible: { bg: C.successBg, color: C.success, icon: <CheckCircle size={grande?12:10} />, label: `${fmtCant(cantidad, unidad)} disp.` },
-    critico:    { bg: C.warningBg, color: C.warning,  icon: <AlertCircle size={grande?12:10} />, label: 'Stock bajo'  },
+    bajo:       { bg: C.warningBg, color: C.warning, icon: <AlertCircle size={grande?12:10} />, label: `${fmtCant(cantidad, unidad)} disp. · bajo` },
+    critico:    { bg: C.warningBg, color: C.warning, icon: <AlertCircle size={grande?12:10} />, label: `${fmtCant(cantidad, unidad)} disp. · crítico` },
     sin_stock:  { bg: C.dangerBg,  color: C.danger,   icon: <XCircle     size={grande?12:10} />, label: 'Sin stock'   },
   }
   const s = cfg[estado] || cfg.sin_stock
@@ -163,8 +169,10 @@ function SkeletonCard() {
 function ProductoCardGrid({ producto, onClick, isTouch }) {
   const [presionado, setPresionado] = useState(false)
   const imgUrl = producto.imagen_principal?.imagen_url || producto.imagen_principal?.imagen
-  const st = Number(producto.stock_total)
-  const estado = st <= 0 ? 'sin_stock' : st < 3 ? 'critico' : 'disponible'
+  // Lo vendible (físico menos reservado), igual que el detalle y que
+  // Inventario. `stock_total` incluía lo reservado por otros pedidos.
+  const st = Number(producto.stock_disponible ?? producto.stock_total)
+  const estado = st <= 0 ? 'sin_stock' : 'disponible'
 
   // En touch: feedback visual con active state en lugar de hover
   const estilo = isTouch ? {
@@ -223,7 +231,7 @@ function ProductoCardGrid({ producto, onClick, isTouch }) {
           </div>
         )}
         <div style={{ position:'absolute', bottom:'8px', right:'8px' }}>
-          <BadgeStock estado={estado} cantidad={producto.stock_total}
+          <BadgeStock estado={estado} cantidad={st}
             unidad={producto.unidad_venta} />
         </div>
       </div>
@@ -264,8 +272,10 @@ function ProductoCardGrid({ producto, onClick, isTouch }) {
 function ProductoFila({ producto, onClick, isTouch }) {
   const [presionado, setPresionado] = useState(false)
   const imgUrl = producto.imagen_principal?.imagen_url || producto.imagen_principal?.imagen
-  const st = Number(producto.stock_total)
-  const estado = st <= 0 ? 'sin_stock' : st < 3 ? 'critico' : 'disponible'
+  // Lo vendible (físico menos reservado), igual que el detalle y que
+  // Inventario. `stock_total` incluía lo reservado por otros pedidos.
+  const st = Number(producto.stock_disponible ?? producto.stock_total)
+  const estado = st <= 0 ? 'sin_stock' : 'disponible'
 
   return (
     <div
@@ -306,7 +316,7 @@ function ProductoFila({ producto, onClick, isTouch }) {
           {formatGs(producto.precio_base)}
         </p>
         <p style={{ fontSize:'11px', color:C.textMuted, marginBottom:'4px' }}>por {producto.unidad_venta}</p>
-        <BadgeStock estado={estado} cantidad={producto.stock_total}
+        <BadgeStock estado={estado} cantidad={st}
           unidad={producto.unidad_venta} />
       </div>
     </div>
@@ -933,7 +943,7 @@ function CarritoShowroom({ items, onCambiarCantidad, onEliminar, onVaciar, onCer
     }).then(r => r.data),
     onSuccess: (pedido) => {
       queryClient.invalidateQueries({ queryKey: ['pedidos'] })
-      queryClient.invalidateQueries({ queryKey: ['reservas'] })
+      invalidarStock(queryClient)
       toast.success(`Nota ${pedido.numero} creada — revisala en Pedidos antes de mandarla a caja`)
       onVaciar()
       onCerrar()

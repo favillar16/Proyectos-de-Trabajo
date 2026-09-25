@@ -481,7 +481,8 @@ function FeedVentas({ ventas }) {
 function StockResumen({ stock, navigate }) {
   const items = [
     { label:'Con stock', valor:stock?.ok      || 0, color:C.success, bg:C.successBg, path:'/inventario?estado=disponible' },
-    { label:'Stock bajo',valor:stock?.critico || 0, color:C.warning, bg:C.warningBg, path:'/inventario?estado=critico'    },
+    { label:'Stock bajo',valor:stock?.bajo    || 0, color:C.warning, bg:C.warningBg, path:'/inventario?estado=bajo'       },
+    { label:'Crítico',   valor:stock?.critico || 0, color:C.danger,  bg:C.dangerBg,  path:'/inventario?estado=critico'    },
     { label:'Sin stock', valor:stock?.sin_stock||0, color:C.danger,  bg:C.dangerBg,  path:'/inventario?estado=sin_stock'  },
   ]
   return (

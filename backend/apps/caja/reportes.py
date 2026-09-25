@@ -221,18 +221,26 @@ def render_xlsx(reporte: dict) -> bytes:
 # ════════════════════════════════════════════════════════
 def reporte_stock():
     from apps.inventario.models import Stock
-    qs = Stock.objects.select_related('variante__producto').all()
+    # Las mismas variantes y los mismos estados que la pantalla de
+    # Inventario: el reporte es la versión impresa de esa pantalla.
+    qs = Stock.objects.select_related('variante__producto').filter(
+        variante__activa=True, variante__producto__activo=True,
+    )
+    etiquetas = {'disponible': 'Disponible', 'bajo': 'Bajo (25%)',
+                 'critico': 'Crítico (15%)', 'sin_stock': 'Sin stock'}
 
     filas = []
     total_unidades = 0
     sin_stock = 0
     criticos = 0
+    bajos = 0
     for s in qs:
         disp = float(s.cantidad_disponible)
         total_unidades += disp
-        if s.sin_stock: sin_stock += 1
-        elif s.en_stock_critico: criticos += 1
-        estado = 'Sin stock' if s.sin_stock else ('Crítico' if s.en_stock_critico else 'Disponible')
+        if s.estado == 'sin_stock': sin_stock += 1
+        elif s.estado == 'critico': criticos += 1
+        elif s.estado == 'bajo': bajos += 1
+        estado = etiquetas[s.estado]
         filas.append([
             s.variante.producto.nombre,
             s.variante.sku,
@@ -255,6 +263,7 @@ def reporte_stock():
         'totales': {
             'Variantes sin stock':  sin_stock,
             'Variantes en crítico': criticos,
+            'Variantes con stock bajo': bajos,
             'Total unidades disponibles': f'{total_unidades:.2f}',
         },
     }
