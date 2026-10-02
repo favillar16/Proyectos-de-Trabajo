@@ -108,9 +108,22 @@ def _unidad_item(item) -> str:
     m2_caja = item.variante.m2_por_caja_calculado
     if not m2_caja:
         return 'mts2'
+    return f'mts2 ({_texto_cajas(item.cantidad, m2_caja)})'
+
+
+def _texto_cajas(cantidad, m2_caja) -> str:
+    """
+    '3 cajas' para 4,32 m² de una caja de 1,44.
+
+    Se redondea hacia arriba porque una caja abierta se entrega igual, pero
+    antes del ceil se recorta a cuatro decimales —los mismos que guarda la
+    cantidad—, igual que hace el Showroom en `equivalenciaCajas`. Sin ese
+    recorte la división en coma flotante da 3,0000000000000004 y la nota
+    decía 4 cajas para lo que el vendedor cargó como 3.
+    """
     import math
-    cajas = math.ceil(float(item.cantidad) / m2_caja)
-    return f'mts2 ({cajas} caja{"s" if cajas != 1 else ""})'
+    cajas = math.ceil(round(float(cantidad) / float(m2_caja), 4))
+    return f'{cajas} caja{"s" if cajas != 1 else ""}'
 
 
 # ══════════════════════════════════════════════════════════════════════

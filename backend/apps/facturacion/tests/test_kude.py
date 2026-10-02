@@ -115,6 +115,26 @@ class KudeTests(TestCase):
         self.assertTrue(datos['en_prueba'])
         self.assertEqual(datos['emisor']['razon_social'], LEYENDA_AMBIENTE_PRUEBA)
 
+    @override_settings(DATOS_FISCALES=DATOS_FISCALES_COMPLETOS,
+                       SIFEN=SIFEN_PRENDIDO)
+    def test_la_remision_de_prueba_lleva_el_aviso_provisorio(self):
+        """
+        La remisión ya se usa para despachar: en vez del cartel rojo de "sin
+        valor" dice que es provisoria. La factura conserva el aviso de siempre.
+        """
+        from apps.facturacion import codigos
+
+        remision = self._documento(tipo_documento=codigos.TIPO_DE_NOTA_REMISION)
+        texto, color = kude.construir_datos(remision)['aviso_prueba']
+        self.assertIn('PROVISORIA', texto)
+        self.assertNotEqual(color, '#9a3030')
+
+        factura = kude.construir_datos(self._documento())['aviso_prueba']
+        self.assertEqual(factura, kude.AVISO_PRUEBA_DEFECTO)
+
+    def test_en_produccion_no_hay_aviso_de_prueba(self):
+        self.assertIsNone(kude.construir_datos(self._documento())['aviso_prueba'])
+
     def test_en_produccion_va_la_razon_social_de_verdad(self):
         datos = kude.construir_datos(self._documento())
         self.assertFalse(datos['en_prueba'])
@@ -228,9 +248,41 @@ class GeometriaDelEncabezadoTests(TestCase):
             },
             'receptor': {'email': ''},
             'en_prueba': False,
+            'nombre_documento': 'Factura Electrónica',
+            'numero': '001-001-0000001',
         }
         base.update(cambios)
         return base
+
+    def test_el_emisor_no_pisa_el_numero_del_documento(self):
+        """
+        En la remisión, la dirección del local se encimaba con "Nota de
+        Remisión Electrónica N.º …": se cortaba a 62 letras sin mirar cuánto
+        ocupaba el bloque de la derecha, más largo que el de una factura.
+        """
+        from reportlab.lib.pagesizes import A4
+        from reportlab.lib.units import mm
+        from reportlab.pdfbase.pdfmetrics import stringWidth
+
+        direccion = ('CALLE LIDIA PERALTA DE BENITEZ E/ JOSEFINA PLAS - '
+                     'B° SAN ISIDRO - CNEL. OVIEDO')
+        for nombre in ('Factura Electrónica', 'Nota de Remisión Electrónica'):
+            datos = self._datos(nombre_documento=nombre)
+            datos['emisor'] = dict(datos['emisor'], direccion=direccion)
+            ancho_derecha = max(stringWidth(t, f, s)
+                                for t, f, s in kude._lineas_timbrado(datos))
+            limite = (A4[0] - kude.MARGEN_LATERAL_MM * mm - ancho_derecha
+                      - (kude.MARGEN_LATERAL_MM + kude.ANCHO_LOGO_MM) * mm)
+            for texto, fuente, tamano, _ in kude._lineas_emisor(datos):
+                self.assertLess(stringWidth(texto, fuente, tamano), limite,
+                                f'{texto!r} pisa el timbrado en {nombre}')
+
+    def test_la_direccion_larga_no_se_pierde(self):
+        datos = self._datos()
+        direccion = 'CALLE LIDIA PERALTA DE BENITEZ E/ JOSEFINA PLAS - B° SAN ISIDRO'
+        datos['emisor'] = dict(datos['emisor'], direccion=direccion)
+        impreso = ' '.join(t for t, _, _, _ in kude._lineas_emisor(datos))
+        self.assertIn(direccion, impreso)
 
     def test_una_direccion_mas_larga_agranda_el_encabezado(self):
         corto = kude._alto_encabezado_mm(self._datos())

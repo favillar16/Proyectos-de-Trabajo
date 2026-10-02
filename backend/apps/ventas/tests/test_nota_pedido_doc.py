@@ -71,6 +71,17 @@ class NotaPedidoDocumentoTests(TestCase):
         datos = doc.datos_desde_pedido(self.pedido)
         self.assertEqual(datos['items'][0]['unidad'], 'mts2 (18 cajas)')
 
+    def test_cajas_exactas_no_suman_una_de_mas(self):
+        """
+        3 cajas de 1,44 m² son 4,32 m², y en coma flotante 4,32 / 1,44 da
+        3,0000000000000004: el ceil sin recortar decía 4 cajas.
+        """
+        for cajas in (1, 3, 7, 10, 17):
+            cantidad = Decimal('1.44') * cajas
+            self.assertEqual(doc._texto_cajas(cantidad, 1.44),
+                             f'{cajas} caja{"s" if cajas != 1 else ""}')
+        self.assertEqual(doc._texto_cajas(Decimal('1.08'), 0.36), '3 cajas')
+
     def test_producto_por_pieza_no_lleva_unidad(self):
         self.variante.producto.unidad_venta = Producto.UNIDAD_PIEZA
         self.variante.producto.save(update_fields=['unidad_venta'])

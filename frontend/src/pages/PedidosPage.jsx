@@ -14,7 +14,7 @@ import {
   Plus, RefreshCw, FileText, Clock, Truck,
   CheckCircle, CreditCard, XCircle, ChevronRight,
   Package, User, AlertCircle, Loader2, FileSpreadsheet,
-  Search, X, Trash2, Undo2,
+  Search, X, Trash2, Undo2, Printer,
 } from 'lucide-react'
 import Layout from '../components/layout/Layout'
 import NuevoPedidoForm from '../components/ventas/NuevoPedidoForm'
@@ -24,6 +24,7 @@ import { useAuthStore } from '../store/authStore'
 import { usePedidoSocket } from '../hooks/usePedidoSocket'
 import toast from 'react-hot-toast'
 import { invalidarStock } from '../utils/stockCache'
+import { imprimirPdf } from '../utils/imprimirPdf'
 
 const C = {
   sidebar:'#453941', sidebarHov:'#362F31',
@@ -62,7 +63,20 @@ function DescargasNota({ pedidoId, numero, estado }) {
   const label = estado === 'pendiente' ? 'Presupuesto'  : 'Pedido'
   const [cargando, setCargando] = useState(null)
 
+  const imprimir = async () => {
+    setCargando('imprimir')
+    try {
+      const res = await ventasApi.descargarNota(pedidoId, 'pdf', tipo)
+      imprimirPdf(res.data)
+    } catch {
+      toast.error('No se pudo preparar la nota para imprimir')
+    } finally {
+      setCargando(null)
+    }
+  }
+
   const descargar = async (formato) => {
+    if (formato === 'imprimir') return imprimir()
     setCargando(formato)
     try {
       const res = await ventasApi.descargarNota(pedidoId, formato, tipo)
@@ -105,6 +119,7 @@ function DescargasNota({ pedidoId, numero, estado }) {
       }}>
         {label}
       </span>
+      {btn('imprimir', Printer,     'Imprimir')}
       {btn('pdf',  FileText,        'PDF')}
       {btn('xlsx', FileSpreadsheet, 'Excel')}
     </div>
@@ -706,8 +721,22 @@ function AccionesRemision({ pedido }) {
       err.response?.data?.error || 'No se pudo emitir la nota de remisión'),
   })
 
+  // El KuDE es el papel que viaja con la mercadería: se imprime directo, sin
+  // tener que bajarlo y abrirlo.
+  const imprimirKude = async () => {
+    setBajando('imprimir')
+    try {
+      const res = await facturacionApi.kude(data.id)
+      imprimirPdf(res.data)
+    } catch {
+      toast.error('No se pudo preparar la remisión para imprimir')
+    } finally {
+      setBajando(false)
+    }
+  }
+
   const descargarKude = async () => {
-    setBajando(true)
+    setBajando('pdf')
     try {
       const res = await facturacionApi.kude(data.id)
       const url = window.URL.createObjectURL(new Blob([res.data]))
@@ -770,16 +799,22 @@ function AccionesRemision({ pedido }) {
         </button>
       )}
       {emitida ? (
-        <button onClick={descargarKude} disabled={bajando} style={{
-          display:'flex', alignItems:'center', gap:'6px',
-          padding:'7px 12px', borderRadius:'8px', cursor: bajando ? 'wait' : 'pointer',
-          background:C.bgTer, border:`1px solid ${C.border}`, color:C.textSec,
-          fontSize:'12.5px', fontWeight:'500',
-        }}>
-          {bajando ? <Loader2 size={14} style={{ animation:'spin 1s linear infinite' }}/>
-                   : <FileText size={14}/>}
-          KuDE
-        </button>
+        <>
+          {[['imprimir', imprimirKude, Printer, 'Imprimir'],
+            ['pdf', descargarKude, FileText, 'KuDE']].map(([clave, accion, Icono, texto]) => (
+            <button key={clave} onClick={accion} disabled={Boolean(bajando)} style={{
+              display:'flex', alignItems:'center', gap:'6px',
+              padding:'7px 12px', borderRadius:'8px', cursor: bajando ? 'wait' : 'pointer',
+              background:C.bgTer, border:`1px solid ${C.border}`, color:C.textSec,
+              fontSize:'12.5px', fontWeight:'500',
+            }}>
+              {bajando === clave
+                ? <Loader2 size={14} style={{ animation:'spin 1s linear infinite' }}/>
+                : <Icono size={14}/>}
+              {texto}
+            </button>
+          ))}
+        </>
       ) : (
         <button onClick={() => emitirMut.mutate()}
           disabled={!listoParaEmitir || emitirMut.isPending}

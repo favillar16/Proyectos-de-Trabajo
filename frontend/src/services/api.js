@@ -68,6 +68,7 @@ export const productosApi = {
 
   showroom:  (params)   => api.get('/productos/showroom/', { params }),
   stock:     (id)       => api.get(`/productos/${id}/stock/`),
+  ventas:    (id)       => api.get(`/productos/${id}/ventas/`),
 
   subirImagen: (id, formData) => api.post(`/productos/${id}/imagenes/`, formData, {
     headers: { 'Content-Type': 'multipart/form-data' },

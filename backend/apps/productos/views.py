@@ -14,8 +14,9 @@ from django.shortcuts import get_object_or_404
 from apps.usuarios.permissions import (
     LecturaLibreEscrituraAdmin,
     LecturaLibreEscrituraAdminOVendedor,
-    PermisosPorAccion, EsAdmin, TodosLosRoles,
+    PermisosPorAccion, EsAdmin, EsAdminOVendedor, TodosLosRoles,
 )
+from apps.ventas.models import ItemPedido
 
 from .models import (
     Categoria, Marca, Acabado,
@@ -133,6 +134,8 @@ class ProductoViewSet(ProtegeAlBorrarMixin, viewsets.ModelViewSet):
         'retrieve':          [TodosLosRoles],
         'showroom':          [TodosLosRoles],
         'stock':             [TodosLosRoles],
+        # Los mismos roles que abren la ficha (ProductosPage en App.jsx)
+        'ventas':            [EsAdminOVendedor],
         'create':            [LecturaLibreEscrituraAdminOVendedor],
         'update':            [LecturaLibreEscrituraAdminOVendedor],
         'partial_update':    [LecturaLibreEscrituraAdminOVendedor],
@@ -253,6 +256,82 @@ class ProductoViewSet(ProtegeAlBorrarMixin, viewsets.ModelViewSet):
                 'cajas_completas': s.cajas_completas        if s else None,
             })
         return Response(data)
+
+    # ── Trazabilidad de ventas ────────────────────────────────
+    @action(detail=True, methods=['get'])
+    def ventas(self, request, pk=None):
+        """
+        GET /api/v1/productos/<id>/ventas/
+
+        Cuánto se vendió del producto, venta por venta. Solo cantidades: ni
+        precio ni cliente, porque lo que se busca acá es el ritmo de salida
+        para decidir cuánto volver a comprar, no el detalle comercial (eso
+        está en el reporte de Productos comercializados).
+
+        Mismo criterio que ese reporte: cuenta la fecha del cobro confirmado,
+        no la del pedido, y lo devuelto resta en la fecha de la devolución.
+        Incluye las variantes ya dadas de baja, que también se vendieron.
+        """
+        from apps.caja.models import Pago, ItemDevolucion
+        from apps.caja.reportes import UNIDAD_CORTA
+
+        producto = self.get_object()
+        movimientos = []
+        por_variante = {}
+
+        def _sumar(variante, cantidad):
+            registro = por_variante.setdefault(variante.id, {
+                'variante_id': variante.id,
+                'descripcion': str(variante),
+                'sku':         variante.sku,
+                'cantidad':    0.0,
+            })
+            registro['cantidad'] += cantidad
+
+        pagos = Pago.objects.filter(
+            estado=Pago.ESTADO_CONFIRMADO,
+            pedido__items__variante__producto=producto,
+        ).distinct().prefetch_related(
+            Prefetch(
+                'pedido__items',
+                queryset=ItemPedido.objects.filter(variante__producto=producto)
+                    .select_related('variante__acabado'),
+            ),
+        )
+        for pago in pagos:
+            for item in pago.pedido.items.all():
+                cantidad = float(item.cantidad)
+                _sumar(item.variante, cantidad)
+                movimientos.append({
+                    'fecha':       pago.fecha,
+                    'tipo':        'venta',
+                    'variante_id': item.variante_id,
+                    'variante':    str(item.variante),
+                    'cantidad':    cantidad,
+                })
+
+        devueltos = ItemDevolucion.objects.filter(
+            variante__producto=producto,
+        ).select_related('devolucion', 'variante__acabado')
+        for dev in devueltos:
+            cantidad = -float(dev.cantidad)
+            _sumar(dev.variante, cantidad)
+            movimientos.append({
+                'fecha':       dev.devolucion.fecha,
+                'tipo':        'devolucion',
+                'variante_id': dev.variante_id,
+                'variante':    str(dev.variante),
+                'cantidad':    cantidad,
+            })
+
+        movimientos.sort(key=lambda m: m['fecha'], reverse=True)
+        return Response({
+            'unidad':      UNIDAD_CORTA.get(producto.unidad_venta, producto.unidad_venta),
+            'total':       sum(r['cantidad'] for r in por_variante.values()),
+            'ventas':      sum(1 for m in movimientos if m['tipo'] == 'venta'),
+            'variantes':   sorted(por_variante.values(), key=lambda r: -r['cantidad']),
+            'movimientos': movimientos,
+        })
 
     # ── Agregar variante a un producto existente ──────────────
     @action(detail=True, methods=['post'], url_path='variantes')

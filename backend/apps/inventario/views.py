@@ -332,12 +332,12 @@ class AjusteStockView(views.APIView):
         if formato in ('pdf', 'xlsx'):
             from apps.caja import reportes as rep
             from .reportes import reporte_ajustes
-            reporte = reporte_ajustes(qs.order_by('-fecha'), dias.get('desde'),
+            reporte = reporte_ajustes(qs.order_by('-fecha', '-id'), dias.get('desde'),
                                       dias.get('hasta'), buscar)
             return rep.responder_reporte(reporte, formato, 'registro_ajustes')
 
         total = qs.count()
-        movimientos = list(qs.order_by('-fecha')[:MAX_MOVIMIENTOS])
+        movimientos = list(qs.order_by('-fecha', '-id')[:MAX_MOVIMIENTOS])
         data = MovimientoStockSerializer(movimientos, many=True).data
         for mov, fila in zip(movimientos, data):
             v = mov.variante
@@ -439,7 +439,7 @@ class MovimientoStockListView(views.APIView):
             qs = qs.filter(tipo=tipo)
         total = qs.aggregate(total=Sum('cantidad'))['total']
 
-        movimientos = list(qs.select_related('usuario').order_by('-fecha')[:MAX_MOVIMIENTOS])
+        movimientos = list(qs.select_related('usuario').order_by('-fecha', '-id')[:MAX_MOVIMIENTOS])
         data = MovimientoStockSerializer(movimientos, many=True).data
 
         # Las reservas, liberaciones y ventas apuntan a un NotaPedido: se le

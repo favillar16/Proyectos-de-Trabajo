@@ -86,6 +86,27 @@ UNIDAD_LEGIBLE = {109: 'm²', 77: 'UNI', 660: 'ml'}
 _RE_CARQR = re.compile(r'<dCarQR>(.*?)</dCarQR>', re.DOTALL)
 
 
+# Aviso que el KuDE imprime bajo los datos del receptor mientras el sistema
+# emite en el ambiente de prueba del SIFEN: (texto, color).
+#
+# La nota de remisión lleva uno provisorio, a pedido de la propietaria: ya
+# las usa para despachar y el cartel rojo de "sin valor" asustaba a quien
+# recibe la mercadería. El texto sigue diciendo la verdad —el documento
+# todavía no está validado ante el SIFEN—, solo que en el tono del resto del
+# papel. Se vuelve a este bloque cuando el sistema pase a producción, donde
+# ningún aviso se imprime.
+AVISO_PRUEBA_DEFECTO = (
+    'DOCUMENTO EMITIDO EN AMBIENTE DE PRUEBA — SIN VALOR COMERCIAL NI FISCAL',
+    '#9a3030',
+)
+AVISO_PRUEBA = {
+    codigos.TIPO_DE_NOTA_REMISION: (
+        'NOTA DE REMISIÓN PROVISORIA — PENDIENTE DE VALIDACIÓN ANTE EL SIFEN',
+        '#4D2610',
+    ),
+}
+
+
 def enlace_qr_del_xml(xml: str) -> str:
     """
     Saca el contenido de `dCarQR` del XML que devolvió `qrgen`.
@@ -185,6 +206,8 @@ def construir_datos(documento) -> dict:
         'nombre_documento': NOMBRE_DOCUMENTO.get(
             documento.tipo_documento, 'Documento Electrónico'),
         'en_prueba': en_prueba,
+        'aviso_prueba': (AVISO_PRUEBA.get(documento.tipo_documento, AVISO_PRUEBA_DEFECTO)
+                         if en_prueba else None),
 
         'emisor': {
             'razon_social': razon_social,
@@ -261,6 +284,12 @@ ALTO_LINEA_RECEPTOR_MM = 4.2
 HUECO_DESPUES_DE_RAYA_MM = 4.5
 COLCHON_ANTES_DE_ITEMS_MM = 6.0
 
+# Geometría horizontal del encabezado: margen de la hoja, lugar del logo
+# (el emisor arranca después) y aire mínimo entre el emisor y el timbrado.
+MARGEN_LATERAL_MM = 14
+ANCHO_LOGO_MM = 38
+SEPARACION_COLUMNAS_MM = 4
+
 
 def _lineas_emisor(datos):
     """
@@ -271,16 +300,51 @@ def _lineas_emisor(datos):
     cosas no se separen.
     """
     emisor = datos['emisor']
+    ancho = _ancho_columna_emisor(datos)
     lineas = []
-    for texto in _cortar(emisor['razon_social'], 46)[:2]:
+    for texto in _cortar_por_ancho(emisor['razon_social'], 'Helvetica-Bold', 9, ancho)[:3]:
         lineas.append((texto, 'Helvetica-Bold', 9, ALTO_LINEA_TITULO_MM))
     for texto in (emisor['actividad'], emisor['direccion'],
                   emisor['ciudad'], emisor['telefono']):
         if not texto:
             continue
-        for linea in _cortar(texto, 62)[:2]:
+        for linea in _cortar_por_ancho(texto, 'Helvetica', 7.5, ancho)[:3]:
             lineas.append((linea, 'Helvetica', 7.5, ALTO_LINEA_CUERPO_MM))
     return lineas
+
+
+def _lineas_timbrado(datos):
+    """Los renglones del bloque de la derecha: `(texto, fuente, tamaño)`."""
+    emisor = datos['emisor']
+    lineas = [(f'{etiqueta}: {valor or "—"}', 'Helvetica', 8) for etiqueta, valor in (
+        ('RUC', emisor['ruc']),
+        ('Timbrado N.º', emisor['timbrado']),
+        ('Inicio de vigencia', emisor['timbrado_inicio']),
+        ('Fin de vigencia', emisor['timbrado_vto']),
+    )]
+    lineas.append((f'{datos["nombre_documento"]} N.º {datos["numero"]}',
+                   'Helvetica-Bold', 9))
+    return lineas
+
+
+def _ancho_columna_emisor(datos):
+    """
+    Cuánto puede ocupar un renglón del emisor, en puntos, sin pisar el bloque
+    del timbrado.
+
+    Antes los renglones se cortaban a 62 letras, un número que andaba con
+    "Factura Electrónica N.º …" pero no con "Nota de Remisión Electrónica
+    N.º …", más largo: la dirección del local se encimaba con el número del
+    documento. Ahora se mide lo que de verdad ocupa el bloque de la derecha.
+    """
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.units import mm
+    from reportlab.pdfbase.pdfmetrics import stringWidth
+
+    ancho_derecha = max(stringWidth(t, f, s) for t, f, s in _lineas_timbrado(datos))
+    x_emisor = (MARGEN_LATERAL_MM + ANCHO_LOGO_MM) * mm
+    der = A4[0] - MARGEN_LATERAL_MM * mm
+    return der - ancho_derecha - SEPARACION_COLUMNAS_MM * mm - x_emisor
 
 
 def _alto_encabezado_mm(datos):
@@ -325,7 +389,7 @@ def render_pdf(documento) -> bytes:
         # número fijo: ver `_alto_encabezado_mm`. El inferior deja lugar al
         # QR y al CDC, que sí son de tamaño conocido.
         topMargin=_alto_encabezado_mm(datos) * mm, bottomMargin=48 * mm,
-        leftMargin=14 * mm, rightMargin=14 * mm,
+        leftMargin=MARGEN_LATERAL_MM * mm, rightMargin=MARGEN_LATERAL_MM * mm,
         title=f'{datos["nombre_documento"]} {datos["numero"]}',
     )
 
@@ -491,7 +555,7 @@ def _encabezado_y_pie(c, doc, datos):
 
     # ── Emisor ───────────────────────────────────────────────────────────
     emisor = datos['emisor']
-    x_emisor = izq + 38 * mm
+    x_emisor = izq + ANCHO_LOGO_MM * mm
     y = tope
     for texto, fuente, tamano, alto in lineas_emisor:
         c.setFont(fuente, tamano)
@@ -502,19 +566,12 @@ def _encabezado_y_pie(c, doc, datos):
 
     # ── Timbrado ─────────────────────────────────────────────────────────
     y = tope
-    c.setFont('Helvetica', 8)
-    c.setFillColor(colors.HexColor('#1a1714'))
-    for etiqueta, valor in (
-        ('RUC', emisor['ruc']),
-        ('Timbrado N.º', emisor['timbrado']),
-        ('Inicio de vigencia', emisor['timbrado_inicio']),
-        ('Fin de vigencia', emisor['timbrado_vto']),
-    ):
-        c.drawRightString(der, y, f'{etiqueta}: {valor or "—"}')
+    for texto, fuente, tamano in _lineas_timbrado(datos):
+        c.setFont(fuente, tamano)
+        c.setFillColor(colors.HexColor(SIDEBAR if fuente.endswith('Bold')
+                                       else '#1a1714'))
+        c.drawRightString(der, y, texto)
         y -= ALTO_LINEA_TITULO_MM * mm
-    c.setFont('Helvetica-Bold', 9)
-    c.setFillColor(colors.HexColor(SIDEBAR))
-    c.drawRightString(der, y, f'{datos["nombre_documento"]} N.º {datos["numero"]}')
 
     # ── Datos generales y receptor ───────────────────────────────────────
     y_linea = tope - (alto_banda + HUECO_ANTES_DE_RAYA_MM) * mm
@@ -551,11 +608,11 @@ def _encabezado_y_pie(c, doc, datos):
         c.drawString(izq, y, f'Correo: {receptor["email"]}')
 
     if datos['en_prueba']:
+        texto, color = datos.get('aviso_prueba') or AVISO_PRUEBA_DEFECTO
         y -= ALTO_LINEA_RECEPTOR_MM * mm
         c.setFont('Helvetica-Bold', 8)
-        c.setFillColor(colors.HexColor('#9a3030'))
-        c.drawString(izq, y, 'DOCUMENTO EMITIDO EN AMBIENTE DE PRUEBA — '
-                             'SIN VALOR COMERCIAL NI FISCAL')
+        c.setFillColor(colors.HexColor(color))
+        c.drawString(izq, y, texto)
 
     # ── Pie: consulta en el SIFEN y QR ───────────────────────────────────
     _pie_consulta(c, doc, datos)
@@ -586,8 +643,10 @@ def _pie_consulta(c, doc, datos):
     else:
         # Sin firma no hay QR posible: el contenido lleva el hash de la firma
         # y el CSC (§13.8.2). Se dice, en vez de dibujar algo que no resuelve.
+        # En gris y no en rojo: no es un error del documento sino un paso que
+        # todavía no ocurrió, y en rojo alarmaba a quien recibía la remisión.
         c.setFont('Helvetica-Oblique', 6.5)
-        c.setFillColor(colors.HexColor('#9a3030'))
+        c.setFillColor(colors.HexColor(TEXTO_SEC))
         c.drawRightString(der, base + 8 * mm, 'QR pendiente: el documento')
         c.drawRightString(der, base + 5 * mm, 'todavía no fue firmado ni')
         c.drawRightString(der, base + 2 * mm, 'transmitido al SIFEN.')
@@ -614,6 +673,23 @@ def _pie_consulta(c, doc, datos):
 
     c.setFont('Helvetica', 6.5)
     c.drawRightString(der, base - 4 * mm, f'Página {c.getPageNumber()}')
+
+
+def _cortar_por_ancho(texto, fuente, tamano, ancho):
+    """Como `_cortar`, pero midiendo el ancho impreso y no la cantidad de letras."""
+    from reportlab.pdfbase.pdfmetrics import stringWidth
+
+    palabras, lineas, actual = str(texto or '').split(), [], ''
+    for palabra in palabras:
+        candidato = f'{actual} {palabra}'.strip()
+        if actual and stringWidth(candidato, fuente, tamano) > ancho:
+            lineas.append(actual)
+            actual = palabra
+        else:
+            actual = candidato
+    if actual:
+        lineas.append(actual)
+    return lineas or ['']
 
 
 def _cortar(texto, largo):

@@ -11,7 +11,7 @@ import { useQuery } from '@tanstack/react-query'
 import {
   X, ChevronRight, ChevronLeft, Plus, Trash2,
   Upload, Image, Star, Loader2, Package,
-  CheckCircle,
+  CheckCircle, ChevronDown, TrendingUp,
 } from 'lucide-react'
 import { productosApi } from '../../services/api'
 import { tieneDimensiones, comboExtra } from './camposPorTipo'
@@ -918,6 +918,99 @@ function BarraPasos({ paso, setPaso, errores }) {
   )
 }
 
+// ─── Resumen de ventas (trazabilidad) ────────────────────────────────────────
+
+// Cuánto se vendió del producto, para decidir cuánto volver a comprar.
+// Solo cantidades: el precio y el cliente están en el reporte de Productos
+// comercializados. Cerrado ocupa una línea, así no empuja el formulario.
+const fmtCantidad = (n) => Number(n).toLocaleString('es-PY', { maximumFractionDigits: 2 })
+const fmtFecha = (f) => new Date(f).toLocaleDateString('es-PY', { day: '2-digit', month: '2-digit', year: 'numeric' })
+
+function ResumenVentas({ productoId }) {
+  const [abierto, setAbierto] = useState(false)
+  const { data, isLoading, isError } = useQuery({
+    queryKey: ['producto-ventas', productoId],
+    queryFn: () => productosApi.ventas(productoId).then(r => r.data),
+  })
+
+  const unidad = data?.unidad || ''
+  const variasVariantes = (data?.variantes?.length || 0) > 1
+  let resumen = 'Cargando ventas…'
+  if (isError) resumen = 'No se pudieron cargar las ventas'
+  else if (data && data.ventas === 0) resumen = 'Sin ventas registradas'
+  else if (data) resumen = `${fmtCantidad(data.total)} ${unidad} en ${data.ventas} venta${data.ventas !== 1 ? 's' : ''}`
+
+  return (
+    <div style={{ padding: '10px 24px 0', flexShrink: 0 }}>
+      <div style={{ border: `1px solid ${C.border}`, borderRadius: '9px', background: C.bgSec }}>
+        <button
+          type="button"
+          onClick={() => setAbierto(a => !a)}
+          disabled={isLoading || isError || !data?.movimientos?.length}
+          style={{
+            width: '100%', display: 'flex', alignItems: 'center', gap: '8px',
+            padding: '9px 12px', background: 'transparent', border: 'none',
+            cursor: data?.movimientos?.length ? 'pointer' : 'default',
+            fontSize: '12.5px', color: C.text, textAlign: 'left',
+          }}
+        >
+          <TrendingUp size={14} style={{ color: C.goldDark, flexShrink: 0 }} />
+          <span style={{ fontWeight: '500' }}>Vendido</span>
+          <span style={{ color: isError ? C.danger : C.textSec, flex: 1 }}>{resumen}</span>
+          {data?.movimientos?.length > 0 && (
+            <ChevronDown size={15} style={{
+              color: C.textMuted, transition: 'transform 150ms',
+              transform: abierto ? 'rotate(180deg)' : 'none',
+            }} />
+          )}
+        </button>
+
+        {abierto && data && (
+          <div style={{ borderTop: `1px solid ${C.border}`, padding: '8px 12px 10px' }}>
+            {variasVariantes && (
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginBottom: '8px' }}>
+                {data.variantes.map(v => (
+                  <span key={v.variante_id} title={v.sku} style={{
+                    fontSize: '11px', padding: '2px 8px', borderRadius: '20px',
+                    background: C.goldMuted, color: C.goldDark,
+                  }}>
+                    {v.descripcion}: {fmtCantidad(v.cantidad)} {unidad}
+                  </span>
+                ))}
+              </div>
+            )}
+            <div style={{ maxHeight: '180px', overflowY: 'auto' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
+                <tbody>
+                  {data.movimientos.map((m, i) => (
+                    <tr key={i} style={{ borderTop: i ? `1px solid ${C.border}` : 'none' }}>
+                      <td style={{ padding: '4px 0', color: C.textMuted, whiteSpace: 'nowrap', width: '80px' }}>
+                        {fmtFecha(m.fecha)}
+                      </td>
+                      <td style={{ padding: '4px 8px', color: C.textSec }}>
+                        {variasVariantes ? m.variante : ''}
+                        {m.tipo === 'devolucion' && (
+                          <span style={{ color: C.danger }}>{variasVariantes ? ' · ' : ''}devolución</span>
+                        )}
+                      </td>
+                      <td style={{
+                        padding: '4px 0', textAlign: 'right', whiteSpace: 'nowrap', fontWeight: '500',
+                        color: m.tipo === 'devolucion' ? C.danger : C.text,
+                      }}>
+                        {fmtCantidad(m.cantidad)} {unidad}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
 // ─── Componente principal exportado ──────────────────────────────────────────
 
 export default function ProductoForm({
@@ -971,6 +1064,8 @@ export default function ProductoForm({
           <X size={20} />
         </button>
       </div>
+
+      {esEdicion && <ResumenVentas productoId={productoEdicion.id} />}
 
       {/* Barra de pasos */}
       <div style={{ padding: '0 24px', flexShrink: 0 }}>
