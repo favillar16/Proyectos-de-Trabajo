@@ -4,6 +4,7 @@ Sistema de Gestión Comercial — Oga Porã
 """
 
 import socket
+import sys
 from pathlib import Path
 from decouple import config
 from datetime import timedelta
@@ -251,6 +252,14 @@ IMPRESORA_TERMICA = {
     # Copias por ticket (1 = una sola copia)
     'copias':           config('IMPRESORA_COPIAS', default=1, cast=int),
 }
+
+# Los tests nunca imprimen, se corran con la configuración que se corran
+# ("manage.py test apps.facturacion", como dicen CLAUDE.md y docs/, usa esta y
+# no settings_test): sin nombre ni puerto, WindowsPrinter.imprimir() devuelve
+# "No hay impresora configurada" antes de tocar win32print. El 03/10/2026 una
+# corrida en el servidor del local encoló 26 tickets reales en la térmica.
+if len(sys.argv) > 1 and sys.argv[1] == 'test':
+    IMPRESORA_TERMICA.update(nombre_windows='', puerto_directo='')
 
 # El sistema imprime SOLO por la térmica de arriba. Acá había un bloque
 # IMPRESORA_MATRICIAL (Epson LX-350) que no leía ningún módulo: se eliminó el
