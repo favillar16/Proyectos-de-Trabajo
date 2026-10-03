@@ -920,9 +920,9 @@ function BarraPasos({ paso, setPaso, errores }) {
 
 // ─── Resumen de ventas (trazabilidad) ────────────────────────────────────────
 
-// Cuánto se vendió del producto, para decidir cuánto volver a comprar.
-// Solo cantidades: el precio y el cliente están en el reporte de Productos
-// comercializados. Cerrado ocupa una línea, así no empuja el formulario.
+// Cuánto se vendió del producto y a quién, para decidir cuánto volver a
+// comprar. Sin precio: eso está en el reporte de Productos comercializados.
+// Cerrado ocupa una línea, así no empuja el formulario.
 const fmtCantidad = (n) => Number(n).toLocaleString('es-PY', { maximumFractionDigits: 2 })
 const fmtFecha = (f) => new Date(f).toLocaleDateString('es-PY', { day: '2-digit', month: '2-digit', year: 'numeric' })
 
@@ -988,9 +988,12 @@ function ResumenVentas({ productoId }) {
                         {fmtFecha(m.fecha)}
                       </td>
                       <td style={{ padding: '4px 8px', color: C.textSec }}>
-                        {variasVariantes ? m.variante : ''}
+                        <span style={{ color: m.cliente ? C.text : C.textMuted }}>
+                          {m.cliente || 'Sin nombre'}
+                        </span>
+                        {variasVariantes && <span> · {m.variante}</span>}
                         {m.tipo === 'devolucion' && (
-                          <span style={{ color: C.danger }}>{variasVariantes ? ' · ' : ''}devolución</span>
+                          <span style={{ color: C.danger }}> · devolución</span>
                         )}
                       </td>
                       <td style={{

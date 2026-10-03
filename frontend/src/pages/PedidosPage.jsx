@@ -214,6 +214,8 @@ function PanelDetalle({ pedido: pedidoResumen, rol, puedeEditarPrecio, onCerrar 
   // en la tablet abre un diálogo del navegador encima de la PWA y, si queda
   // abierto, bloquea toda la pantalla.
   const [itemAQuitar, setItemAQuitar] = useState(null)
+  // Mismo criterio de dos toques para eliminar la nota entera.
+  const [confirmarEliminar, setConfirmarEliminar] = useState(false)
 
   const { data: pedido, isLoading } = useQuery({
     queryKey: ['pedido', pedidoResumen?.id],
@@ -285,6 +287,23 @@ function PanelDetalle({ pedido: pedidoResumen, rol, puedeEditarPrecio, onCerrar 
     onError: (err) => toast.error(err.response?.data?.error || 'No se pudo quitar el producto'),
   })
 
+  // "Eliminar" oculta la nota de todos los listados (no la borra) y, si
+  // todavía reservaba stock, la cancela. Pensado para las notas de prueba.
+  const eliminarNota = useMutation({
+    mutationFn: () => ventasApi.eliminar(pedidoResumen.id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['pedidos'] })
+      queryClient.removeQueries({ queryKey: ['pedido', pedidoResumen.id] })
+      invalidarStock(queryClient)
+      toast.success(`Nota ${pedidoResumen.numero} eliminada`)
+      onCerrar()
+    },
+    onError: (err) => {
+      setConfirmarEliminar(false)
+      toast.error(err.response?.data?.error || 'No se pudo eliminar la nota')
+    },
+  })
+
   const prepararItem = useMutation({
     mutationFn: ({ itemId, preparado }) =>
       ventasApi.prepararItem(pedidoResumen.id, itemId, { preparado, cantidad_preparada: pedido?.items?.find(i=>i.id===itemId)?.cantidad }).then(r => r.data),
@@ -302,6 +321,10 @@ function PanelDetalle({ pedido: pedidoResumen, rol, puedeEditarPrecio, onCerrar 
     ['vendedor', 'encargada_ventas', 'admin'].includes(rol)
     && estadoActual === 'pendiente'
   )
+
+  // Cualquier estado, también pagado (solo se oculta de esta ventana). El
+  // vendedor solo ve sus propias notas, así que no hace falta filtrar acá.
+  const puedeEliminar = ['vendedor', 'encargada_ventas', 'admin'].includes(rol)
 
   if (!pedidoResumen) return null
 
@@ -613,6 +636,45 @@ function PanelDetalle({ pedido: pedidoResumen, rol, puedeEditarPrecio, onCerrar 
               onCambiarEstado={(estado, extra) => cambiarEstado.mutate({ estado, extra })}
               isPending={cambiarEstado.isPending}
             />
+            {puedeEliminar && (
+              confirmarEliminar ? (
+                <div style={{ marginTop:'10px', padding:'10px 12px', borderRadius:'9px',
+                  background:C.dangerBg, border:`1px solid ${C.dangerBorder}` }}>
+                  <p style={{ fontSize:'12.5px', color:C.danger, margin:'0 0 8px' }}>
+                    La nota deja de aparecer en Pedidos
+                    {estadoActual === 'pagado'
+                      ? '. La venta sigue contando en caja y en los reportes.'
+                      : estadoActual !== 'cancelado'
+                        ? ' y se libera el stock que tenía reservado. Queda guardada para auditoría.'
+                        : '. Queda guardada para auditoría.'}
+                  </p>
+                  <div style={{ display:'flex', gap:'8px' }}>
+                    <button onClick={() => setConfirmarEliminar(false)}
+                      disabled={eliminarNota.isPending}
+                      style={{ flex:1, height:'38px', borderRadius:'8px', cursor:'pointer',
+                        background:'transparent', border:`1px solid ${C.border}`,
+                        color:C.textSec, fontSize:'13px' }}>
+                      Volver
+                    </button>
+                    <button onClick={() => eliminarNota.mutate()}
+                      disabled={eliminarNota.isPending}
+                      style={{ flex:1, height:'38px', borderRadius:'8px', cursor:'pointer',
+                        background:C.danger, border:`1px solid ${C.danger}`,
+                        color:'#fff', fontSize:'13px', fontWeight:'500' }}>
+                      {eliminarNota.isPending ? 'Eliminando...' : 'Sí, eliminar'}
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <button onClick={() => setConfirmarEliminar(true)}
+                  style={{ marginTop:'10px', width:'100%', height:'36px', borderRadius:'9px',
+                    cursor:'pointer', background:'transparent', border:'none',
+                    color:C.danger, fontSize:'13px',
+                    display:'flex', alignItems:'center', justifyContent:'center', gap:'6px' }}>
+                  <Trash2 size={14}/> Eliminar nota de pedido
+                </button>
+              )
+            )}
           </div>
         )}
       </div>

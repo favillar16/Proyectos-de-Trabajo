@@ -4,7 +4,7 @@ Tests del resumen de ventas de la ficha de producto
 
 Es la trazabilidad que usa la propietaria para decidir cuánto volver a
 comprar, así que verifican que el número sea el que salió del local: solo
-cobros confirmados, devoluciones restando, y nada de precios ni clientes.
+cobros confirmados, devoluciones restando, con el cliente y sin precios.
 """
 from decimal import Decimal
 
@@ -44,10 +44,22 @@ class VentasProductoTests(BaseDevolucionTests):
         self.assertEqual(len(data['movimientos']), 2)
         self.assertEqual(len(data['variantes']), 1)
 
-    def test_solo_cantidades_sin_precio_ni_cliente(self):
+    def test_cantidades_y_cliente_sin_precio(self):
         self._vender([(self.porcelanato, '1', '150000')])
         mov = self._ventas().json()['movimientos'][0]
-        self.assertEqual(set(mov), {'fecha', 'tipo', 'variante_id', 'variante', 'cantidad'})
+        self.assertEqual(set(mov), {'fecha', 'tipo', 'variante_id', 'variante',
+                                    'cantidad', 'cliente'})
+        self.assertEqual(mov['cliente'], 'Cliente de Prueba')
+
+    def test_sin_nombre_tipeado_usa_el_del_padron(self):
+        from apps.ventas.models import Cliente
+        pago = self._vender([(self.porcelanato, '1', '150000')])
+        pedido = pago.pedido
+        pedido.cliente = Cliente.objects.create(razon_social='Constructora Sur', ruc='80012345-6')
+        pedido.cliente_nombre = ''
+        pedido.save()
+        mov = self._ventas().json()['movimientos'][0]
+        self.assertEqual(mov['cliente'], 'Constructora Sur')
 
     def test_un_cobro_no_confirmado_no_cuenta(self):
         pedido = crear_pedido(self.cajero, [(self.porcelanato, '5', '150000')])
@@ -69,6 +81,8 @@ class VentasProductoTests(BaseDevolucionTests):
         self.assertEqual(data['ventas'], 1)
         self.assertEqual(data['movimientos'][0]['tipo'], 'devolucion')
         self.assertEqual(data['movimientos'][0]['cantidad'], -1)
+        # La devolución dice de qué cliente volvió la mercadería.
+        self.assertEqual(data['movimientos'][0]['cliente'], 'Cliente de Prueba')
 
     def test_cajero_y_deposito_no_lo_ven(self):
         self.assertEqual(self._ventas(self.cajero).status_code, 403)

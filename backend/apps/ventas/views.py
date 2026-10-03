@@ -63,6 +63,9 @@ def _emitir_evento(pedido, tipo_evento, request=None):
         'pedido_pagado':      ['vendedor', 'admin'],
         'pedido_cancelado':   ['deposito', 'cajero', 'admin'],
         'item_preparado':     ['cajero', 'vendedor', 'admin'],
+        # Puede desaparecer de cualquier pantalla: la de depósito si estaba
+        # pendiente, la de caja si estaba lista para cobrar.
+        'pedido_eliminado':   ['vendedor', 'deposito', 'cajero', 'admin'],
     }
 
     for rol in roles_destino.get(tipo_evento, ['admin']):
@@ -93,7 +96,9 @@ class NotaPedidoListCreateView(views.APIView):
         - cajero:    listos para cobrar
         - admin:     todos
         """
-        qs = NotaPedido.objects.select_related(
+        # Las notas eliminadas (pruebas, ver NotaPedidoDetailView.delete) no
+        # aparecen en ningún listado ni pestaña, tampoco en "Cancelados".
+        qs = NotaPedido.objects.filter(eliminado=False).select_related(
             'vendedor', 'preparado_por', 'cliente'
         ).prefetch_related('items__variante__producto').order_by('-fecha_creacion')
 
@@ -164,12 +169,13 @@ class NotaPedidoListCreateView(views.APIView):
 
 class NotaPedidoDetailView(views.APIView):
     """
-    GET:   todos los roles
-    PATCH: vendedor puede editar campos de cliente mientras está pendiente
+    GET:    todos los roles
+    PATCH:  vendedor puede editar campos de cliente mientras está pendiente
+    DELETE: oculta la nota (vendedor la suya, encargada/admin cualquiera)
     """
 
     def get_permissions(self):
-        if self.request.method in ('PUT', 'PATCH'):
+        if self.request.method in ('PUT', 'PATCH', 'DELETE'):
             return [EsAdminOVendedor()]
         return [TodosLosRoles()]
 
@@ -298,6 +304,48 @@ class NotaPedidoDetailView(views.APIView):
 
         _emitir_evento(pedido, 'pedido_actualizado', request)
         return Response(NotaPedidoReadSerializer(pedido, context={'request': request}).data)
+
+
+    @transaction.atomic
+    def delete(self, request, pk):
+        """
+        "Eliminar" una nota de pedido: la oculta de todos los listados, no
+        borra la fila. En el local quedaban a la vista notas hechas de prueba
+        y borrarlas de verdad se llevaría sus movimientos de stock —que son la
+        auditoría— y dejaría un hueco en la numeración sin explicación.
+
+        Si todavía tenía mercadería reservada, se cancela primero (libera la
+        reserva igual que "Cancelar pedido"); una nota oculta no puede seguir
+        apartando stock que nadie ve.
+
+        Un pedido cobrado también se puede eliminar, para que los ya cerrados
+        no llenen la ventana: solo se oculta de Pedidos. Su estado no cambia y
+        no se toca el stock — el cobro sigue en el cierre de caja, en los
+        reportes, en la ficha de producto y en Devoluciones, que leen de los
+        Pagos y no de este listado. Revertir una venta sigue siendo una
+        devolución desde Caja, no esto.
+        """
+        pedido = get_object_or_404(NotaPedido.objects.select_for_update(), pk=pk)
+
+        if pedido.eliminado:
+            return Response({'error': 'La nota ya estaba eliminada.'},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        if request.user.rol == 'vendedor' and pedido.vendedor_id != request.user.id:
+            return Response({'error': 'Solo podés eliminar tus propias notas de pedido.'},
+                            status=status.HTTP_403_FORBIDDEN)
+
+        if pedido.estado in NotaPedido.ESTADOS_CON_RESERVA:
+            pedido.liberar_stock(usuario=request.user)
+            pedido.estado = NotaPedido.ESTADO_CANCELADO
+
+        pedido.eliminado         = True
+        pedido.eliminado_por     = request.user
+        pedido.fecha_eliminacion = timezone.now()
+        pedido.save()
+
+        _emitir_evento(pedido, 'pedido_eliminado', request)
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
 
 class CambioEstadoView(views.APIView):

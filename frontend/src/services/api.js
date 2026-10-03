@@ -126,6 +126,8 @@ export const ventasApi = {
   detalle:      (id)        => api.get(`/ventas/pedidos/${id}/`),
   crear:        (data)      => api.post('/ventas/pedidos/', data),
   actualizar:   (id, data)  => api.patch(`/ventas/pedidos/${id}/`, data),
+  // Oculta la nota (borrado lógico); si tenía stock reservado lo libera
+  eliminar:     (id)        => api.delete(`/ventas/pedidos/${id}/`),
   cambiarEstado:(id, estado, extra = {}) =>
     api.post(`/ventas/pedidos/${id}/estado/`, { estado, ...extra }),
   prepararItem: (pedidoId, itemId, data) =>

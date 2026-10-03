@@ -16,8 +16,8 @@ class ItemPedidoInline(admin.TabularInline):
 
 @admin.register(NotaPedido)
 class NotaPedidoAdmin(admin.ModelAdmin):
-    list_display = ['numero', 'estado', 'cliente_nombre', 'total', 'total_ajustado', 'fecha_creacion']
-    list_filter  = ['estado', 'fecha_creacion']
+    list_display = ['numero', 'estado', 'cliente_nombre', 'total', 'total_ajustado', 'fecha_creacion', 'eliminado']
+    list_filter  = ['estado', 'eliminado', 'fecha_creacion']
     search_fields = ['numero', 'cliente_nombre', 'cliente_ruc']
     inlines = [ItemPedidoInline]
     date_hierarchy = 'fecha_creacion'

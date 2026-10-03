@@ -122,6 +122,18 @@ class NotaPedido(models.Model):
     fecha_creacion    = models.DateTimeField(auto_now_add=True)
     fecha_actualizacion = models.DateTimeField(auto_now=True)
 
+    # "Eliminar" una nota la oculta, no la borra: sus movimientos de stock
+    # son la auditoría y el número ya se consumió. Sirve para sacar de la
+    # vista las notas que se hicieron de prueba en el local. Se revierte
+    # desde el admin de Django destildando `eliminado`.
+    eliminado     = models.BooleanField(default=False, db_index=True)
+    eliminado_por = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='pedidos_eliminados'
+    )
+    fecha_eliminacion = models.DateTimeField(null=True, blank=True)
+
     class Meta:
         db_table            = 'notas_pedido'
         ordering            = ['-fecha_creacion']

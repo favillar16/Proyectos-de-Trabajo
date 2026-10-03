@@ -263,9 +263,9 @@ class ProductoViewSet(ProtegeAlBorrarMixin, viewsets.ModelViewSet):
         """
         GET /api/v1/productos/<id>/ventas/
 
-        Cuánto se vendió del producto, venta por venta. Solo cantidades: ni
-        precio ni cliente, porque lo que se busca acá es el ritmo de salida
-        para decidir cuánto volver a comprar, no el detalle comercial (eso
+        Cuánto se vendió del producto, venta por venta, y a qué cliente. Sin
+        precio: lo que se busca acá es el ritmo de salida para decidir cuánto
+        volver a comprar y a quién se le vendió, no el detalle comercial (eso
         está en el reporte de Productos comercializados).
 
         Mismo criterio que ese reporte: cuenta la fecha del cobro confirmado,
@@ -279,6 +279,15 @@ class ProductoViewSet(ProtegeAlBorrarMixin, viewsets.ModelViewSet):
         movimientos = []
         por_variante = {}
 
+        def _cliente(pedido):
+            # El nombre tipeado en el pedido manda; si quedó vacío, el del
+            # padrón. Igual que la nota impresa.
+            if pedido.cliente_nombre:
+                return pedido.cliente_nombre
+            if pedido.cliente_id:
+                return pedido.cliente.razon_social
+            return ''
+
         def _sumar(variante, cantidad):
             registro = por_variante.setdefault(variante.id, {
                 'variante_id': variante.id,
@@ -291,7 +300,7 @@ class ProductoViewSet(ProtegeAlBorrarMixin, viewsets.ModelViewSet):
         pagos = Pago.objects.filter(
             estado=Pago.ESTADO_CONFIRMADO,
             pedido__items__variante__producto=producto,
-        ).distinct().prefetch_related(
+        ).distinct().select_related('pedido__cliente').prefetch_related(
             Prefetch(
                 'pedido__items',
                 queryset=ItemPedido.objects.filter(variante__producto=producto)
@@ -308,11 +317,13 @@ class ProductoViewSet(ProtegeAlBorrarMixin, viewsets.ModelViewSet):
                     'variante_id': item.variante_id,
                     'variante':    str(item.variante),
                     'cantidad':    cantidad,
+                    'cliente':     _cliente(pago.pedido),
                 })
 
         devueltos = ItemDevolucion.objects.filter(
             variante__producto=producto,
-        ).select_related('devolucion', 'variante__acabado')
+        ).select_related('devolucion__pago_original__pedido__cliente',
+                         'variante__acabado')
         for dev in devueltos:
             cantidad = -float(dev.cantidad)
             _sumar(dev.variante, cantidad)
@@ -322,6 +333,7 @@ class ProductoViewSet(ProtegeAlBorrarMixin, viewsets.ModelViewSet):
                 'variante_id': dev.variante_id,
                 'variante':    str(dev.variante),
                 'cantidad':    cantidad,
+                'cliente':     _cliente(dev.devolucion.pago_original.pedido),
             })
 
         movimientos.sort(key=lambda m: m['fecha'], reverse=True)

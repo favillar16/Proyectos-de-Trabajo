@@ -280,3 +280,103 @@ class DatosDelClienteEnPedidoPagadoTests(BaseVentas):
             self.url, {'cliente_observaciones': 'Entregar por la mañana'},
             format='json')
         self.assertEqual(respuesta.status_code, 200)
+
+
+class EliminarNotaDePedidoTests(BaseVentas):
+    """
+    "Eliminar" oculta la nota, no la borra: en el local quedaban a la vista
+    notas hechas de prueba, pero sus movimientos de stock son la auditoría.
+    """
+
+    def _eliminar(self, pedido, cliente=None):
+        return (cliente or self.cliente_api).delete(
+            reverse('pedido-detail', args=[pedido.id]))
+
+    def _numeros_listados(self, **params):
+        respuesta = self.cliente_api.get(reverse('pedidos-list'), params)
+        return [p['numero'] for p in respuesta.data['results']]
+
+    def test_la_fila_sigue_en_la_base(self):
+        pedido = self._pedido_con_reserva('3')
+        self.assertEqual(self._eliminar(pedido).status_code, 204)
+        pedido.refresh_from_db()
+        self.assertTrue(pedido.eliminado)
+        self.assertEqual(pedido.eliminado_por, self.vendedor)
+        self.assertIsNotNone(pedido.fecha_eliminacion)
+
+    def test_desaparece_de_todos_los_listados(self):
+        pedido = self._pedido_con_reserva('3')
+        self._eliminar(pedido)
+        self.assertNotIn(pedido.numero, self._numeros_listados())
+        self.assertNotIn(pedido.numero, self._numeros_listados(estado='cancelado'))
+        self.assertNotIn(pedido.numero, self._numeros_listados(buscar=pedido.numero))
+
+    def test_libera_la_reserva_y_queda_cancelado(self):
+        pedido = self._pedido_con_reserva('10')
+        self._eliminar(pedido)
+        pedido.refresh_from_db()
+        self.stock.refresh_from_db()
+        self.assertEqual(pedido.estado, NotaPedido.ESTADO_CANCELADO)
+        self.assertEqual(self.stock.cantidad_reservada, Decimal('0'))
+        self.assertEqual(self.stock.cantidad, Decimal('50'))
+
+    def test_un_pedido_ya_cancelado_tambien_se_puede_eliminar(self):
+        pedido = self._pedido_con_reserva('2')
+        pedido.liberar_stock(usuario=self.vendedor)
+        pedido.estado = NotaPedido.ESTADO_CANCELADO
+        pedido.save()
+        self.assertEqual(self._eliminar(pedido).status_code, 204)
+        self.stock.refresh_from_db()
+        self.assertEqual(self.stock.cantidad_reservada, Decimal('0'))
+
+    def test_un_pedido_cobrado_se_oculta_sin_tocar_estado_ni_stock(self):
+        pedido = self._pedido_con_reserva('4')
+        pedido.estado = NotaPedido.ESTADO_PAGADO
+        pedido.save()
+        pedido.descontar_stock(usuario=self.vendedor)
+        self.stock.refresh_from_db()
+        antes = (self.stock.cantidad, self.stock.cantidad_reservada)
+        movimientos = MovimientoStock.objects.count()
+
+        self.assertEqual(self._eliminar(pedido).status_code, 204)
+
+        pedido.refresh_from_db()
+        self.stock.refresh_from_db()
+        self.assertTrue(pedido.eliminado)
+        self.assertEqual(pedido.estado, NotaPedido.ESTADO_PAGADO)
+        self.assertEqual((self.stock.cantidad, self.stock.cantidad_reservada), antes)
+        self.assertEqual(MovimientoStock.objects.count(), movimientos)
+        self.assertNotIn(pedido.numero, self._numeros_listados(estado='pagado'))
+
+    def test_el_vendedor_no_elimina_notas_ajenas(self):
+        otro = crear_usuario('otro_vendedor', rol=Usuario.ROL_VENDEDOR)
+        pedido = self._pedido_con_reserva('2')
+        NotaPedido.objects.filter(pk=pedido.pk).update(vendedor=otro)
+        self.assertEqual(self._eliminar(pedido).status_code, 403)
+
+    def test_el_admin_elimina_cualquiera(self):
+        admin = crear_usuario('admin_api', rol=Usuario.ROL_ADMIN)
+        api_admin = APIClient()
+        api_admin.force_authenticate(admin)
+        pedido = self._pedido_con_reserva('2')
+        self.assertEqual(self._eliminar(pedido, api_admin).status_code, 204)
+
+    def test_el_cajero_no_puede_eliminar(self):
+        cajero = crear_usuario('cajero_api', rol=Usuario.ROL_CAJERO)
+        api_cajero = APIClient()
+        api_cajero.force_authenticate(cajero)
+        pedido = self._pedido_con_reserva('2')
+        self.assertEqual(self._eliminar(pedido, api_cajero).status_code, 403)
+
+    def test_eliminar_dos_veces_no_libera_dos_veces(self):
+        pedido = self._pedido_con_reserva('5')
+        self._eliminar(pedido)
+        self.assertEqual(self._eliminar(pedido).status_code, 400)
+        self.assertEqual(MovimientoStock.objects.filter(
+            tipo=MovimientoStock.TIPO_LIBERACION, referencia_id=pedido.id).count(), 1)
+
+    def test_el_numero_no_se_reutiliza(self):
+        pedido = self._pedido_con_reserva('1')
+        self._eliminar(pedido)
+        nuevo = NotaPedido.objects.create(vendedor=self.vendedor)
+        self.assertNotEqual(nuevo.numero, pedido.numero)
