@@ -63,4 +63,16 @@ STATICFILES_STORAGE = 'django.contrib.staticfiles.storage.StaticFilesStorage'
 # de los productos.
 MEDIA_ROOT = BASE_DIR / 'media_test'  # noqa: F405
 
+# Sin impresora: heredando la de settings.py, cada test que cobra o cierra caja
+# mandaba un ticket real a la térmica de la PC donde se corrían (el 03/10/2026
+# encolaron 26 en el servidor del local). Sin nombre ni puerto,
+# ImpresoraTermica.imprimir() devuelve "No hay impresora configurada" antes de
+# tocar win32print. Se vacían los dos y no solo auto_imprimir porque
+# imprimir_cierre() no lo consulta.
+IMPRESORA_TERMICA = {
+    **IMPRESORA_TERMICA,  # noqa: F405
+    'nombre_windows': '',
+    'puerto_directo': '',
+}
+
 DEBUG = False
