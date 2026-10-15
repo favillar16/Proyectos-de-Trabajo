@@ -72,7 +72,7 @@ class KPIsDashboardView(views.APIView):
     permission_classes = [EsAdmin]
 
     def get(self, request):
-        from .models import Pago
+        from .models import Pago, PagoMedio
         from apps.ventas.models import NotaPedido, ItemPedido
         from apps.inventario.models import Stock
 
@@ -104,18 +104,21 @@ class KPIsDashboardView(views.APIView):
         ticket_prom_mes = round(venta_mes / cant_mes, 0) if cant_mes > 0 else 0
 
         # ── Desglose por medio de pago (últimos 30 días) ──────
-        medios_qs = Pago.objects.filter(
-            estado=Pago.ESTADO_CONFIRMADO,
-            fecha__gte=mes_ini,
-        ).values('medio_pago').annotate(
+        # Por línea del cobro: un pago mixto reparte su monto entre medios.
+        # `cantidad` cuenta cobros distintos, no líneas (dos cheques del
+        # mismo cobro son una venta).
+        medios_qs = PagoMedio.objects.filter(
+            pago__estado=Pago.ESTADO_CONFIRMADO,
+            pago__fecha__gte=mes_ini,
+        ).values('medio').annotate(
             total=Sum('monto'),
-            cantidad=Count('id'),
+            cantidad=Count('pago', distinct=True),
         ).order_by('-total')
 
         medios = [
             {
-                'medio':    item['medio_pago'],
-                'label':    dict(Pago.MEDIOS).get(item['medio_pago'], item['medio_pago']),
+                'medio':    item['medio'],
+                'label':    dict(Pago.MEDIOS).get(item['medio'], item['medio']),
                 'total':    float(item['total'] or 0),
                 'cantidad': int(item['cantidad'] or 0),
             }
@@ -215,7 +218,7 @@ class KPIsDashboardView(views.APIView):
                 'ticket':  p.numero_ticket,
                 'cliente': p.pedido.cliente_nombre or 'Consumidor Final',
                 'monto':   float(p.monto),
-                'medio':   dict(Pago.MEDIOS).get(p.medio_pago, p.medio_pago),
+                'medio':   dict(Pago.MEDIOS_Y_MIXTO).get(p.medio_pago, p.medio_pago),
                 'cajero':  p.cajero.nombre_completo,
                 'fecha':   timezone.localtime(p.fecha).strftime('%d/%m %H:%M'),
                 'hace':    _hace_cuanto(p.fecha, ahora),
@@ -274,6 +277,9 @@ class KPIsDashboardView(views.APIView):
             # ── Costos del período ───────────────────────────────────
             'costos': _resumen_costos(mes_ini, ahora),
 
+            # ── Ganancia real del mes calendario (ver caja/ganancias.py) ──
+            'ganancia_mes': _ganancia_mes(timezone.localdate()),
+
             'pedidos_activos': {
                 'pendiente':      pedidos_activos.get(NotaPedido.ESTADO_PENDIENTE, 0),
                 'en_preparacion': pedidos_activos.get(NotaPedido.ESTADO_EN_PREPARACION, 0),
@@ -288,6 +294,21 @@ def _hace_cuanto(fecha, ahora):
     if diff < 3600:  return f'hace {diff // 60} min'
     if diff < 86400: return f'hace {diff // 3600}h'
     return timezone.localtime(fecha).strftime('%d/%m')
+
+
+def _ganancia_mes(hoy):
+    """
+    Ganancia del 1° del mes a hoy: lo cobrado menos el costo de lo vendido,
+    y menos los gastos sin pagos a proveedor. Mes calendario y no "últimos
+    30 días" porque se compara con los gastos, que se cargan por mes.
+    """
+    from . import ganancias
+    try:
+        r = ganancias.resumen(hoy.replace(day=1), hoy)
+    except Exception as e:
+        logger.warning(f'_ganancia_mes error: {e}')
+        return None
+    return {k: (float(v) if v is not None else None) for k, v in r.items()}
 
 
 def _resumen_costos(inicio, fin):

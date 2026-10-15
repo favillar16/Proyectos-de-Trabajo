@@ -11,7 +11,7 @@
  * El WebSocket de rol 'cajero' notifica en tiempo real cuando
  * llega un pedido listo para cobrar.
  */
-import { useState, useCallback, useRef, useEffect } from 'react'
+import { useState, useCallback, useRef, useEffect, useId } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   CreditCard, DollarSign, Banknote, ArrowRightLeft, ScrollText,
@@ -19,6 +19,7 @@ import {
   ChevronRight, Package, Clock, AlertCircle,
   RefreshCw, Receipt, X, Loader2, TrendingUp,
   Wifi, WifiOff, Search, User, Copy, ClipboardCheck, Eye, RotateCcw,
+  Plus, Trash2, Layers,
 } from 'lucide-react'
 import Layout from '../components/layout/Layout'
 import { PanelDevolucion, ComprobanteDevolucion } from '../components/caja/PanelDevolucion'
@@ -277,6 +278,291 @@ function BuscadorClienteCaja({ onSeleccionar }) {
   )
 }
 
+// Datos de la tarjeta — obligatorios para facturar electrónicamente. El
+// SIFEN activa el grupo E620 en toda venta con débito o crédito (ver
+// backend/apps/caja/pos.py). Se usan en el cobro de un solo medio y en cada
+// línea de tarjeta del pago mixto.
+function CamposTarjeta({ tarjeta, setTarjeta, device }) {
+  return (
+    <div style={{ marginBottom:'12px' }}>
+      <label style={{ display:'block', fontSize:'12px', fontWeight:'500',
+        color:C.textSec, marginBottom:'6px' }}>
+        ¿Con qué tarjeta pagó?
+        <span style={{ color:C.gold, fontWeight:'500' }}> *</span>
+      </label>
+      <div style={{ display:'flex', flexWrap:'wrap', gap:'6px' }}>
+        {TARJETAS.map(t => {
+          const activa = tarjeta.denominacion === t.key
+          return (
+            <button key={t.key}
+              onClick={() => setTarjeta(v => ({ ...v, denominacion: t.key }))}
+              style={{ height:device.isTouch?'40px':'34px', padding:'0 12px',
+                borderRadius:'8px', cursor:'pointer', fontSize:'12.5px',
+                border:`1px solid ${activa ? C.gold : C.border}`,
+                background: activa ? C.gold : C.bg,
+                color: activa ? '#fff' : C.textSec,
+                WebkitTapHighlightColor:'transparent' }}>
+              {t.label}
+            </button>
+          )
+        })}
+      </div>
+
+      {tarjeta.denominacion === 99 && (
+        <input
+          value={tarjeta.denominacion_descripcion}
+          onChange={e => setTarjeta(v => ({ ...v, denominacion_descripcion: e.target.value }))}
+          placeholder="Nombre de la tarjeta"
+          maxLength={20}
+          style={{ width:'100%', height:'40px', padding:'0 12px', marginTop:'8px',
+            border:`1px solid ${C.border}`, borderRadius:'10px',
+            fontSize:'13px', color:C.text, background:C.bg, outline:'none' }}
+        />
+      )}
+
+      <div style={{ display:'flex', gap:'8px', marginTop:'8px' }}>
+        <input
+          value={tarjeta.titular}
+          onChange={e => setTarjeta(v => ({ ...v, titular: e.target.value }))}
+          placeholder="Titular (opcional)"
+          maxLength={30}
+          style={{ flex:2, height:'40px', padding:'0 12px',
+            border:`1px solid ${C.border}`, borderRadius:'10px',
+            fontSize:'13px', color:C.text, background:C.bg, outline:'none' }}
+        />
+        <input
+          value={tarjeta.ultimos_digitos}
+          onChange={e => setTarjeta(v => ({
+            ...v, ultimos_digitos: e.target.value.replace(/\D/g, '').slice(-4) }))}
+          placeholder="Últimos 4"
+          inputMode="numeric"
+          style={{ flex:1, height:'40px', padding:'0 12px',
+            border:`1px solid ${C.border}`, borderRadius:'10px',
+            fontSize:'13px', color:C.text, background:C.bg, outline:'none' }}
+        />
+      </div>
+      <p style={{ fontSize:'11px', color:C.textMuted, marginTop:'6px' }}>
+        Se copian del voucher que imprime la terminal.
+      </p>
+    </div>
+  )
+}
+
+// Datos del cheque — banco y número, siempre. El SIFEN los exige (grupo
+// E630) al facturar, pero acá se piden aunque sea un ticket: un cheque es una
+// promesa de pago y sin estos dos datos el local no puede seguirle el rastro
+// al papel. Ver backend/apps/caja/cheque.py.
+function CamposCheque({ cheque, setCheque, device }) {
+  const listaBancos = useId()
+  const chequeDiferido = Boolean(cheque.fecha_cobro) &&
+    cheque.fecha_cobro > new Date().toISOString().slice(0, 10)
+  return (
+    <div style={{ marginBottom:'12px' }}>
+      <label style={{ display:'block', fontSize:'12px', fontWeight:'500',
+        color:C.textSec, marginBottom:'6px' }}>
+        Datos del cheque
+        <span style={{ color:C.gold, fontWeight:'500' }}> *</span>
+      </label>
+
+      <div style={{ display:'flex', gap:'8px' }}>
+        <input
+          value={cheque.numero}
+          onChange={e => setCheque(v => ({
+            ...v, numero: e.target.value.replace(/\D/g, '').slice(0, 8) }))}
+          placeholder="Nro. de cheque"
+          inputMode="numeric"
+          style={{ flex:1, height:device.isTouch?'46px':'40px', padding:'0 12px',
+            border:`1px solid ${C.border}`, borderRadius:'10px',
+            fontSize:'14px', color:C.text, background:C.bg, outline:'none' }}
+          onFocus={e=>e.target.style.borderColor=C.gold}
+          onBlur={e=>e.target.style.borderColor=C.border}
+        />
+        <input
+          value={cheque.banco}
+          onChange={e => setCheque(v => ({ ...v, banco: e.target.value.slice(0, 20) }))}
+          placeholder="Banco emisor"
+          list={listaBancos}
+          maxLength={20}
+          style={{ flex:1.4, height:device.isTouch?'46px':'40px', padding:'0 12px',
+            border:`1px solid ${C.border}`, borderRadius:'10px',
+            fontSize:'14px', color:C.text, background:C.bg, outline:'none' }}
+          onFocus={e=>e.target.style.borderColor=C.gold}
+          onBlur={e=>e.target.style.borderColor=C.border}
+        />
+        <datalist id={listaBancos}>
+          {BANCOS.map(b => <option key={b} value={b} />)}
+        </datalist>
+      </div>
+
+      <div style={{ display:'flex', gap:'8px', marginTop:'8px' }}>
+        <input
+          value={cheque.titular}
+          onChange={e => setCheque(v => ({ ...v, titular: e.target.value }))}
+          placeholder="Librado por (opcional)"
+          maxLength={60}
+          style={{ flex:1.4, height:'40px', padding:'0 12px',
+            border:`1px solid ${C.border}`, borderRadius:'10px',
+            fontSize:'13px', color:C.text, background:C.bg, outline:'none' }}
+        />
+        <input
+          type="date"
+          value={cheque.fecha_cobro}
+          onChange={e => setCheque(v => ({ ...v, fecha_cobro: e.target.value }))}
+          title="Fecha de cobro — vacía si el cheque es a la vista"
+          style={{ flex:1, height:'40px', padding:'0 10px',
+            border:`1px solid ${C.border}`, borderRadius:'10px',
+            fontSize:'13px', color:cheque.fecha_cobro ? C.text : C.textMuted,
+            background:C.bg, outline:'none' }}
+        />
+      </div>
+
+      {cheque.banco.trim() && cheque.banco.trim().length < 4 && (
+        <p style={{ fontSize:'11px', color:C.danger, marginTop:'6px' }}>
+          El banco va con nombre, no con sigla: el comprobante
+          electrónico necesita al menos 4 letras.
+        </p>
+      )}
+
+      {chequeDiferido ? (
+        <div style={{ marginTop:'8px', padding:'10px 14px',
+          background:C.warningBg, border:`1px solid ${C.warningBorder}`,
+          borderRadius:'10px', display:'flex', alignItems:'center', gap:'7px',
+          fontSize:'12.5px', color:C.warning }}>
+          <Clock size={15} />
+          Cheque diferido: recién se puede depositar el{' '}
+          {new Date(`${cheque.fecha_cobro}T00:00:00`).toLocaleDateString('es-PY')}.
+        </div>
+      ) : (
+        <p style={{ fontSize:'11px', color:C.textMuted, marginTop:'6px' }}>
+          Se copian del cheque. La fecha va solo si es diferido.
+        </p>
+      )}
+    </div>
+  )
+}
+
+const CHEQUE_VACIO  = { numero: '', banco: '', titular: '', fecha_cobro: '' }
+const TARJETA_VACIA = { denominacion: '', denominacion_descripcion: '', titular: '', ultimos_digitos: '' }
+
+let _idLinea = 0
+function nuevaLinea(medio = 'cheque', monto = '') {
+  _idLinea += 1
+  return { id: _idLinea, medio, monto, recibido: '', referencia: '',
+           cheque: { ...CHEQUE_VACIO }, tarjeta: { ...TARJETA_VACIA } }
+}
+
+// Lo que le falta a una línea del pago mixto para poder cobrarse, o null.
+// Mismas reglas que valida el backend (apps/caja/medios.py y cheque.py).
+function faltaEnLinea(l, tipoComprobante) {
+  if (!(Number(l.monto) > 0)) return 'falta el monto'
+  if (l.medio === 'cheque' && !(l.cheque.numero.trim() && l.cheque.banco.trim().length >= 4))
+    return 'faltan número y banco del cheque'
+  if ((l.medio === 'debito' || l.medio === 'credito') && tipoComprobante === 'factura'
+      && !l.tarjeta.denominacion)
+    return 'falta con qué tarjeta pagó'
+  if (l.medio === 'efectivo' && l.recibido && Number(l.recibido) < Number(l.monto))
+    return 'lo recibido es menos que el monto'
+  return null
+}
+
+// Una línea del pago mixto: medio, monto y los datos que ese medio pide.
+function LineaMedio({ linea, indice, resto, puedeQuitar, hayEfectivo, tipoComprobante,
+                      onCambiar, onQuitar, device }) {
+  const set = (campo) => (valor) => onCambiar({ ...linea,
+    [campo]: typeof valor === 'function' ? valor(linea[campo]) : valor })
+  const vuelto = linea.medio === 'efectivo' && Number(linea.recibido) > Number(linea.monto)
+    ? Number(linea.recibido) - Number(linea.monto) : 0
+  return (
+    <div style={{ border:`1px solid ${C.border}`, borderRadius:'10px', padding:'10px 12px',
+      marginBottom:'10px', background:C.bgSec }}>
+      <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between',
+        marginBottom:'8px' }}>
+        <span style={{ fontSize:'12px', fontWeight:'500', color:C.textSec }}>
+          Medio {indice + 1}
+        </span>
+        {puedeQuitar && (
+          <button onClick={onQuitar} title="Quitar este medio"
+            style={{ width:'30px', height:'30px', borderRadius:'7px', cursor:'pointer',
+              background:'transparent', border:`1px solid ${C.border}`, color:C.textMuted,
+              display:'flex', alignItems:'center', justifyContent:'center' }}>
+            <Trash2 size={14}/>
+          </button>
+        )}
+      </div>
+
+      <div style={{ display:'flex', flexWrap:'wrap', gap:'6px', marginBottom:'8px' }}>
+        {MEDIOS.map(m => {
+          const activo = linea.medio === m.key
+          // Efectivo, una sola línea: dos no dicen nada que una no diga.
+          const bloqueado = m.key === 'efectivo' && hayEfectivo && !activo
+          return (
+            <button key={m.key} disabled={bloqueado}
+              onClick={() => onCambiar({ ...linea, medio: m.key })}
+              title={bloqueado ? 'El efectivo va en una sola línea' : m.label}
+              style={{ height:device.isTouch?'38px':'32px', padding:'0 10px', borderRadius:'8px',
+                fontSize:'12px', cursor: bloqueado ? 'not-allowed' : 'pointer',
+                opacity: bloqueado ? 0.4 : 1,
+                background: activo ? C.sidebar : C.bg,
+                border:`1px solid ${activo ? C.gold : C.border}`,
+                color: activo ? C.gold : C.textSec,
+                WebkitTapHighlightColor:'transparent' }}>
+              {m.label}
+            </button>
+          )
+        })}
+      </div>
+
+      <div style={{ display:'flex', gap:'8px', alignItems:'center', marginBottom:'8px' }}>
+        <input type="number" min="0" step="1000" value={linea.monto}
+          onChange={e => set('monto')(e.target.value)}
+          placeholder="Monto (Gs.)"
+          style={{ flex:1, minWidth:0, height:device.isTouch?'46px':'40px', padding:'0 12px',
+            border:`1px solid ${C.border}`, borderRadius:'10px', fontSize:'16px',
+            fontWeight:'600', color:C.text, background:C.bg, outline:'none', textAlign:'right' }} />
+        {resto > 0 && (
+          <button onClick={() => set('monto')(String(Number(linea.monto || 0) + resto))}
+            title="Completar con lo que falta"
+            style={{ height:device.isTouch?'46px':'40px', padding:'0 10px', borderRadius:'10px',
+              cursor:'pointer', background:C.goldMuted, border:`1px solid ${C.gold}`,
+              color:C.goldDark, fontSize:'12px', whiteSpace:'nowrap' }}>
+            + resto
+          </button>
+        )}
+      </div>
+
+      {linea.medio === 'efectivo' && (
+        <div style={{ marginBottom:'4px' }}>
+          <input type="number" min="0" step="1000" value={linea.recibido}
+            onChange={e => set('recibido')(e.target.value)}
+            placeholder="Recibido en efectivo (vacío = justo)"
+            style={{ width:'100%', height:'40px', padding:'0 12px', textAlign:'right',
+              border:`1px solid ${C.border}`, borderRadius:'10px', fontSize:'14px',
+              color:C.text, background:C.bg, outline:'none' }} />
+          {vuelto > 0 && (
+            <p style={{ fontSize:'13px', color:C.success, fontWeight:'600', marginTop:'6px' }}>
+              Vuelto: {formatGs(vuelto)}
+            </p>
+          )}
+        </div>
+      )}
+      {linea.medio === 'cheque' && (
+        <CamposCheque cheque={linea.cheque} setCheque={set('cheque')} device={device} />
+      )}
+      {(linea.medio === 'debito' || linea.medio === 'credito') && tipoComprobante === 'factura' && (
+        <CamposTarjeta tarjeta={linea.tarjeta} setTarjeta={set('tarjeta')} device={device} />
+      )}
+      {(linea.medio === 'debito' || linea.medio === 'credito' || linea.medio === 'transferencia') && (
+        <input value={linea.referencia} onChange={e => set('referencia')(e.target.value)}
+          placeholder={linea.medio === 'transferencia'
+            ? 'Nro. de comprobante (opcional)' : 'Nro. de autorización (opcional)'}
+          style={{ width:'100%', height:'40px', padding:'0 12px',
+            border:`1px solid ${C.border}`, borderRadius:'10px', fontSize:'13px',
+            color:C.text, background:C.bg, outline:'none' }} />
+      )}
+    </div>
+  )
+}
+
 function PanelCobro({ pedido: pedidoResumen, sesion, onPagado, onCancelar }) {
   const [medio, setMedio]       = useState('efectivo')
   const [recibido, setRecibido] = useState('')
@@ -290,6 +576,10 @@ function PanelCobro({ pedido: pedidoResumen, sesion, onPagado, onCancelar }) {
   // (ver backend/apps/caja/cheque.py).
   const [cheque, setCheque] = useState({
     numero: '', banco: '', titular: '', fecha_cobro: '' })
+  // Pago mixto / varios cheques: en vez de un medio, una lista de líneas
+  // que tiene que sumar el total (apps/caja/medios.py).
+  const [mixto, setMixto] = useState(false)
+  const [lineas, setLineas] = useState([])
   const [tipoComprobante, setTipoComprobante] = useState('ticket')
   const [condicionVenta, setCondicionVenta] = useState('Contado')
   const [descuentoPct, setDescuentoPct] = useState('')   // % de descuento en caja
@@ -331,12 +621,44 @@ function PanelCobro({ pedido: pedidoResumen, sesion, onPagado, onCancelar }) {
   const chequeDiferido = esCheque && Boolean(cheque.fecha_cobro) &&
     cheque.fecha_cobro > new Date().toISOString().slice(0, 10)
 
+  const asignado = lineas.reduce((acc, l) => acc + (Number(l.monto) || 0), 0)
+  const resto = total - asignado
+  const hayEfectivo = lineas.some(l => l.medio === 'efectivo')
+  const faltaMixto = mixto && (
+    lineas.length === 0 || resto !== 0 ||
+    lineas.some(l => faltaEnLinea(l, tipoComprobante)))
+
+  const activarMixto = () => {
+    // Arranca con el medio que estaba elegido, por el total, y una segunda
+    // línea vacía: de cheque si ya era cheque (el caso que lo motivó), si
+    // no de efectivo. La cajera ajusta los montos.
+    setLineas([nuevaLinea(medio, String(total)),
+               nuevaLinea(medio === 'cheque' || medio === 'efectivo' ? 'cheque' : 'efectivo')])
+    setMixto(true)
+  }
+
+  const mediosApi = () => lineas.map(l => ({
+    medio: l.medio,
+    monto: Number(l.monto),
+    monto_recibido: l.medio === 'efectivo' ? (Number(l.recibido) || Number(l.monto)) : undefined,
+    referencia_externa: l.referencia,
+    datos_cheque: l.medio === 'cheque' ? l.cheque : undefined,
+    datos_tarjeta: (l.medio === 'debito' || l.medio === 'credito') && tipoComprobante === 'factura'
+      ? { ...l.tarjeta, codigo_autorizacion: l.referencia } : undefined,
+  }))
+
   const mutation = useMutation({
     mutationFn: () => cajaApi.registrarPago({
       pedido_id:          pedidoResumen.id,
-      medio_pago:         medio,
-      monto_recibido:     medio === 'efectivo' ? Number(recibido) || total : undefined,
-      referencia_externa: referencia,
+      ...(mixto ? { medios: mediosApi() } : {
+        medio_pago:         medio,
+        monto_recibido:     medio === 'efectivo' ? Number(recibido) || total : undefined,
+        referencia_externa: referencia,
+        datos_tarjeta: esTarjeta && tipoComprobante === 'factura'
+          ? { ...tarjeta, codigo_autorizacion: referencia }
+          : undefined,
+        datos_cheque: esCheque ? cheque : undefined,
+      }),
       tipo_comprobante:   tipoComprobante,
       cliente_ruc:        tipoComprobante === 'factura' ? cli.ruc : '',
       cliente_razon_social: tipoComprobante === 'factura' ? cli.razon_social : '',
@@ -348,10 +670,6 @@ function PanelCobro({ pedido: pedidoResumen, sesion, onPagado, onCancelar }) {
       guardar_cliente:    tipoComprobante === 'factura' && Boolean(cli.ruc && cli.razon_social),
       condicion_venta:    tipoComprobante === 'factura' ? condicionVenta : 'Contado',
       descuento_porcentaje: pct,
-      datos_tarjeta: esTarjeta && tipoComprobante === 'factura'
-        ? { ...tarjeta, codigo_autorizacion: referencia }
-        : undefined,
-      datos_cheque: esCheque ? cheque : undefined,
     }).then(r => r.data),
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ['pedidos'] })
@@ -387,9 +705,10 @@ function PanelCobro({ pedido: pedidoResumen, sesion, onPagado, onCancelar }) {
   const puedeConfirmar = pedido?.estado === 'listo' &&
     !facturaSinDatos &&
     !correoInvalido &&
-    !faltaTarjeta &&
-    !faltaCheque &&
-    (medio !== 'efectivo' || Number(recibido) >= total || !recibido)
+    (mixto ? !faltaMixto : (
+      !faltaTarjeta &&
+      !faltaCheque &&
+      (medio !== 'efectivo' || Number(recibido) >= total || !recibido)))
 
   return (
     <div style={{ display:'flex', flexDirection:'column', height:'100%' }}>
@@ -691,10 +1010,63 @@ function PanelCobro({ pedido: pedidoResumen, sesion, onPagado, onCancelar }) {
         )}
 
         {/* Selector de medio de pago */}
-        <p style={{ fontSize:'11px', fontWeight:'500', color:C.textMuted,
-          textTransform:'uppercase', letterSpacing:'0.06em', marginBottom:'10px' }}>
-          Medio de pago
-        </p>
+        <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between',
+          marginBottom:'10px', gap:'8px', flexWrap:'wrap' }}>
+          <p style={{ fontSize:'11px', fontWeight:'500', color:C.textMuted,
+            textTransform:'uppercase', letterSpacing:'0.06em' }}>
+            {mixto ? 'Medios de pago' : 'Medio de pago'}
+          </p>
+          <button onClick={() => { if (mixto) { setMixto(false); setLineas([]) } else activarMixto() }}
+            style={{ height:'32px', padding:'0 10px', borderRadius:'8px', cursor:'pointer',
+              background: mixto ? C.bg : C.goldMuted,
+              border:`1px solid ${mixto ? C.border : C.gold}`,
+              color: mixto ? C.textSec : C.goldDark, fontSize:'12px',
+              display:'flex', alignItems:'center', gap:'5px', whiteSpace:'nowrap' }}>
+            <Layers size={13}/> {mixto ? 'Volver a un solo medio' : 'Varios medios / varios cheques'}
+          </button>
+        </div>
+
+        {mixto && (
+          <div style={{ marginBottom:'12px' }}>
+            {lineas.map((l, i) => (
+              <LineaMedio key={l.id} linea={l} indice={i}
+                resto={resto} tipoComprobante={tipoComprobante} device={device}
+                hayEfectivo={hayEfectivo}
+                puedeQuitar={lineas.length > 1}
+                onCambiar={(nueva) => setLineas(ls => ls.map(x => x.id === l.id ? nueva : x))}
+                onQuitar={() => setLineas(ls => ls.filter(x => x.id !== l.id))} />
+            ))}
+            <button onClick={() => setLineas(ls => [...ls,
+                nuevaLinea('cheque', resto > 0 ? String(resto) : '')])}
+              style={{ width:'100%', height:'40px', borderRadius:'9px', cursor:'pointer',
+                background:'transparent', border:`1px dashed ${C.gold}`, color:C.goldDark,
+                fontSize:'13px', display:'flex', alignItems:'center', justifyContent:'center',
+                gap:'6px', marginBottom:'10px' }}>
+              <Plus size={14}/> Agregar otro medio u otro cheque
+            </button>
+            <div style={{ padding:'10px 14px', borderRadius:'10px',
+              display:'flex', justifyContent:'space-between', alignItems:'center',
+              background: resto === 0 ? C.successBg : C.warningBg,
+              border:`1px solid ${resto === 0 ? C.successBorder : C.warningBorder}`,
+              color: resto === 0 ? C.success : C.warning, fontSize:'13px' }}>
+              <span>
+                {resto === 0 ? 'Los medios cubren el total'
+                  : resto > 0 ? 'Falta asignar' : 'Se pasa del total por'}
+              </span>
+              <b>{resto === 0 ? formatGs(total) : formatGs(Math.abs(resto))}</b>
+            </div>
+            {lineas.map((l, i) => {
+              const falta = Number(l.monto) > 0 && faltaEnLinea(l, tipoComprobante)
+              return falta ? (
+                <p key={l.id} style={{ fontSize:'11.5px', color:C.danger, marginTop:'6px' }}>
+                  Medio {i + 1}: {falta}
+                </p>
+              ) : null
+            })}
+          </div>
+        )}
+
+        {!mixto && (<>
         <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'8px',
           marginBottom:'16px' }}>
           {MEDIOS.map((m, i) => (
@@ -788,67 +1160,7 @@ function PanelCobro({ pedido: pedidoResumen, sesion, onPagado, onCancelar }) {
             (ver backend/apps/caja/pos.py). Solo se piden si es factura: un
             ticket no genera documento electrónico. */}
         {esTarjeta && tipoComprobante === 'factura' && (
-          <div style={{ marginBottom:'12px' }}>
-            <label style={{ display:'block', fontSize:'12px', fontWeight:'500',
-              color:C.textSec, marginBottom:'6px' }}>
-              ¿Con qué tarjeta pagó?
-              <span style={{ color:C.gold, fontWeight:'500' }}> *</span>
-            </label>
-            <div style={{ display:'flex', flexWrap:'wrap', gap:'6px' }}>
-              {TARJETAS.map(t => {
-                const activa = tarjeta.denominacion === t.key
-                return (
-                  <button key={t.key}
-                    onClick={() => setTarjeta(v => ({ ...v, denominacion: t.key }))}
-                    style={{ height:device.isTouch?'40px':'34px', padding:'0 12px',
-                      borderRadius:'8px', cursor:'pointer', fontSize:'12.5px',
-                      border:`1px solid ${activa ? C.gold : C.border}`,
-                      background: activa ? C.gold : C.bg,
-                      color: activa ? '#fff' : C.textSec,
-                      WebkitTapHighlightColor:'transparent' }}>
-                    {t.label}
-                  </button>
-                )
-              })}
-            </div>
-
-            {tarjeta.denominacion === 99 && (
-              <input
-                value={tarjeta.denominacion_descripcion}
-                onChange={e => setTarjeta(v => ({ ...v, denominacion_descripcion: e.target.value }))}
-                placeholder="Nombre de la tarjeta"
-                maxLength={20}
-                style={{ width:'100%', height:'40px', padding:'0 12px', marginTop:'8px',
-                  border:`1px solid ${C.border}`, borderRadius:'10px',
-                  fontSize:'13px', color:C.text, background:C.bg, outline:'none' }}
-              />
-            )}
-
-            <div style={{ display:'flex', gap:'8px', marginTop:'8px' }}>
-              <input
-                value={tarjeta.titular}
-                onChange={e => setTarjeta(v => ({ ...v, titular: e.target.value }))}
-                placeholder="Titular (opcional)"
-                maxLength={30}
-                style={{ flex:2, height:'40px', padding:'0 12px',
-                  border:`1px solid ${C.border}`, borderRadius:'10px',
-                  fontSize:'13px', color:C.text, background:C.bg, outline:'none' }}
-              />
-              <input
-                value={tarjeta.ultimos_digitos}
-                onChange={e => setTarjeta(v => ({
-                  ...v, ultimos_digitos: e.target.value.replace(/\D/g, '').slice(-4) }))}
-                placeholder="Últimos 4"
-                inputMode="numeric"
-                style={{ flex:1, height:'40px', padding:'0 12px',
-                  border:`1px solid ${C.border}`, borderRadius:'10px',
-                  fontSize:'13px', color:C.text, background:C.bg, outline:'none' }}
-              />
-            </div>
-            <p style={{ fontSize:'11px', color:C.textMuted, marginTop:'6px' }}>
-              Se copian del voucher que imprime la terminal.
-            </p>
-          </div>
+          <CamposTarjeta tarjeta={tarjeta} setTarjeta={setTarjeta} device={device} />
         )}
 
         {/* Datos del cheque — banco y número, siempre.
@@ -857,87 +1169,7 @@ function PanelCobro({ pedido: pedidoResumen, sesion, onPagado, onCancelar }) {
             estos dos datos el local no puede seguirle el rastro al papel.
             Ver backend/apps/caja/cheque.py. */}
         {esCheque && (
-          <div style={{ marginBottom:'12px' }}>
-            <label style={{ display:'block', fontSize:'12px', fontWeight:'500',
-              color:C.textSec, marginBottom:'6px' }}>
-              Datos del cheque
-              <span style={{ color:C.gold, fontWeight:'500' }}> *</span>
-            </label>
-
-            <div style={{ display:'flex', gap:'8px' }}>
-              <input
-                value={cheque.numero}
-                onChange={e => setCheque(v => ({
-                  ...v, numero: e.target.value.replace(/\D/g, '').slice(0, 8) }))}
-                placeholder="Nro. de cheque"
-                inputMode="numeric"
-                style={{ flex:1, height:device.isTouch?'46px':'40px', padding:'0 12px',
-                  border:`1px solid ${C.border}`, borderRadius:'10px',
-                  fontSize:'14px', color:C.text, background:C.bg, outline:'none' }}
-                onFocus={e=>e.target.style.borderColor=C.gold}
-                onBlur={e=>e.target.style.borderColor=C.border}
-              />
-              <input
-                value={cheque.banco}
-                onChange={e => setCheque(v => ({ ...v, banco: e.target.value.slice(0, 20) }))}
-                placeholder="Banco emisor"
-                list="bancos-cheque"
-                maxLength={20}
-                style={{ flex:1.4, height:device.isTouch?'46px':'40px', padding:'0 12px',
-                  border:`1px solid ${C.border}`, borderRadius:'10px',
-                  fontSize:'14px', color:C.text, background:C.bg, outline:'none' }}
-                onFocus={e=>e.target.style.borderColor=C.gold}
-                onBlur={e=>e.target.style.borderColor=C.border}
-              />
-              <datalist id="bancos-cheque">
-                {BANCOS.map(b => <option key={b} value={b} />)}
-              </datalist>
-            </div>
-
-            <div style={{ display:'flex', gap:'8px', marginTop:'8px' }}>
-              <input
-                value={cheque.titular}
-                onChange={e => setCheque(v => ({ ...v, titular: e.target.value }))}
-                placeholder="Librado por (opcional)"
-                maxLength={60}
-                style={{ flex:1.4, height:'40px', padding:'0 12px',
-                  border:`1px solid ${C.border}`, borderRadius:'10px',
-                  fontSize:'13px', color:C.text, background:C.bg, outline:'none' }}
-              />
-              <input
-                type="date"
-                value={cheque.fecha_cobro}
-                onChange={e => setCheque(v => ({ ...v, fecha_cobro: e.target.value }))}
-                title="Fecha de cobro — vacía si el cheque es a la vista"
-                style={{ flex:1, height:'40px', padding:'0 10px',
-                  border:`1px solid ${C.border}`, borderRadius:'10px',
-                  fontSize:'13px', color:cheque.fecha_cobro ? C.text : C.textMuted,
-                  background:C.bg, outline:'none' }}
-              />
-            </div>
-
-            {cheque.banco.trim() && cheque.banco.trim().length < 4 && (
-              <p style={{ fontSize:'11px', color:C.danger, marginTop:'6px' }}>
-                El banco va con nombre, no con sigla: el comprobante
-                electrónico necesita al menos 4 letras.
-              </p>
-            )}
-
-            {chequeDiferido ? (
-              <div style={{ marginTop:'8px', padding:'10px 14px',
-                background:C.warningBg, border:`1px solid ${C.warningBorder}`,
-                borderRadius:'10px', display:'flex', alignItems:'center', gap:'7px',
-                fontSize:'12.5px', color:C.warning }}>
-                <Clock size={15} />
-                Cheque diferido: recién se puede depositar el{' '}
-                {new Date(`${cheque.fecha_cobro}T00:00:00`).toLocaleDateString('es-PY')}.
-              </div>
-            ) : (
-              <p style={{ fontSize:'11px', color:C.textMuted, marginTop:'6px' }}>
-                Se copian del cheque. La fecha va solo si es diferido.
-              </p>
-            )}
-          </div>
+          <CamposCheque cheque={cheque} setCheque={setCheque} device={device} />
         )}
 
         {/* Referencia para tarjeta/transferencia */}
@@ -960,6 +1192,7 @@ function PanelCobro({ pedido: pedidoResumen, sesion, onPagado, onCancelar }) {
             />
           </div>
         )}
+        </>)}
       </div>
 
       {/* Footer */}
@@ -1124,6 +1357,8 @@ function AyudanteCargaPortal({ ticket }) {
           <span style={{ marginLeft:'10px' }}>
             <b>Medio de pago:</b> {ticket.medio_pago}
             {ticket.detalle_pago ? ` (${ticket.detalle_pago})` : ''}
+            {(ticket.medios || []).length > 0 &&
+              ` — ${ticket.medios.map(m => `${m.descripcion}: ${formatGs(m.monto)}`).join('; ')}`}
           </span>
         </p>
       </div>
@@ -1307,6 +1542,13 @@ function Ticket({ datos, onNuevo, onImprimir }) {
               {datos.ticket.monto_recibido &&
                 <span>{formatGs(datos.ticket.monto_recibido)}</span>}
             </div>
+            {(datos.ticket.medios || []).map((m, i) => (
+              <div key={i} style={{ display:'flex', justifyContent:'space-between',
+                color:C.textMuted, fontSize:'12px', paddingLeft:'8px' }}>
+                <span>{m.descripcion}</span>
+                <span>{formatGs(m.monto)}</span>
+              </div>
+            ))}
             {datos.ticket.vuelto > 0 && (
               <div style={{ display:'flex', justifyContent:'space-between',
                 color:C.success, fontWeight:'600' }}>
@@ -1384,8 +1626,13 @@ function PanelCierre({ sesion, pagos, devoluciones = [], onConfirmar, onCancelar
   const [observaciones, setObservaciones] = useState('')
 
   const totalVentas = pagos.reduce((s, p) => s + Number(p.monto), 0)
-  const resumenMedios = pagos.reduce((acc, p) => {
-    acc[p.medio_display] = (acc[p.medio_display] || 0) + Number(p.monto)
+  // Por línea del cobro y no por cobro: un pago mixto reparte su monto, y
+  // del efectivo de un cobro mitad cheque solo esa mitad está en el cajón.
+  const lineasCobro = pagos.flatMap(p => (p.medios?.length
+    ? p.medios
+    : [{ medio: p.medio_pago, medio_display: p.medio_display, monto: p.monto }]))
+  const resumenMedios = lineasCobro.reduce((acc, l) => {
+    acc[l.medio_display] = (acc[l.medio_display] || 0) + Number(l.monto)
     return acc
   }, {})
   // Reintegros por devolución: salieron de la caja. Solo los de efectivo
@@ -1395,9 +1642,9 @@ function PanelCierre({ sesion, pagos, devoluciones = [], onConfirmar, onCancelar
   const reintegrosEfectivo = reintegros
     .filter(d => d.medio_reintegro === 'efectivo')
     .reduce((s, d) => s + Number(d.monto_reintegro), 0)
-  const efectivoCobrado = pagos
-    .filter(p => p.medio_pago === 'efectivo')
-    .reduce((s, p) => s + Number(p.monto), 0)
+  const efectivoCobrado = lineasCobro
+    .filter(l => l.medio === 'efectivo')
+    .reduce((s, l) => s + Number(l.monto), 0)
 
   return (
     <div style={{ maxWidth:'480px', margin:'0 auto', padding:'20px' }}>
@@ -1967,15 +2214,17 @@ export default function CajaPage() {
                         opacity: reimprimirMut.isPending ? 0.5 : 1 }}>
                       <Printer size={13}/>
                     </button>
-                    {/* Devolución o cambio de esta venta */}
+                    {/* Devolución o cambio de esta venta. Con texto y no solo
+                        el ícono: en la tablet no hay tooltip y la propietaria
+                        no lo encontraba cuando un cliente volvía a cambiar algo. */}
                     <button onClick={() => abrirDevolucion(p.id)}
-                      title="Devolución o cambio"
+                      title="Devolución o cambio de esta venta"
                       style={{ display:'flex', alignItems:'center', justifyContent:'center',
-                        width:'26px', height:'26px', borderRadius:'6px',
+                        gap:'4px', height:'26px', padding:'0 8px', borderRadius:'6px',
                         border:`1px solid ${devolucionPagoId === p.id ? C.gold : C.border}`,
                         background: devolucionPagoId === p.id ? C.goldMuted : C.bgSec,
-                        color:C.textSec, cursor:'pointer' }}>
-                      <RotateCcw size={13}/>
+                        color:C.textSec, cursor:'pointer', fontSize:'11.5px', whiteSpace:'nowrap' }}>
+                      <RotateCcw size={13}/> Cambio
                     </button>
                   </div>
                 </div>

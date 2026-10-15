@@ -94,6 +94,7 @@ class NotaPedidoReadSerializer(serializers.ModelSerializer):
     total            = serializers.SerializerMethodField()
     total_ajustado   = serializers.SerializerMethodField()
     monto_a_cobrar   = serializers.SerializerMethodField()
+    nota_interna     = serializers.SerializerMethodField()
 
     class Meta:
         model  = NotaPedido
@@ -101,7 +102,7 @@ class NotaPedidoReadSerializer(serializers.ModelSerializer):
             'id', 'numero', 'estado', 'estado_display',
             'vendedor_id', 'vendedor_nombre',
             'cliente_id', 'cliente_nombre', 'cliente_ruc',
-            'cliente_telefono', 'cliente_observaciones',
+            'cliente_telefono', 'cliente_observaciones', 'nota_interna',
             'subtotal', 'descuento', 'total', 'total_ajustado', 'monto_a_cobrar',
             'observaciones_deposito',
             'preparado_por_nombre', 'fecha_preparacion',
@@ -135,6 +136,10 @@ class NotaPedidoReadSerializer(serializers.ModelSerializer):
     def get_monto_a_cobrar(self, obj):
         return None if _oculta_montos(self.context) else obj.monto_a_cobrar
 
+    def get_nota_interna(self, obj):
+        # Depósito no la ve: suele llevar montos ("entregó 5 millones").
+        return None if _oculta_montos(self.context) else obj.nota_interna
+
 
 class NotaPedidoListSerializer(serializers.ModelSerializer):
     """Versión ligera para listados."""
@@ -145,13 +150,14 @@ class NotaPedidoListSerializer(serializers.ModelSerializer):
     total           = serializers.SerializerMethodField()
     total_ajustado  = serializers.SerializerMethodField()
     monto_a_cobrar  = serializers.SerializerMethodField()
+    tiene_nota_interna = serializers.SerializerMethodField()
 
     class Meta:
         model  = NotaPedido
         fields = [
             'id', 'numero', 'estado', 'estado_display',
             'vendedor_nombre', 'cliente_nombre', 'cliente_ruc',
-            'total', 'total_ajustado', 'monto_a_cobrar',
+            'total', 'total_ajustado', 'monto_a_cobrar', 'tiene_nota_interna',
             'items_count', 'todos_preparados',
             'fecha_creacion', 'puede_preparar', 'puede_cobrar',
         ]
@@ -168,6 +174,9 @@ class NotaPedidoListSerializer(serializers.ModelSerializer):
 
     def get_monto_a_cobrar(self, obj):
         return None if _oculta_montos(self.context) else obj.monto_a_cobrar
+
+    def get_tiene_nota_interna(self, obj):
+        return bool(obj.nota_interna) and not _oculta_montos(self.context)
 
 
 class NotaPedidoCreateSerializer(serializers.Serializer):

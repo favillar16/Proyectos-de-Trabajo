@@ -209,6 +209,10 @@ class TicketBuilder:
         # esto, "Cheque" a secas no se puede cruzar contra el extracto.
         if d.get('detalle_pago'):
             buf += self._wrap(str(d['detalle_pago']))
+        # Pago mixto / varios cheques: una línea por medio, con su monto.
+        for m in d.get('medios') or []:
+            buf += self._wrap(f"  {m['descripcion']}")
+            buf += self._2col('', _formatGs(m['monto']))
 
         if d.get('monto_recibido'):
             buf += self._2col('Recibido:', _formatGs(d['monto_recibido']))
@@ -353,6 +357,9 @@ class FacturaBuilder:
         # esto, "Cheque" a secas no se puede cruzar contra el extracto.
         if d.get('detalle_pago'):
             buf += self._wrap(str(d['detalle_pago']))
+        for m in d.get('medios') or []:
+            buf += self._wrap(f"  {m['descripcion']}")
+            buf += self._2col('', _formatGs(m['monto']))
         if d.get('monto_recibido'):
             buf += self._2col('Recibido:', _formatGs(d['monto_recibido']))
         if float(d.get('vuelto', 0)) > 0:
@@ -880,6 +887,9 @@ def ticket_a_texto(datos_ticket: dict) -> str:
     lineas.append(r('Medio de pago:', str(d.get('medio_pago', ''))))
     if d.get('detalle_pago'):
         lineas.append(str(d['detalle_pago']))
+    for m in d.get('medios') or []:
+        lineas.append(f"  {m['descripcion']}")
+        lineas.append(r('', g(m['monto'])))
 
     if d.get('monto_recibido'):
         lineas.append(r('Recibido:', g(d['monto_recibido'])))

@@ -82,6 +82,28 @@ class NotaPedidoDocumentoTests(TestCase):
                              f'{cajas} caja{"s" if cajas != 1 else ""}')
         self.assertEqual(doc._texto_cajas(Decimal('1.08'), 0.36), '3 cajas')
 
+    def test_piezas_sueltas_no_se_redondean_a_caja(self):
+        """
+        El caso de la propietaria: 3 piezas de 38×76 (0,2888 m² c/u) de un
+        revestimiento que viene de a 2,02 m² la caja. La nota decía '1 caja'.
+        """
+        pieza = 0.38 * 0.76
+        self.assertEqual(doc._texto_cajas(Decimal('0.8664'), 2.02, pieza), '3 piezas')
+        self.assertEqual(doc._texto_cajas(Decimal('0.2888'), 2.02, pieza), '1 pieza')
+        # 2 cajas (14 piezas) + 3 sueltas
+        self.assertEqual(doc._texto_cajas(Decimal('4.9096'), 2.02, pieza),
+                         '2 cajas + 3 piezas')
+        # Cajas enteras siguen diciéndose en cajas aunque se conozca la pieza
+        self.assertEqual(doc._texto_cajas(Decimal('4.04'), 2.02, pieza), '2 cajas')
+        # Una medida que no da piezas enteras se sigue redondeando a cajas
+        self.assertEqual(doc._texto_cajas(Decimal('1.5'), 2.02, pieza), '1 caja')
+
+    def test_unidad_del_item_usa_la_medida_de_la_pieza(self):
+        """120×60 con 2 piezas por caja: una pieza sola es 0,72 m²."""
+        self.pedido.items.update(cantidad=Decimal('0.72'))
+        datos = doc.datos_desde_pedido(self.pedido)
+        self.assertEqual(datos['items'][0]['unidad'], 'mts2 (1 pieza)')
+
     def test_producto_por_pieza_no_lleva_unidad(self):
         self.variante.producto.unidad_venta = Producto.UNIDAD_PIEZA
         self.variante.producto.save(update_fields=['unidad_venta'])

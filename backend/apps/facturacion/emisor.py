@@ -194,7 +194,12 @@ def crear_documento(pago, *, receptor: dict, condicion_venta='contado'):
         receptor_naturaleza=codigos.naturaleza_receptor(receptor_ruc),
 
         condicion_venta=codigos.codigo_condicion_venta(condicion_venta),
-        medio_pago=codigos.codigo_medio_pago(pago.medio_pago),
+        # Con pago mixto, el medio por el que entró la mayor parte: el campo
+        # guarda un solo código y lo heredan la nota de crédito y la
+        # remisión. El detalle completo va en las entregas del payload.
+        medio_pago=codigos.codigo_medio_pago(
+            pago.medio_pago if pago.medio_pago != 'mixto' else
+            max(pago.medios.all(), key=lambda l: l.monto).medio),
         total=pago.monto,
         **totales,
 

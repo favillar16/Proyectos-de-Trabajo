@@ -16,6 +16,7 @@ from .serializers import (
     NotaPedidoReadSerializer,
     NotaPedidoListSerializer,
     NotaPedidoCreateSerializer,
+    ItemPedidoWriteSerializer,
     ClienteSerializer,
 )
 from apps.usuarios.permissions import (
@@ -226,6 +227,16 @@ class NotaPedidoDetailView(views.APIView):
         para el documento que todavía no salió, nunca para el que ya salió.
         """
         pedido = self._get_pedido(pk)
+
+        # La nota interna se edita en cualquier estado: es un apunte del
+        # local para seguir el pedido (una entrega a cuenta, un aviso), no
+        # cambia nada de lo que se cobra ni de lo que se imprime.
+        if set(request.data.keys()) == {'nota_interna'}:
+            pedido.nota_interna = (request.data.get('nota_interna') or '').strip()
+            pedido.save(update_fields=['nota_interna', 'fecha_actualizacion'])
+            _emitir_evento(pedido, 'pedido_actualizado', request)
+            return Response(NotaPedidoReadSerializer(
+                pedido, context={'request': request}).data)
 
         if pedido.estado != NotaPedido.ESTADO_PENDIENTE:
             campos_pedidos = set(request.data.keys())
@@ -512,6 +523,106 @@ class CancelarItemView(views.APIView):
 
         _emitir_evento(pedido, 'pedido_actualizado', request)
         return Response({'liberado': float(liberado)}, status=status.HTTP_200_OK)
+
+
+class AgregarItemsView(views.APIView):
+    """
+    POST /ventas/pedidos/<id>/items/
+    Body: { "items": [ { "variante_id": 5, "cantidad": 2.88 }, ... ] }
+
+    Suma productos a un pedido PENDIENTE, reservando solo lo que se agrega.
+    Existe porque un cliente que vuelve a sumar cosas a un pedido ya armado
+    obligaba a cancelarlo entero —liberando todo— y cargarlo de nuevo, con
+    el riesgo de que en el medio otro vendedor se llevara la mercadería.
+
+    Un producto que ya estaba en el pedido, al mismo precio, se suma a ese
+    renglón en vez de duplicarlo: la nota del cliente tiene que decir 5
+    cajas, no 3 y 2. Si el precio es otro (lo cambió la encargada), va en un
+    renglón aparte para no reescribir el precio de lo ya acordado.
+
+    Mismas reglas de precio que al crear: solo admin/encargada pueden fijar
+    uno distinto al de catálogo. Si el pedido tenía un monto negociado, lo
+    agregado se le suma a precio de lista: el descuento acordado era sobre
+    lo que había, no sobre lo que viene.
+
+    Todo o nada: si a un producto no le alcanza el stock, no se agrega
+    ninguno.
+    """
+    permission_classes = [EsAdminOVendedor]
+
+    @transaction.atomic
+    def post(self, request, pk):
+        from .models import StockInsuficienteError
+
+        pedido = get_object_or_404(NotaPedido.objects.select_for_update(), pk=pk)
+
+        if pedido.estado != NotaPedido.ESTADO_PENDIENTE or pedido.eliminado:
+            return Response(
+                {'error': 'Solo se pueden agregar productos a un pedido pendiente.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if request.user.rol == 'vendedor' and pedido.vendedor_id != request.user.id:
+            return Response({'error': 'Solo podés modificar tus propios pedidos.'},
+                            status=status.HTTP_403_FORBIDDEN)
+
+        serializer = ItemPedidoWriteSerializer(
+            data=request.data.get('items') or [], many=True)
+        serializer.is_valid(raise_exception=True)
+        if not serializer.validated_data:
+            return Response({'error': 'Indicá al menos un producto.'},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        usuario = request.user
+        puede_precio = (
+            hasattr(usuario, 'puede_editar_precio_pedido')
+            and usuario.puede_editar_precio_pedido()
+        )
+
+        agregado = 0
+        errores = []
+        for datos in serializer.validated_data:
+            variante = datos['variante_id']
+            precio = (datos.get('precio_unitario') or variante.precio_venta)                 if puede_precio else variante.precio_venta
+            desc_item = datos.get('descuento_item', 0) if puede_precio else 0
+            cantidad = datos['cantidad']
+
+            item = None
+            if not desc_item:
+                item = pedido.items.filter(
+                    variante=variante, precio_unitario=precio,
+                    descuento_item=0).first()
+            if item is not None:
+                item.cantidad += cantidad
+                item.save()
+            else:
+                item = ItemPedido.objects.create(
+                    pedido=pedido, variante=variante, cantidad=cantidad,
+                    precio_unitario=precio, descuento_item=desc_item,
+                    observaciones=datos.get('observaciones', ''),
+                )
+            agregado += cantidad * precio - desc_item
+
+            try:
+                pedido.reservar_cantidad(variante, cantidad, usuario)
+            except StockInsuficienteError as e:
+                errores.extend(f'{err["sku"]}: {err["error"]}' for err in e.errores)
+
+        if errores:
+            transaction.set_rollback(True)
+            return Response({'stock_insuficiente': errores},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        pedido.subtotal = sum(i.subtotal for i in pedido.items.all())
+        pedido.total    = pedido.subtotal - pedido.descuento
+        if pedido.total_ajustado is not None:
+            pedido.total_ajustado += agregado
+        pedido.save(update_fields=['subtotal', 'total', 'total_ajustado',
+                                   'fecha_actualizacion'])
+
+        _emitir_evento(pedido, 'pedido_actualizado', request)
+        pedido = NotaPedidoDetailView()._get_pedido(pk)
+        return Response(NotaPedidoReadSerializer(
+            pedido, context={'request': request}).data)
 
 
 # ════════════════════════════════════════════════════════

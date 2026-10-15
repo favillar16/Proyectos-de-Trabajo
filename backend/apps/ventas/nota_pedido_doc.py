@@ -108,22 +108,62 @@ def _unidad_item(item) -> str:
     m2_caja = item.variante.m2_por_caja_calculado
     if not m2_caja:
         return 'mts2'
-    return f'mts2 ({_texto_cajas(item.cantidad, m2_caja)})'
+    return f'mts2 ({_texto_cajas(item.cantidad, m2_caja, _m2_pieza(item.variante))})'
 
 
-def _texto_cajas(cantidad, m2_caja) -> str:
+def _m2_pieza(variante):
+    """
+    Superficie de una pieza, la misma cuenta que `m2PorPieza` del Showroom:
+    por las medidas si están, si no repartiendo la caja entre sus piezas.
+    """
+    if variante.largo_cm and variante.ancho_cm:
+        return float(variante.largo_cm) / 100 * float(variante.ancho_cm) / 100
+    m2_caja = variante.m2_por_caja_calculado
+    if m2_caja and variante.piezas_por_caja:
+        return m2_caja / variante.piezas_por_caja
+    return None
+
+
+def _texto_cajas(cantidad, m2_caja, m2_pieza=None) -> str:
     """
     '3 cajas' para 4,32 m² de una caja de 1,44.
 
-    Se redondea hacia arriba porque una caja abierta se entrega igual, pero
-    antes del ceil se recorta a cuatro decimales —los mismos que guarda la
-    cantidad—, igual que hace el Showroom en `equivalenciaCajas`. Sin ese
-    recorte la división en coma flotante da 3,0000000000000004 y la nota
-    decía 4 cajas para lo que el vendedor cargó como 3.
+    Si no da cajas enteras pero sí piezas enteras —el vendedor cargó de a
+    piezas en el Showroom—, se dice así: '3 piezas' o '2 cajas + 3 piezas'.
+    Antes eso se redondeaba a cajas y la nota decía '1 caja' para 3 piezas
+    de un revestimiento que viene de a 2,02 m², que no es lo que se vendió.
+
+    Si tampoco da piezas enteras (una medida tipeada a mano), se redondea a
+    cajas hacia arriba, porque una caja abierta se entrega igual. Antes del
+    ceil se recorta a cuatro decimales —los mismos que guarda la cantidad—,
+    igual que hace el Showroom en `equivalenciaCajas`. Sin ese recorte la
+    división en coma flotante da 3,0000000000000004 y la nota decía 4 cajas
+    para lo que el vendedor cargó como 3.
     """
     import math
-    cajas = math.ceil(round(float(cantidad) / float(m2_caja), 4))
-    return f'{cajas} caja{"s" if cajas != 1 else ""}'
+    cajas = round(float(cantidad) / float(m2_caja), 4)
+    if cajas == int(cajas):
+        return _plural(int(cajas), 'caja')
+
+    if m2_pieza:
+        # Misma tolerancia que `equivalenciaPiezas` del Showroom: la
+        # cantidad se guarda en m² con cuatro decimales, así que tres piezas
+        # de 0,2888 m² no dan exacto.
+        piezas = float(cantidad) / m2_pieza
+        if round(piezas) > 0 and abs(piezas - round(piezas)) < 0.03:
+            por_caja = round(float(m2_caja) / m2_pieza)
+            enteras = int(math.floor(cajas)) if por_caja else 0
+            sueltas = round(piezas) - enteras * por_caja
+            if enteras and sueltas > 0:
+                return f'{_plural(enteras, "caja")} + {_plural(sueltas, "pieza")}'
+            if sueltas > 0:
+                return _plural(round(piezas), 'pieza')
+
+    return _plural(math.ceil(cajas), 'caja')
+
+
+def _plural(n, palabra) -> str:
+    return f'{n} {palabra}{"s" if n != 1 else ""}'
 
 
 # ══════════════════════════════════════════════════════════════════════

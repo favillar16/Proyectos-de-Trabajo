@@ -246,9 +246,12 @@ class CobroConChequeEnCajaTests(TestCase):
 
         pago = Pago.objects.get(pedido=self.pedido)
         self.assertEqual(pago.medio_pago, Pago.MEDIO_CHEQUE)
-        self.assertEqual(pago.datos_cheque.numero, '00012345')
-        self.assertEqual(pago.datos_cheque.banco, 'Banco Continental')
-        self.assertEqual(pago.datos_cheque.titular, 'JUAN PEREZ')
+        cheque = pago.cheques.get()
+        self.assertEqual(cheque.numero, '00012345')
+        self.assertEqual(cheque.banco, 'Banco Continental')
+        self.assertEqual(cheque.titular, 'JUAN PEREZ')
+        # El cheque cuelga de la única línea del cobro, por el total
+        self.assertEqual(cheque.linea.monto, pago.monto)
 
     @override_settings(SIFEN=SIFEN_APAGADO)
     def test_el_banco_en_sigla_frena_el_cobro_con_el_cliente_presente(self):
@@ -264,7 +267,7 @@ class CobroConChequeEnCajaTests(TestCase):
             'fecha_cobro': fecha.isoformat()})
         self.assertEqual(resp.status_code, 201, resp.data)
 
-        datos = Pago.objects.get(pedido=self.pedido).datos_cheque
+        datos = Pago.objects.get(pedido=self.pedido).cheques.get()
         self.assertEqual(datos.fecha_cobro, fecha)
         self.assertTrue(datos.es_diferido)
 

@@ -134,6 +134,9 @@ export const ventasApi = {
     api.post(`/ventas/pedidos/${pedidoId}/items/${itemId}/preparar/`, data),
   eliminarItem: (pedidoId, itemId) =>
     api.delete(`/ventas/pedidos/${pedidoId}/items/${itemId}/`),
+  // Suma productos a un pedido pendiente; reserva solo lo agregado
+  agregarItems: (pedidoId, items) =>
+    api.post(`/ventas/pedidos/${pedidoId}/items/`, { items }),
 
   // Nota diagramada para el cliente — descarga un archivo (PDF o Excel).
   // `tipo` elige el encabezado: 'presupuesto' o 'pedido'.

@@ -537,10 +537,10 @@ def _condicion(documento) -> dict:
     """
     Condición de la operación y forma de pago.
 
-    Hoy el sistema cobra siempre al contado y con un solo medio de pago por
-    cobro, así que `entregas` tiene un único elemento. La estructura soporta
-    varios porque el SIFEN lo permite; si algún día se cobra mitad efectivo
-    y mitad tarjeta, se suma acá.
+    El sistema cobra siempre al contado. Un cobro de un solo medio es una
+    sola entrega; un pago mixto o con varios cheques (`PagoMedio`) es una
+    entrega por línea, cada una con su grupo de tarjeta o de cheque — el
+    SIFEN admite varias entregas (grupo E605) justamente para eso.
     """
     if documento.condicion_venta == codigos.CONDICION_CREDITO:
         # El crédito exige plazo o cuotas; el sistema no los registra.
@@ -549,23 +549,49 @@ def _condicion(documento) -> dict:
             'plazo ni cuotas, que el SIFEN exige para una operación a '
             'crédito. Hay que capturarlos antes de poder facturarla.')
 
+    lineas = _lineas_del_cobro(documento)
+    if len(lineas) > 1:
+        entregas = [_entrega(documento, codigos.codigo_medio_pago(l.medio),
+                             l.monto, l) for l in lineas]
+    else:
+        entregas = [_entrega(documento, documento.medio_pago, documento.total,
+                             lineas[0] if lineas else None)]
+
+    return {'tipo': codigos.CONDICION_CONTADO, 'entregas': entregas}
+
+
+def _lineas_del_cobro(documento) -> list:
+    """
+    Las líneas del cobro, si corresponden a este documento.
+
+    Solo cuando suman exactamente lo que el documento declara: una nota de
+    crédito parcial cuelga del mismo cobro pero por otro monto, y repartirla
+    entre los medios del cobro original inventaría entregas que no pasaron.
+    """
+    pago = getattr(documento, 'pago', None)
+    if pago is None:
+        return []
+    lineas = list(pago.medios.all())
+    if sum(_gs(l.monto) for l in lineas) != _gs(documento.total):
+        return []
+    return lineas
+
+
+def _entrega(documento, tipo, monto, linea) -> dict:
     entrega = {
-        'tipo': documento.medio_pago,
-        'monto': str(_gs(documento.total)),
+        'tipo': tipo,
+        'monto': str(_gs(monto)),
         'moneda': MONEDA,
         'cambio': 0,
     }
-
-    if documento.medio_pago in codigos.MEDIOS_CON_TARJETA:
-        entrega['infoTarjeta'] = _info_tarjeta(documento)
-
-    if documento.medio_pago in codigos.MEDIOS_CON_CHEQUE:
-        entrega['infoCheque'] = _info_cheque(documento)
-
-    return {'tipo': codigos.CONDICION_CONTADO, 'entregas': [entrega]}
+    if tipo in codigos.MEDIOS_CON_TARJETA:
+        entrega['infoTarjeta'] = _info_tarjeta(documento, linea)
+    if tipo in codigos.MEDIOS_CON_CHEQUE:
+        entrega['infoCheque'] = _info_cheque(documento, linea)
+    return entrega
 
 
-def _info_tarjeta(documento) -> dict:
+def _info_tarjeta(documento, linea=None) -> dict:
     """
     Grupo E620 (`gPagTarCD`), obligatorio en todo cobro con tarjeta.
 
@@ -578,7 +604,7 @@ def _info_tarjeta(documento) -> dict:
     documento — y hay que decirlo claro, porque para cuando esto corre el
     cliente ya se fue y nadie se acuerda con qué tarjeta pagó.
     """
-    datos = getattr(documento.pago, 'datos_tarjeta', None)
+    datos = _datos_de_la_linea(documento, linea, 'datos_tarjeta', 'tarjetas')
     if datos is None:
         raise DatosIncompletos(
             f'El cobro {documento.pago.numero_ticket} fue con tarjeta pero no '
@@ -605,7 +631,7 @@ def _info_tarjeta(documento) -> dict:
     return info
 
 
-def _info_cheque(documento) -> dict:
+def _info_cheque(documento, linea=None) -> dict:
     """
     Grupo E630 (`gPagCheq`), obligatorio en todo cobro con cheque.
 
@@ -616,7 +642,7 @@ def _info_cheque(documento) -> dict:
     siempre, esté el SIFEN prendido o no, porque sin ellos el local tampoco
     puede seguirle el rastro al papel (ver apps/caja/cheque.py).
     """
-    datos = getattr(documento.pago, 'datos_cheque', None)
+    datos = _datos_de_la_linea(documento, linea, 'datos_cheque', 'cheques')
     if datos is None:
         raise DatosIncompletos(
             f'El cobro {documento.pago.numero_ticket} fue con cheque pero no '
@@ -627,6 +653,18 @@ def _info_cheque(documento) -> dict:
         'numeroCheque': codigos.numero_cheque_sifen(datos.numero),
         'banco': datos.banco,
     }
+
+
+def _datos_de_la_linea(documento, linea, campo, relacion):
+    """
+    Los datos de tarjeta o cheque de una entrega: los de su línea del cobro;
+    si el documento no tiene línea (un DE sin líneas que sumen), los únicos
+    que tenga el cobro.
+    """
+    if linea is not None:
+        return getattr(linea, campo, None)
+    pago = getattr(documento, 'pago', None)
+    return getattr(pago, relacion).first() if pago is not None else None
 
 
 def _bloque_por_tipo(documento) -> dict:

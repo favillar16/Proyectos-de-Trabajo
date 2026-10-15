@@ -380,3 +380,111 @@ class EliminarNotaDePedidoTests(BaseVentas):
         self._eliminar(pedido)
         nuevo = NotaPedido.objects.create(vendedor=self.vendedor)
         self.assertNotEqual(nuevo.numero, pedido.numero)
+
+
+class AgregarProductosAlPedidoTests(BaseVentas):
+    """
+    Sumar productos a un pedido pendiente sin cancelarlo y recargarlo (video
+    de la propietaria: un pedido de 13 millones al que el cliente le sumaba
+    cosas). Solo se reserva lo agregado.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.pedido = self._pedido_con_reserva('10')
+        self.url = reverse('pedido-agregar-items', args=[self.pedido.id])
+        self.otra = crear_variante(producto=self.variante.producto, color='Gris')
+        Stock.objects.get(variante=self.otra).registrar_movimiento(
+            tipo=MovimientoStock.TIPO_ENTRADA, cantidad=Decimal('20'),
+            usuario=self.vendedor, observaciones='carga inicial',
+        )
+
+    def _agregar(self, items, api=None):
+        return (api or self.cliente_api).post(self.url, {'items': items}, format='json')
+
+    def test_agrega_un_producto_nuevo_y_reserva_solo_eso(self):
+        respuesta = self._agregar([{'variante_id': self.otra.id, 'cantidad': '5'}])
+
+        self.assertEqual(respuesta.status_code, 200, respuesta.data)
+        self.assertEqual(self.pedido.items.count(), 2)
+        self.assertEqual(Stock.objects.get(variante=self.otra).cantidad_reservada, Decimal('5'))
+        # Lo que ya estaba no se vuelve a reservar
+        self.stock.refresh_from_db()
+        self.assertEqual(self.stock.cantidad_reservada, Decimal('10'))
+
+    def test_el_mismo_producto_se_suma_al_renglon(self):
+        # Mismo precio que el renglón existente: ahí se suma en vez de duplicar
+        self.pedido.items.update(precio_unitario=self.variante.precio_venta)
+        respuesta = self._agregar([{'variante_id': self.variante.id, 'cantidad': '3'}])
+
+        self.assertEqual(respuesta.status_code, 200, respuesta.data)
+        self.assertEqual(self.pedido.items.get().cantidad, Decimal('13'))
+        self.stock.refresh_from_db()
+        self.assertEqual(self.stock.cantidad_reservada, Decimal('13'))
+
+    def test_recalcula_el_total(self):
+        self._agregar([{'variante_id': self.otra.id, 'cantidad': '2'}])
+        self.pedido.refresh_from_db()
+        esperado = Decimal('10') * Decimal('150000') + Decimal('2') * self.otra.precio_venta
+        self.assertEqual(self.pedido.total, esperado)
+
+    def test_sin_stock_no_agrega_nada(self):
+        respuesta = self._agregar([
+            {'variante_id': self.otra.id, 'cantidad': '5'},
+            {'variante_id': self.variante.id, 'cantidad': '999'},
+        ])
+        self.assertEqual(respuesta.status_code, 400)
+        self.assertIn('stock_insuficiente', respuesta.data)
+        self.assertEqual(self.pedido.items.count(), 1)
+        self.assertEqual(Stock.objects.get(variante=self.otra).cantidad_reservada, Decimal('0'))
+
+    def test_un_pedido_enviado_a_caja_no_admite_agregados(self):
+        NotaPedido.objects.filter(pk=self.pedido.pk).update(estado=NotaPedido.ESTADO_LISTO)
+        respuesta = self._agregar([{'variante_id': self.otra.id, 'cantidad': '1'}])
+        self.assertEqual(respuesta.status_code, 400)
+
+    def test_el_monto_negociado_suma_lo_agregado_a_precio_de_lista(self):
+        NotaPedido.objects.filter(pk=self.pedido.pk).update(total_ajustado=Decimal('1400000'))
+        self._agregar([{'variante_id': self.otra.id, 'cantidad': '2'}])
+        self.pedido.refresh_from_db()
+        self.assertEqual(self.pedido.total_ajustado,
+                         Decimal('1400000') + 2 * self.otra.precio_venta)
+
+    def test_el_vendedor_no_agrega_a_pedidos_ajenos(self):
+        otro = crear_usuario('otro_vendedor_agrega', rol=Usuario.ROL_VENDEDOR)
+        NotaPedido.objects.filter(pk=self.pedido.pk).update(vendedor=otro)
+        respuesta = self._agregar([{'variante_id': self.otra.id, 'cantidad': '1'}])
+        self.assertEqual(respuesta.status_code, 403)
+
+
+class NotaInternaTests(BaseVentas):
+    """Un apunte del local sobre el pedido ("entregó 5 millones a cuenta")."""
+
+    def setUp(self):
+        super().setUp()
+        self.pedido = self._pedido_con_reserva('2')
+        self.url = reverse('pedido-detail', args=[self.pedido.id])
+
+    def test_se_guarda_y_vuelve_en_el_detalle(self):
+        respuesta = self.cliente_api.patch(
+            self.url, {'nota_interna': 'Entregó Gs. 5.000.000, falta el saldo'}, format='json')
+        self.assertEqual(respuesta.status_code, 200, respuesta.data)
+        self.assertEqual(respuesta.data['nota_interna'], 'Entregó Gs. 5.000.000, falta el saldo')
+
+    def test_se_puede_editar_en_un_pedido_ya_enviado_a_caja(self):
+        NotaPedido.objects.filter(pk=self.pedido.pk).update(estado=NotaPedido.ESTADO_LISTO)
+        respuesta = self.cliente_api.patch(self.url, {'nota_interna': 'x'}, format='json')
+        self.assertEqual(respuesta.status_code, 200, respuesta.data)
+
+    def test_deposito_no_la_ve(self):
+        NotaPedido.objects.filter(pk=self.pedido.pk).update(nota_interna='entregó 5 millones')
+        deposito = crear_usuario('deposito_nota', rol=Usuario.ROL_DEPOSITO)
+        api = APIClient()
+        api.force_authenticate(deposito)
+        self.assertIsNone(api.get(self.url).data['nota_interna'])
+
+    def test_no_sale_en_la_nota_del_cliente(self):
+        from apps.ventas import nota_pedido_doc as doc
+        NotaPedido.objects.filter(pk=self.pedido.pk).update(nota_interna='entregó 5 millones')
+        self.pedido.refresh_from_db()
+        self.assertNotIn('5 millones', str(doc.datos_desde_pedido(self.pedido)))

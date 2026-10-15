@@ -101,6 +101,13 @@ class NotaPedido(models.Model):
     cliente_ruc           = models.CharField(max_length=30,  blank=True)
     cliente_telefono      = models.CharField(max_length=30,  blank=True)
     cliente_observaciones = models.TextField(blank=True)
+    # Nota del local, no del cliente: no sale en el presupuesto ni en la nota
+    # de pedido (`cliente_observaciones` sí). Existe para seguir un pedido
+    # largo —"entregó Gs. 5.000.000 a cuenta, falta el saldo"— hasta que se
+    # manda a caja. Se puede editar en cualquier estado (ver
+    # NotaPedidoDetailView.patch) y depósito no la ve, porque suele llevar
+    # montos.
+    nota_interna          = models.TextField(blank=True)
 
     subtotal  = models.DecimalField(max_digits=14, decimal_places=2, default=0)
     descuento = models.DecimalField(max_digits=14, decimal_places=2, default=0)
@@ -220,6 +227,29 @@ class NotaPedido(models.Model):
         return reservados
 
     @transaction.atomic
+    def reservar_cantidad(self, variante, cantidad, usuario):
+        """
+        Reserva `cantidad` de una variante para este pedido — lo que se le
+        agrega a un pedido ya creado (`AgregarItemsView`). Mismo movimiento
+        que `reservar_stock()`, acotado a lo nuevo: reservar el ítem entero
+        de vuelta duplicaría la reserva de lo que ya estaba.
+        """
+        from apps.inventario.models import Stock, MovimientoStock
+
+        try:
+            stock = Stock.objects.select_for_update().get(variante=variante)
+            stock.registrar_movimiento(
+                tipo            = MovimientoStock.TIPO_RESERVA,
+                cantidad        = cantidad,
+                usuario         = usuario,
+                referencia_tipo = 'pedido',
+                referencia_id   = self.id,
+                observaciones   = f'Reserva — agregado al pedido {self.numero}',
+            )
+        except Exception as e:
+            raise StockInsuficienteError([{'sku': variante.sku, 'error': str(e)}])
+
+    @transaction.atomic
     def liberar_stock(self, usuario):
         """
         Al cancelar: libera todas las reservas del pedido.
@@ -287,7 +317,11 @@ class NotaPedido(models.Model):
 
         errores = []
 
-        for item in self.items.select_related('variante').all():
+        for item in self.items.select_related('variante__producto').all():
+            # El costo de lo vendido, congelado hoy (ver ItemPedido.costo_unitario).
+            if item.costo_unitario is None and item.variante.producto.precio_costo:
+                item.costo_unitario = item.variante.producto.precio_costo
+                item.save(update_fields=['costo_unitario'])
             try:
                 stock = Stock.objects.select_for_update().get(variante=item.variante)
 
@@ -362,6 +396,14 @@ class ItemPedido(models.Model):
                           validators=[MinValueValidator(Decimal('0.0001'))])
     precio_unitario = models.DecimalField(max_digits=12, decimal_places=2)
     descuento_item  = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    # Costo de adquisición por unidad de venta (IVA incluido, como el precio),
+    # congelado al cobrar en `NotaPedido.descontar_stock()`. Sale de
+    # `Producto.precio_costo`, que cambia con cada factura nueva del
+    # proveedor: sin esta foto, la ganancia de una venta vieja cambiaría
+    # cada vez que se actualiza el costo. Null = el producto no tenía costo
+    # cargado cuando se vendió (el reporte de ganancias lo muestra aparte).
+    costo_unitario  = models.DecimalField(max_digits=14, decimal_places=2,
+                                          null=True, blank=True)
     observaciones   = models.CharField(max_length=200, blank=True)
     preparado         = models.BooleanField(default=False)
     cantidad_preparada = models.DecimalField(max_digits=10, decimal_places=4, default=0)

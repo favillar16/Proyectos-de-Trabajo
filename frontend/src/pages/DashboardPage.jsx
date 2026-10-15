@@ -27,7 +27,7 @@ import {
 } from 'lucide-react'
 import Layout from '../components/layout/Layout'
 import PanelReportes from '../components/reportes/PanelReportes'
-import { dashboardApi, inventarioApi, costosApi } from '../services/api'
+import { dashboardApi, inventarioApi } from '../services/api'
 import { useAuthStore } from '../store/authStore'
 
 const C = {
@@ -575,12 +575,6 @@ function DashboardAdmin({ navigate }) {
     refetchInterval: 5 * 60_000,
   })
 
-  // Costos del mes actual para el balance
-  const { data: costosMes } = useQuery({
-    queryKey: ['costos-resumen', hoy.getFullYear(), hoy.getMonth() + 1],
-    queryFn: () => costosApi.resumen(hoy.getFullYear(), hoy.getMonth() + 1).then(r => r.data),
-    staleTime: 60_000,
-  })
 
   const totalMedios = kpi?.ventas?.por_medio?.reduce((s, m) => s + m.total, 0) || 0
 
@@ -588,11 +582,8 @@ function DashboardAdmin({ navigate }) {
     ? new Date(dataUpdatedAt).toLocaleTimeString('es-PY', { hour:'2-digit', minute:'2-digit' })
     : ''
 
-  // Balance del mes: ingresos del día/mes vs costos del mes
-  const ventasMes  = kpi?.ventas?.mes?.total || 0
-  const gastosMes  = costosMes?.total_gastos || 0
-  const balanceMes = ventasMes - gastosMes
-  const margenPct  = ventasMes > 0 ? Math.round((balanceMes / ventasMes) * 100) : null
+  // Ganancia real del mes calendario (ver backend apps/caja/ganancias.py)
+  const ganancia = kpi?.ganancia_mes
 
   return (
     <div>
@@ -682,58 +673,60 @@ function DashboardAdmin({ navigate }) {
         )}
       </div>
 
-      {/* ── Balance del mes (ingresos − costos) ── */}
-      {costosMes && (
-        <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(180px,1fr))',
-          gap:'10px', marginBottom:'20px',
-          padding:'14px 16px', background:C.bg,
+      {/* ── Ganancia real del mes ──
+          Antes era "ingresos − gastos del mes": un flujo de caja que no
+          restaba lo que costó la mercadería vendida y metía los pagos a
+          proveedor el mes en que se pagaban. Ahora: lo cobrado menos el costo
+          de lo vendido (ganancia bruta), menos los gastos sin compras de
+          mercadería (ganancia neta). La cuenta está en caja/ganancias.py. */}
+      {ganancia && (
+        <div style={{ marginBottom:'20px', padding:'14px 16px', background:C.bg,
           border:`1px solid ${C.border}`, borderRadius:'14px' }}>
-          <div>
-            <p style={{ fontSize:'10.5px', fontWeight:'500', color:C.textMuted,
-              textTransform:'uppercase', letterSpacing:'0.06em', marginBottom:'5px' }}>
-              Ingresos del mes
-            </p>
-            <p style={{ fontSize:'20px', fontWeight:'600', color:C.success }}>
-              {formatGs(ventasMes, true)}
-            </p>
+          <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(150px,1fr))',
+            gap:'10px' }}>
+            {[
+              { label:'Cobrado del mes', valor:ganancia.ingresos, color:C.text },
+              { label:'Costo de lo vendido', valor:-ganancia.costo, color:C.danger },
+              { label:'Ganancia bruta', valor:ganancia.ganancia_bruta,
+                color: ganancia.ganancia_bruta >= 0 ? C.success : C.danger,
+                nota: ganancia.margen != null ? `Margen ${Math.round(ganancia.margen)}%` : null },
+              { label:'Gastos del mes', valor:-ganancia.gastos, color:C.danger,
+                nota:'sin compras de mercadería' },
+              { label:'Ganancia neta', valor:ganancia.ganancia_neta, grande:true,
+                color: ganancia.ganancia_neta >= 0 ? C.success : C.danger },
+            ].map(c => (
+              <div key={c.label}>
+                <p style={{ fontSize:'10.5px', fontWeight:'500', color:C.textMuted,
+                  textTransform:'uppercase', letterSpacing:'0.06em', marginBottom:'5px' }}>
+                  {c.label}
+                </p>
+                <p style={{ fontSize: c.grande ? '22px' : '19px', fontWeight: c.grande ? '700' : '600',
+                  color:c.color }}>
+                  {c.valor < 0 ? '− ' : ''}{formatGs(Math.abs(c.valor), true)}
+                </p>
+                {c.nota && (
+                  <p style={{ fontSize:'11px', color:C.textMuted, marginTop:'2px' }}>{c.nota}</p>
+                )}
+              </div>
+            ))}
           </div>
-          <div>
-            <p style={{ fontSize:'10.5px', fontWeight:'500', color:C.textMuted,
-              textTransform:'uppercase', letterSpacing:'0.06em', marginBottom:'5px' }}>
-              Costos del mes
+          <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between',
+            gap:'10px', flexWrap:'wrap', marginTop:'10px', paddingTop:'10px',
+            borderTop:`1px solid ${C.border}` }}>
+            <p style={{ fontSize:'11.5px', color:C.textMuted, margin:0 }}>
+              Del 1° del mes a hoy. Precios y costos con IVA incluido.
+              {ganancia.ingresos_sin_costo > 0 && (
+                <span style={{ color:C.warning }}>
+                  {' '}{formatGs(ganancia.ingresos_sin_costo)} cobrados de productos sin costo
+                  cargado no entran en la ganancia: cargá su costo en Productos.
+                </span>
+              )}
             </p>
-            <p style={{ fontSize:'20px', fontWeight:'600', color:C.danger }}>
-              − {formatGs(gastosMes, true)}
-            </p>
-            <p style={{ fontSize:'11px', color:C.textMuted, marginTop:'2px' }}>
-              {costosMes.pendientes > 0 && `Gs. ${Number(costosMes.pendientes).toLocaleString('es-PY')} pendiente`}
-            </p>
-          </div>
-          <div>
-            <p style={{ fontSize:'10.5px', fontWeight:'500', color:C.textMuted,
-              textTransform:'uppercase', letterSpacing:'0.06em', marginBottom:'5px' }}>
-              Balance neto
-            </p>
-            <p style={{ fontSize:'22px', fontWeight:'700',
-              color: balanceMes >= 0 ? C.success : C.danger }}>
-              {balanceMes >= 0 ? '' : '− '}{formatGs(Math.abs(balanceMes), true)}
-            </p>
-            {margenPct !== null && (
-              <p style={{ fontSize:'11px', marginTop:'2px',
-                color: margenPct >= 0 ? C.success : C.danger }}>
-                Margen: {margenPct}%
-              </p>
-            )}
-          </div>
-          <div style={{ display:'flex', alignItems:'center' }}>
             <button onClick={() => navigate('/costos')}
               style={{ padding:'7px 14px', background:'transparent',
                 border:`1px solid ${C.border}`, borderRadius:'8px',
-                color:C.textSec, fontSize:'12.5px', cursor:'pointer',
-                display:'flex', alignItems:'center', gap:'5px', transition:'all 120ms' }}
-              onMouseEnter={e=>{e.currentTarget.style.borderColor=C.gold;e.currentTarget.style.color=C.goldDark}}
-              onMouseLeave={e=>{e.currentTarget.style.borderColor=C.border;e.currentTarget.style.color=C.textSec}}>
-              Ver costos →
+                color:C.textSec, fontSize:'12.5px', cursor:'pointer' }}>
+              Ver gastos →
             </button>
           </div>
         </div>

@@ -12,14 +12,14 @@
  * - Paginación con botones grandes en touch
  */
 import { useState, useEffect, useCallback } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   Search, X, Grid3X3, List, SlidersHorizontal,
   ChevronLeft, ChevronRight, Package, Layers,
   Star, CheckCircle, AlertCircle, XCircle,
   ArrowUpDown, Tag, Building2, RotateCcw, ChevronDown,
-  ScanLine, ShoppingCart, Plus, Minus, Trash2, Send, Loader2, Lock,
+  ScanLine, ShoppingCart, Plus, Minus, Trash2, Send, Loader2, Lock, PackagePlus,
 } from 'lucide-react'
 import Layout from '../components/layout/Layout'
 import GaleriaImagenes from '../components/showroom/GaleriaImagenes'
@@ -922,12 +922,38 @@ function Paginacion({ pagina, totalPaginas, setPagina, isTouch }) {
 }
 
 // ─── Carrito flotante del showroom ────────────────────────────────────────────
-function CarritoShowroom({ items, onCambiarCantidad, onEliminar, onVaciar, onCerrar, device }) {
+// `pedidoDestino`: si viene, el carrito no crea una nota nueva sino que suma
+// sus productos a ese pedido pendiente (botón "Agregar productos" de Pedidos).
+function CarritoShowroom({ items, onCambiarCantidad, onEliminar, onVaciar, onCerrar, device, pedidoDestino }) {
   const queryClient = useQueryClient()
   const navigate = useNavigate()
   const [cliente, setCliente] = useState({ nombre:'', telefono:'' })
 
   const total = items.reduce((s, i) => s + Number(i.precio_unitario) * Number(i.cantidad), 0)
+
+  const itemsApi = () => items.map(i => ({
+    variante_id:     i.variante_id,
+    cantidad:        Number(i.cantidad),
+    precio_unitario: Number(i.precio_unitario),
+    descuento_item:  0,
+    observaciones:   '',
+  }))
+
+  const agregarMut = useMutation({
+    mutationFn: () => ventasApi.agregarItems(pedidoDestino.id, itemsApi()).then(r => r.data),
+    onSuccess: (pedido) => {
+      queryClient.invalidateQueries({ queryKey: ['pedidos'] })
+      queryClient.setQueryData(['pedido', pedido.id], pedido)
+      invalidarStock(queryClient)
+      toast.success(`Productos agregados a ${pedido.numero}`)
+      onVaciar()
+      onCerrar()
+      navigate(`/pedidos?abrir=${pedido.id}`)
+    },
+    onError: (err) => {
+      toast.error(mensajeErrorApi(err, 'No se pudieron agregar los productos'))
+    },
+  })
 
   const mutation = useMutation({
     mutationFn: () => ventasApi.crear({
@@ -973,7 +999,9 @@ function CarritoShowroom({ items, onCambiarCantidad, onEliminar, onVaciar, onCer
           <div style={{ display:'flex', alignItems:'center', gap:'9px' }}>
             <ShoppingCart size={19} style={{ color:C.goldDark }} />
             <h2 style={{ fontSize:'16px', fontWeight:'500', color:C.text }}>
-              Nota de pedido ({items.length})
+              {pedidoDestino
+                ? `Agregar a ${pedidoDestino.numero} (${items.length})`
+                : `Nota de pedido (${items.length})`}
             </h2>
           </div>
           <button onClick={onCerrar} style={{ background:'transparent', border:'none',
@@ -1056,8 +1084,8 @@ function CarritoShowroom({ items, onCambiarCantidad, onEliminar, onVaciar, onCer
             </div>
           ))}
 
-          {/* Datos del cliente */}
-          {items.length > 0 && (
+          {/* Datos del cliente — al agregar a un pedido ya los tiene */}
+          {items.length > 0 && !pedidoDestino && (
             <div style={{ padding:'14px 16px' }}>
               <p style={{ fontSize:'11px', fontWeight:'500', color:C.textMuted,
                 textTransform:'uppercase', letterSpacing:'0.05em', marginBottom:'8px' }}>
@@ -1093,6 +1121,20 @@ function CarritoShowroom({ items, onCambiarCantidad, onEliminar, onVaciar, onCer
                   fontSize:'14px', cursor:'pointer', WebkitTapHighlightColor:'transparent' }}>
                 Vaciar
               </button>
+              {pedidoDestino ? (
+              <button
+                disabled={agregarMut.isPending}
+                onClick={() => agregarMut.mutate()}
+                style={{ flex:1, height: device.isTouch?'52px':'46px', borderRadius:'11px',
+                  background:C.sidebar, border:`1px solid ${C.gold}`, color:C.gold,
+                  fontSize:'15px', fontWeight:'500', cursor:'pointer',
+                  display:'flex', alignItems:'center', justifyContent:'center', gap:'8px',
+                  WebkitTapHighlightColor:'transparent' }}>
+                {agregarMut.isPending
+                  ? <><Loader2 size={17} style={{ animation:'spin 1s linear infinite' }} /> Agregando...</>
+                  : <><PackagePlus size={17} /> Agregar al pedido</>}
+              </button>
+              ) : (
               <button
                 disabled={mutation.isPending}
                 onClick={() => mutation.mutate()}
@@ -1105,6 +1147,7 @@ function CarritoShowroom({ items, onCambiarCantidad, onEliminar, onVaciar, onCer
                   ? <><Loader2 size={17} style={{ animation:'spin 1s linear infinite' }} /> Enviando...</>
                   : <><Send size={17} /> Enviar a caja</>}
               </button>
+              )}
             </div>
           </div>
         )}
@@ -1131,6 +1174,21 @@ export default function ShowroomPage() {
   const [consultaAbierta, setConsultaAbierta] = useState(false)
   const [carrito, setCarrito] = useState([])
   const [carritoAbierto, setCarritoAbierto] = useState(false)
+
+  // "Agregar productos" desde un pedido pendiente: llega como ?agregar=<id> y
+  // el carrito suma al pedido en vez de crear una nota nueva.
+  const [searchParams, setSearchParams] = useSearchParams()
+  const navigate = useNavigate()
+  const agregarA = searchParams.get('agregar')
+  const { data: pedidoDestino } = useQuery({
+    queryKey: ['pedido', Number(agregarA)],
+    queryFn: () => ventasApi.detalle(agregarA).then(r => r.data),
+    enabled: Boolean(agregarA),
+  })
+  const salirDeAgregar = () => {
+    setSearchParams({})
+    setCarrito([])
+  }
 
   const agregarAlCarrito = useCallback((producto, variante, cantidad, modo = 'caja') => {
     // Tope de stock disponible al momento de agregar/mergear — evita que el
@@ -1186,6 +1244,23 @@ export default function ShowroomPage() {
 
   return (
     <Layout pageTitle="Showroom" breadcrumbs={['Showroom']} fullWidth>
+      {agregarA && (
+        <div style={{ display:'flex', alignItems:'center', gap:'10px', flexWrap:'wrap',
+          padding:'10px 14px', marginBottom:'12px', borderRadius:'10px',
+          background:C.goldMuted, border:`1px solid ${C.gold}` }}>
+          <PackagePlus size={18} style={{ color:C.goldDark, flexShrink:0 }} />
+          <p style={{ flex:1, minWidth:'180px', fontSize:'14px', color:C.text, margin:0 }}>
+            Agregando productos a <b>{pedidoDestino?.numero || '…'}</b>
+            {pedidoDestino?.cliente_nombre ? ` · ${pedidoDestino.cliente_nombre}` : ''}
+            <span style={{ color:C.textSec }}> — lo que cargues se suma a ese pedido.</span>
+          </p>
+          <button onClick={() => { salirDeAgregar(); navigate(`/pedidos?abrir=${agregarA}`) }}
+            style={{ height:'36px', padding:'0 14px', borderRadius:'8px', cursor:'pointer',
+              background:C.bg, border:`1px solid ${C.border}`, color:C.textSec, fontSize:'13px' }}>
+            Volver sin agregar
+          </button>
+        </div>
+      )}
       <BarraFiltros showroom={showroom} device={device} />
 
       {isLoading ? (
@@ -1270,6 +1345,7 @@ export default function ShowroomPage() {
           onVaciar={vaciarCarrito}
           onCerrar={() => setCarritoAbierto(false)}
           device={device}
+          pedidoDestino={agregarA ? pedidoDestino : null}
         />
       )}
 
@@ -1298,7 +1374,9 @@ export default function ShowroomPage() {
               {totalItemsCarrito}
             </span>
           </div>
-          <span style={{ fontSize:'14px', fontWeight:'500' }}>Ver pedido</span>
+          <span style={{ fontSize:'14px', fontWeight:'500' }}>
+            {agregarA ? 'Agregar al pedido' : 'Ver pedido'}
+          </span>
         </button>
       )}
 

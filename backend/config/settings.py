@@ -260,6 +260,8 @@ IMPRESORA_TERMICA = {
 # corrida en el servidor del local encoló 26 tickets reales en la térmica.
 if len(sys.argv) > 1 and sys.argv[1] == 'test':
     IMPRESORA_TERMICA.update(nombre_windows='', puerto_directo='')
+# Última barrera, que no depende de sys.argv: el runner de tests la vacía igual.
+TEST_RUNNER = 'config.test_runner.RunnerSinImpresora'
 
 # El sistema imprime SOLO por la térmica de arriba. Acá había un bloque
 # IMPRESORA_MATRICIAL (Epson LX-350) que no leía ningún módulo: se eliminó el

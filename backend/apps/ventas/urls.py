@@ -5,6 +5,7 @@ from .views import (
     CambioEstadoView,
     PrepararItemView,
     CancelarItemView,
+    AgregarItemsView,
     ClienteListCreateView,
     ClienteDetailView,
     NotaPedidoDocumentoView,
@@ -16,6 +17,7 @@ urlpatterns = [
     path('pedidos/<int:pk>/estado/',                   CambioEstadoView.as_view(),         name='pedido-estado'),
     # Nota para el cliente — ?formato=pdf|xlsx&tipo=presupuesto|pedido
     path('pedidos/<int:pk>/nota/',                     NotaPedidoDocumentoView.as_view(),  name='pedido-nota'),
+    path('pedidos/<int:pk>/items/',                    AgregarItemsView.as_view(),         name='pedido-agregar-items'),
     path('pedidos/<int:pk>/items/<int:item_id>/preparar/', PrepararItemView.as_view(),     name='item-preparar'),
     path('pedidos/<int:pk>/items/<int:item_id>/',      CancelarItemView.as_view(),         name='item-cancelar'),
     # Padrón de clientes con RUC

@@ -24,14 +24,14 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-from .models import DatosCheque, DatosTarjeta, Devolucion, SesionCaja, Pago
+from .models import DatosCheque, DatosTarjeta, Devolucion, SesionCaja, Pago, PagoMedio
 from .printer import (imprimir_ticket, imprimir_factura, imprimir_cierre,
                       imprimir_devolucion, ticket_a_texto,
                       ticket_devolucion_a_texto)
 from apps.ventas.models import NotaPedido
 from apps.facturacion import codigos
 from apps.facturacion import emisor as fe_emisor
-from . import cheque as cheque_mod
+from . import medios as medios_mod
 from . import devoluciones as devoluciones_mod
 from . import pos as pos_mod
 
@@ -76,6 +76,9 @@ class PagoSerializer(serializers.ModelSerializer):
     devolucion_aplicada = serializers.SerializerMethodField()
     # Devoluciones hechas SOBRE esta venta.
     devoluciones = serializers.SerializerMethodField()
+    # Líneas del cobro (pago mixto / varios cheques): el cierre de la
+    # pantalla de caja suma por medio desde acá.
+    medios = serializers.SerializerMethodField()
 
     class Meta:
         model  = Pago
@@ -86,8 +89,18 @@ class PagoSerializer(serializers.ModelSerializer):
             'monto', 'monto_recibido', 'vuelto',
             'estado', 'referencia_externa', 'fecha',
             'tipo_comprobante', 'cliente_ruc', 'cliente_razon_social',
-            'devolucion_aplicada', 'devoluciones',
+            'devolucion_aplicada', 'devoluciones', 'medios',
         ]
+
+    def get_medios(self, obj):
+        return [{
+            'medio':          l.medio,
+            'medio_display':  l.get_medio_display(),
+            'descripcion':    l.descripcion_corta,
+            'monto':          float(l.monto),
+            'monto_recibido': float(l.monto_recibido) if l.monto_recibido is not None else None,
+            'vuelto':         float(l.vuelto),
+        } for l in obj.medios.all()]
 
     def get_devolucion_aplicada(self, obj):
         dev = getattr(obj, 'devolucion_aplicada', None)
@@ -227,9 +240,11 @@ class CerrarCajaView(views.APIView):
 
         # Resumen para el ticket de cierre
         pagos = sesion.pagos.filter(estado=Pago.ESTADO_CONFIRMADO)
+        # Por línea y no por cobro: un pago mixto reparte su monto entre
+        # medios, y el efectivo de un cobro mitad cheque sí está en el cajón.
         resumen_medios = {}
-        for p in pagos:
-            resumen_medios[p.medio_pago] = resumen_medios.get(p.medio_pago, 0) + float(p.monto)
+        for l in PagoMedio.objects.filter(pago__in=pagos):
+            resumen_medios[l.medio] = resumen_medios.get(l.medio, 0) + float(l.monto)
 
         # Reintegros por devolución: plata que salió de la caja en el turno.
         reintegros_medios = {}
@@ -279,6 +294,15 @@ class RegistrarPagoView(views.APIView):
         "monto_recibido": 200000,   // solo para efectivo
         "referencia_externa": ""    // para tarjeta/transferencia
       }
+
+    Pago mixto o varios cheques: en vez de `medio_pago` y compañía, una
+    lista `medios` que tiene que sumar el total a cobrar:
+      "medios": [
+        {"medio": "cheque", "monto": 5000000, "datos_cheque": {...}},
+        {"medio": "cheque", "monto": 3000000, "datos_cheque": {...}},
+        {"medio": "efectivo", "monto": 500000, "monto_recibido": 600000}
+      ]
+    Las reglas están en apps/caja/medios.py.
 
     Flujo atómico (`_registrar`):
       1. Valida que el pedido esté en estado 'listo'
@@ -384,22 +408,6 @@ class RegistrarPagoView(views.APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        # ── Validar medio de pago ─────────────────────────────
-        medio = request.data.get('medio_pago', '')
-        medios_validos = [m[0] for m in Pago.MEDIOS]
-        if medio not in medios_validos:
-            return Response(
-                {'error': f'Medio de pago inválido. Opciones: {medios_validos}'},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        monto_recibido_raw = request.data.get('monto_recibido')
-        try:
-            monto_recibido = Decimal(str(monto_recibido_raw)) if monto_recibido_raw not in (None, '') else None
-        except Exception:
-            return Response({'error': 'monto_recibido inválido.'}, status=status.HTTP_400_BAD_REQUEST)
-        ref_externa      = request.data.get('referencia_externa', '')
-
         # Tipo de comprobante: 'ticket' (default) o 'factura'
         tipo_comprobante = request.data.get('tipo_comprobante', 'ticket')
         # Datos fiscales del cliente para la factura
@@ -482,19 +490,13 @@ class RegistrarPagoView(views.APIView):
         monto_final = (monto_base * (Decimal('100') - desc_pct) / Decimal('100')).quantize(
             Decimal('1'), rounding=ROUND_HALF_UP)                  # guaraníes sin decimales
 
-        # ── Validar que el efectivo alcance ────────────────────
-        if medio == Pago.MEDIO_EFECTIVO:
-            if monto_recibido is None:
-                return Response(
-                    {'error': 'Para pagos en efectivo debés indicar el monto recibido.'},
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
-            if monto_recibido < monto_final:
-                return Response(
-                    {'error': f'El monto recibido (Gs. {monto_recibido:,.0f}) es menor al total '
-                              f'a cobrar (Gs. {monto_final:,.0f}).'},
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
+        # ── Medios de pago: uno o varios (pago mixto) ─────────
+        # Las reglas —suman el total, efectivo en una sola línea, cada
+        # cheque con banco y número— están en apps/caja/medios.py.
+        try:
+            lineas = medios_mod.desde_request(request.data, monto_final)
+        except medios_mod.ErrorMedios as e:
+            return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
         # ── Tarjeta: pasar por la terminal POS ────────────────
         # Solo si es factura Y el SIFEN está prendido. Con ticket o con el
@@ -505,50 +507,43 @@ class RegistrarPagoView(views.APIView):
         # Se hace ANTES de crear el pago a propósito: si faltan los datos que
         # el SIFEN exige, es mejor frenar acá, con el cliente todavía en el
         # mostrador, que emitir la factura y descubrirlo cuando el documento
-        # vuelva rechazado al otro día.
-        resultado_pos = None
-        if (tipo_comprobante == 'factura'
-                and fe_emisor.sifen_activo()
-                and pos_mod.requiere_datos_de_tarjeta(medio)):
-            terminal = pos_mod.obtener_terminal()
-            try:
-                resultado_pos = terminal.cobrar(
-                    monto_final, medio=medio,
-                    datos=request.data.get('datos_tarjeta') or {})
-            except pos_mod.ErrorPOS as e:
-                return Response({'error': str(e)},
-                                status=status.HTTP_400_BAD_REQUEST)
-            if not resultado_pos.aprobado:
-                return Response(
-                    {'error': f'La terminal rechazó el cobro: '
-                              f'{resultado_pos.mensaje or "sin detalle"}'},
-                    status=status.HTTP_400_BAD_REQUEST)
-
-        # ── Cheque: banco y número, siempre ───────────────────
-        # A diferencia de la tarjeta, acá no se espera a que el SIFEN esté
-        # prendido: un cheque sin banco ni número es un papel que el local
-        # después no puede cruzar contra nada. La razón completa está en
-        # apps/caja/cheque.py.
-        datos_cheque = None
-        if cheque_mod.requiere_datos_de_cheque(medio):
-            try:
-                datos_cheque = cheque_mod.validar(
-                    request.data.get('datos_cheque') or {})
-            except cheque_mod.ErrorCheque as e:
-                return Response({'error': str(e)},
-                                status=status.HTTP_400_BAD_REQUEST)
+        # vuelva rechazado al otro día. Con pago mixto, cada tarjeta por su
+        # monto: en la factura es una entrega aparte.
+        resultados_pos = {}
+        if tipo_comprobante == 'factura' and fe_emisor.sifen_activo():
+            for n, linea in enumerate(lineas):
+                if not pos_mod.requiere_datos_de_tarjeta(linea.medio):
+                    continue
+                terminal = pos_mod.obtener_terminal()
+                try:
+                    resultado_pos = terminal.cobrar(
+                        linea.monto, medio=linea.medio, datos=linea.datos_tarjeta)
+                except pos_mod.ErrorPOS as e:
+                    return Response({'error': str(e)},
+                                    status=status.HTTP_400_BAD_REQUEST)
+                if not resultado_pos.aprobado:
+                    return Response(
+                        {'error': f'La terminal rechazó el cobro: '
+                                  f'{resultado_pos.mensaje or "sin detalle"}'},
+                        status=status.HTTP_400_BAD_REQUEST)
+                resultados_pos[n] = resultado_pos
 
         # ── Crear pago ────────────────────────────────────────
+        # `monto_recibido`, `vuelto` y `referencia_externa` del Pago repiten
+        # los de la línea de efectivo / de la única línea: los leen el ticket
+        # y la lista de cobros. El detalle por medio está en las líneas.
+        efectivo = next((l for l in lineas if l.medio == Pago.MEDIO_EFECTIVO), None)
         pago = Pago(
             pedido           = pedido,
             sesion_caja      = sesion,
             cajero           = request.user,
-            medio_pago       = medio,
+            medio_pago       = medios_mod.medio_del_cobro(lineas),
             monto            = monto_final,
             descuento_porcentaje = desc_pct,
             monto_sin_descuento  = monto_base,
-            monto_recibido   = monto_recibido,
-            referencia_externa = ref_externa,
+            monto_recibido   = efectivo.monto_recibido if efectivo else None,
+            vuelto           = efectivo.vuelto if efectivo else 0,
+            referencia_externa = lineas[0].referencia_externa if len(lineas) == 1 else '',
             estado           = Pago.ESTADO_CONFIRMADO,
             # Sin esto, reimprimir un pago viejo (o buscarlo por RUC) no
             # tenía de dónde sacar los datos de la factura — ver el
@@ -561,31 +556,38 @@ class RegistrarPagoView(views.APIView):
             cliente_email        = cliente_email if tipo_comprobante == 'factura' else '',
             condicion_venta      = condicion_venta if tipo_comprobante == 'factura' else 'Contado',
         )
+        pago._lineas_explicitas = True
         pago.save()
 
-        if resultado_pos is not None:
-            DatosTarjeta.objects.create(
-                pago=pago,
-                denominacion=resultado_pos.denominacion,
-                denominacion_descripcion=resultado_pos.denominacion_descripcion,
-                forma_procesamiento=resultado_pos.forma_procesamiento,
-                codigo_autorizacion=resultado_pos.codigo_autorizacion,
-                titular=resultado_pos.titular,
-                ultimos_digitos=resultado_pos.ultimos_digitos,
-                procesadora_ruc=resultado_pos.procesadora_ruc,
-                procesadora_razon_social=resultado_pos.procesadora_razon_social,
-                numero_boleta=resultado_pos.numero_boleta,
-                origen=pos_mod.obtener_terminal().nombre,
+        for n, linea in enumerate(lineas):
+            registro = PagoMedio.objects.create(
+                pago=pago, medio=linea.medio, monto=linea.monto,
+                monto_recibido=linea.monto_recibido, vuelto=linea.vuelto,
+                referencia_externa=linea.referencia_externa,
             )
-
-        if datos_cheque is not None:
-            DatosCheque.objects.create(
-                pago=pago,
-                numero=datos_cheque.numero,
-                banco=datos_cheque.banco,
-                titular=datos_cheque.titular,
-                fecha_cobro=datos_cheque.fecha_cobro,
-            )
+            resultado_pos = resultados_pos.get(n)
+            if resultado_pos is not None:
+                DatosTarjeta.objects.create(
+                    pago=pago, linea=registro,
+                    denominacion=resultado_pos.denominacion,
+                    denominacion_descripcion=resultado_pos.denominacion_descripcion,
+                    forma_procesamiento=resultado_pos.forma_procesamiento,
+                    codigo_autorizacion=resultado_pos.codigo_autorizacion,
+                    titular=resultado_pos.titular,
+                    ultimos_digitos=resultado_pos.ultimos_digitos,
+                    procesadora_ruc=resultado_pos.procesadora_ruc,
+                    procesadora_razon_social=resultado_pos.procesadora_razon_social,
+                    numero_boleta=resultado_pos.numero_boleta,
+                    origen=pos_mod.obtener_terminal().nombre,
+                )
+            if linea.cheque is not None:
+                DatosCheque.objects.create(
+                    pago=pago, linea=registro,
+                    numero=linea.cheque.numero,
+                    banco=linea.cheque.banco,
+                    titular=linea.cheque.titular,
+                    fecha_cobro=linea.cheque.fecha_cobro,
+                )
 
         # ── Cambiar estado del pedido ─────────────────────────
         pedido.estado = NotaPedido.ESTADO_PAGADO
@@ -718,7 +720,7 @@ class ListaPagosView(views.APIView):
             )
 
         qs = (qs.select_related('pedido', 'cajero', 'devolucion_aplicada')
-                .prefetch_related('devoluciones')
+                .prefetch_related('devoluciones', 'medios__datos_cheque')
                 .order_by('-fecha'))
 
         # count() antes de recortar: el frontend necesita saber cuántos hay
@@ -1079,10 +1081,25 @@ def _detalle_medio_pago(pago):
     de qué papel entró en la caja, y "Cheque" a secas no alcanza para
     cruzarlo después contra el extracto del banco.
     """
-    datos = getattr(pago, 'datos_cheque', None)
-    if datos is not None:
-        return datos.descripcion_corta
+    lineas = list(pago.medios.all())
+    if len(lineas) == 1:
+        datos = getattr(lineas[0], 'datos_cheque', None)
+        if datos is not None:
+            return datos.descripcion_corta
     return ''
+
+
+def _medios_ticket(pago):
+    """
+    El desglose de un cobro con más de una línea (pago mixto, varios
+    cheques), para el ticket: qué entró por cada medio. Vacío si fue uno
+    solo — ahí alcanza con "Medio de pago" y el detalle de siempre.
+    """
+    lineas = list(pago.medios.all())
+    if len(lineas) < 2:
+        return []
+    return [{'descripcion': l.descripcion_corta, 'monto': float(l.monto)}
+            for l in lineas]
 
 
 def _datos_ticket(pedido, pago, sesion, tipo_comprobante='ticket',
@@ -1150,6 +1167,7 @@ def _datos_ticket(pedido, pago, sesion, tipo_comprobante='ticket',
         'monto_sin_descuento_caja': float(getattr(pago, 'monto_sin_descuento', 0) or total),
         'medio_pago':      pago.get_medio_pago_display(),
         'detalle_pago':    _detalle_medio_pago(pago),
+        'medios':          _medios_ticket(pago),
         'monto_recibido':  float(pago.monto_recibido) if pago.monto_recibido else None,
         'vuelto':          float(pago.vuelto),
         'negocio':         'Oga Porã',
@@ -1305,6 +1323,22 @@ class ReporteProductosView(views.APIView):
         detalle = request.query_params.get('detalle', '') in ('1', 'true', 'True', 'si')
         reporte = rep.reporte_productos(desde, hasta, detalle=detalle)
         nombre = 'productos_detalle' if detalle else 'productos_vendidos'
+        return rep.responder_reporte(reporte, _formato(request), nombre,
+                                     tamanio=_tamanio(request))
+
+
+class ReporteGananciasView(views.APIView):
+    """
+    Precio cobrado contra costo de adquisición: ganancia bruta y neta.
+    ?detalle=1 abre una fila por venta. Ver apps/caja/ganancias.py.
+    """
+    permission_classes = [EsAdmin]
+
+    def get(self, request):
+        desde, hasta = _parse_rango(request)
+        detalle = request.query_params.get('detalle', '') in ('1', 'true', 'True', 'si')
+        reporte = rep.reporte_ganancias(desde, hasta, detalle=detalle)
+        nombre = 'ganancias_detalle' if detalle else 'ganancias'
         return rep.responder_reporte(reporte, _formato(request), nombre,
                                      tamanio=_tamanio(request))
 

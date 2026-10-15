@@ -73,6 +73,10 @@ class Pago(models.Model):
     MEDIO_TARJETA_CREDITO = 'credito'
     MEDIO_TRANSFERENCIA = 'transferencia'
     MEDIO_CHEQUE = 'cheque'
+    # Cobro con más de un medio distinto (cheque + efectivo, …). No es un
+    # medio en sí: el detalle está en las líneas (`PagoMedio`), que es lo que
+    # suman el cierre, el arqueo y los reportes por medio.
+    MEDIO_MIXTO = 'mixto'
 
     MEDIOS = [
         (MEDIO_EFECTIVO, 'Efectivo'),
@@ -81,6 +85,7 @@ class Pago(models.Model):
         (MEDIO_TRANSFERENCIA, 'Transferencia bancaria'),
         (MEDIO_CHEQUE, 'Cheque'),
     ]
+    MEDIOS_Y_MIXTO = MEDIOS + [(MEDIO_MIXTO, 'Pago mixto')]
 
     ESTADO_PENDIENTE = 'pendiente'
     ESTADO_CONFIRMADO = 'confirmado'
@@ -108,7 +113,10 @@ class Pago(models.Model):
         related_name='pagos_procesados'
     )
 
-    medio_pago = models.CharField(max_length=20, choices=MEDIOS)
+    # El medio del cobro si fue uno solo (aunque sean varios cheques), o
+    # 'mixto'. Para saber cuánto entró por cada medio hay que leer las
+    # líneas (`medios`), no este campo.
+    medio_pago = models.CharField(max_length=20, choices=MEDIOS_Y_MIXTO)
     monto = models.DecimalField(max_digits=14, decimal_places=2, validators=[MinValueValidator(0)])
     monto_recibido = models.DecimalField(max_digits=14, decimal_places=2, null=True, blank=True)
     vuelto = models.DecimalField(max_digits=14, decimal_places=2, default=0)
@@ -175,7 +183,20 @@ class Pago(models.Model):
             self.numero_ticket = f'T-{ts}-{self.pedido_id}'
         if self.monto_recibido and self.medio_pago == self.MEDIO_EFECTIVO:
             self.vuelto = max(0, self.monto_recibido - self.monto)
+        nuevo = self._state.adding
         super().save(*args, **kwargs)
+
+        # Un cobro de un solo medio tiene una sola línea, y se arma sola: así
+        # todo lo que crea un `Pago` sin saber de líneas (el cobro de un
+        # cambio, los tests) queda igual de bien sumado en el cierre y los
+        # reportes. RegistrarPagoView, que sí las conoce, avisa con
+        # `_lineas_explicitas` para cargarlas ella.
+        if (nuevo and self.medio_pago != self.MEDIO_MIXTO
+                and not getattr(self, '_lineas_explicitas', False)):
+            PagoMedio.objects.create(
+                pago=self, medio=self.medio_pago, monto=self.monto,
+                monto_recibido=self.monto_recibido, vuelto=self.vuelto,
+                referencia_externa=self.referencia_externa)
 
     @property
     def documento_electronico(self):
@@ -204,6 +225,71 @@ class Pago(models.Model):
         return f'Pago {self.numero_ticket} — {self.get_medio_pago_display()} — {self.monto}'
 
 
+class PagoMedio(models.Model):
+    """
+    Una línea de un cobro: cuánto se pagó con qué medio.
+
+    Existe para el pago mixto —parte en cheque, parte en efectivo— y para
+    cobrar con más de un cheque. Un cobro sigue siendo **un** `Pago` (un
+    ticket, una factura): el SIFEN pide justamente eso, un documento con
+    varias entregas (grupo E605), y las devoluciones, la reimpresión y la
+    remisión siguen hablando de "el cobro" de una venta.
+
+    Cada cheque y cada tarjeta es una línea propia, con sus datos colgando de
+    ella (`datos_cheque` / `datos_tarjeta`): dos cheques son dos papeles con
+    dos números, y en la factura dos entregas.
+
+    `monto` es lo que la línea imputa a la venta. En efectivo, lo entregado
+    de más es `monto_recibido` y vuelve como `vuelto`; las líneas suman
+    siempre el `Pago.monto`. Todo lo que suma "por medio" (cierre, arqueo,
+    KPI) suma estas líneas.
+    """
+    pago = models.ForeignKey(Pago, on_delete=models.CASCADE, related_name='medios')
+    medio = models.CharField(max_length=20, choices=Pago.MEDIOS)
+    monto = models.DecimalField(max_digits=14, decimal_places=2,
+                                validators=[MinValueValidator(0)])
+    monto_recibido = models.DecimalField(max_digits=14, decimal_places=2,
+                                         null=True, blank=True)
+    vuelto = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    referencia_externa = models.CharField(max_length=100, blank=True)
+
+    class Meta:
+        db_table = 'caja_pago_medios'
+        ordering = ['id']
+        verbose_name = 'Medio de un cobro'
+        verbose_name_plural = 'Medios de un cobro'
+
+    def __str__(self):
+        return f'{self.get_medio_display()} {self.monto} — {self.pago.numero_ticket}'
+
+    @property
+    def descripcion_corta(self) -> str:
+        """'Cheque 00012345 — Banco Itaú' — lo que va en el ticket."""
+        datos = getattr(self, 'datos_cheque', None)
+        if datos is not None:
+            return f'Cheque {datos.descripcion_corta}'
+        return self.get_medio_display()
+
+
+def _linea_libre(pago, relacion):
+    """
+    La línea del cobro a la que engancharse cuando un cheque o una tarjeta se
+    crean con `pago=` y sin `linea=` (la forma de antes del pago mixto, que
+    siguen usando los tests y cualquier código viejo): la primera línea de un
+    medio compatible que todavía no tenga datos.
+    """
+    from apps.facturacion import codigos
+    for linea in pago.medios.all():
+        if hasattr(linea, relacion):
+            continue
+        codigo = codigos.codigo_medio_pago(linea.medio)
+        if relacion == 'datos_cheque' and codigo in codigos.MEDIOS_CON_CHEQUE:
+            return linea
+        if relacion == 'datos_tarjeta' and codigo in codigos.MEDIOS_CON_TARJETA:
+            return linea
+    return None
+
+
 class DatosTarjeta(models.Model):
     """
     Datos del cobro con tarjeta, tal como los pide el SIFEN.
@@ -221,8 +307,14 @@ class DatosTarjeta(models.Model):
     los manda la terminal si algún día se integra (ver apps/caja/pos.py). El
     modelo es el mismo en los dos casos.
     """
-    pago = models.OneToOneField(
-        Pago, on_delete=models.CASCADE, related_name='datos_tarjeta')
+    pago = models.ForeignKey(
+        Pago, on_delete=models.CASCADE, related_name='tarjetas')
+    # La línea del cobro que pagó esta tarjeta. Con pago mixto puede haber
+    # más de una tarjeta por cobro, y cada una es una entrega aparte en la
+    # factura.
+    linea = models.OneToOneField(
+        PagoMedio, on_delete=models.CASCADE, null=True, blank=True,
+        related_name='datos_tarjeta')
 
     # ── Obligatorios para el SIFEN ───────────────────────────────────────
     denominacion = models.PositiveSmallIntegerField(
@@ -266,6 +358,11 @@ class DatosTarjeta(models.Model):
         cola = f' ****{self.ultimos_digitos}' if self.ultimos_digitos else ''
         return f'{self.descripcion_sifen}{cola} — {self.pago.numero_ticket}'
 
+    def save(self, *args, **kwargs):
+        if self.linea_id is None and self.pago_id:
+            self.linea = _linea_libre(self.pago, 'datos_tarjeta')
+        super().save(*args, **kwargs)
+
     @property
     def descripcion_sifen(self) -> str:
         """Descripción del campo E622, coherente con el código E621."""
@@ -294,8 +391,13 @@ class DatosCheque(models.Model):
     Va en una tabla aparte, igual que `DatosTarjeta` y por la misma razón:
     solo aplica a una parte de los cobros.
     """
-    pago = models.OneToOneField(
-        Pago, on_delete=models.CASCADE, related_name='datos_cheque')
+    pago = models.ForeignKey(
+        Pago, on_delete=models.CASCADE, related_name='cheques')
+    # Cada cheque es una línea del cobro: así se cobra con dos cheques, o
+    # con un cheque y el resto en efectivo.
+    linea = models.OneToOneField(
+        PagoMedio, on_delete=models.CASCADE, null=True, blank=True,
+        related_name='datos_cheque')
 
     # ── Obligatorios para el SIFEN ───────────────────────────────────────
     numero = models.CharField(
@@ -330,6 +432,8 @@ class DatosCheque(models.Model):
     def save(self, *args, **kwargs):
         from apps.facturacion import codigos
         self.numero = codigos.numero_cheque_sifen(self.numero)
+        if self.linea_id is None and self.pago_id:
+            self.linea = _linea_libre(self.pago, 'datos_cheque')
         super().save(*args, **kwargs)
 
     @property

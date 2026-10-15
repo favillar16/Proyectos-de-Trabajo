@@ -9,12 +9,13 @@
  * WebSocket actualiza la lista en tiempo real sin recargar.
  */
 import { useState, useEffect, useCallback } from 'react'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   Plus, RefreshCw, FileText, Clock, Truck,
   CheckCircle, CreditCard, XCircle, ChevronRight,
   Package, User, AlertCircle, Loader2, FileSpreadsheet,
-  Search, X, Trash2, Undo2, Printer,
+  Search, X, Trash2, Undo2, Printer, StickyNote, Pencil, PackagePlus,
 } from 'lucide-react'
 import Layout from '../components/layout/Layout'
 import NuevoPedidoForm from '../components/ventas/NuevoPedidoForm'
@@ -191,7 +192,15 @@ function PedidoCard({ pedido, onAbrir, esActivo, rol }) {
       </div>
 
       <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between' }}>
-        <p style={{ fontSize:'11px', color:C.textMuted }}>{formatFecha(pedido.fecha_creacion)}</p>
+        <p style={{ fontSize:'11px', color:C.textMuted, display:'flex', alignItems:'center', gap:'6px' }}>
+          {formatFecha(pedido.fecha_creacion)}
+          {pedido.tiene_nota_interna && (
+            <span title="Tiene una nota interna" style={{ display:'inline-flex', alignItems:'center',
+              gap:'3px', color:C.warning, fontWeight:'500' }}>
+              <StickyNote size={11} /> Nota
+            </span>
+          )}
+        </p>
         {pedido.todos_preparados && pedido.estado === 'en_preparacion' && (
           <span style={{ fontSize:'11px', color:C.success, fontWeight:'500',
             display:'flex', alignItems:'center', gap:'3px' }}>
@@ -207,6 +216,7 @@ function PedidoCard({ pedido, onAbrir, esActivo, rol }) {
 // ─── Panel de detalle del pedido ──────────────────────────────────────────────
 function PanelDetalle({ pedido: pedidoResumen, rol, puedeEditarPrecio, onCerrar }) {
   const queryClient = useQueryClient()
+  const navigate = useNavigate()
   const [editandoMonto, setEditandoMonto] = useState(false)
   const [montoNuevo, setMontoNuevo] = useState('')
   const [editandoTraslado, setEditandoTraslado] = useState(false)
@@ -416,6 +426,13 @@ function PanelDetalle({ pedido: pedidoResumen, rol, puedeEditarPrecio, onCerrar 
                 </div>
               )}
 
+              {/* Nota interna — apunte del local, no sale en la nota del
+                  cliente. Depósito no la ve (suele llevar montos). */}
+              {rol !== 'deposito' && (
+                <NotaInterna pedido={pedido}
+                  puedeEditar={['vendedor', 'encargada_ventas', 'admin'].includes(rol)} />
+              )}
+
               {/* La mercadería del pedido está apartada para este cliente
                   desde que se creó, hasta que se cobre o se cancele. */}
               {['pendiente', 'en_preparacion', 'listo'].includes(pedido.estado) && (
@@ -531,6 +548,19 @@ function PanelDetalle({ pedido: pedidoResumen, rol, puedeEditarPrecio, onCerrar 
                     )}
                   </div>
                 ))}
+                {/* Sumar productos sin cancelar y recargar el pedido: lleva
+                    al Showroom en modo "agregar a este pedido". */}
+                {puedeQuitarItems && (
+                  <div style={{ padding:'10px 20px', borderBottom:`1px solid ${C.border}` }}>
+                    <button onClick={() => navigate(`/showroom?agregar=${pedido.id}`)}
+                      style={{ width:'100%', height:'42px', borderRadius:'9px', cursor:'pointer',
+                        background:C.goldMuted, border:`1px dashed ${C.gold}`,
+                        color:C.goldDark, fontSize:'13.5px', fontWeight:'500',
+                        display:'flex', alignItems:'center', justifyContent:'center', gap:'7px' }}>
+                      <PackagePlus size={16}/> Agregar productos
+                    </button>
+                  </div>
+                )}
               </div>
 
               {/* Totales — depósito no maneja montos */}
@@ -690,6 +720,91 @@ function PanelDetalle({ pedido: pedidoResumen, rol, puedeEditarPrecio, onCerrar 
         @keyframes spin { to{transform:rotate(360deg)} }
       `}</style>
     </>
+  )
+}
+
+/**
+ * Nota interna del pedido: un apunte libre del local para seguirlo hasta que
+ * se cobre — "entregó Gs. 5.000.000 a cuenta, falta el saldo". No se imprime
+ * en el presupuesto ni en la nota de pedido (para eso están las
+ * observaciones) y se puede editar en cualquier estado.
+ */
+function NotaInterna({ pedido, puedeEditar }) {
+  const queryClient = useQueryClient()
+  const [editando, setEditando] = useState(false)
+  const [texto, setTexto] = useState('')
+  const nota = pedido.nota_interna || ''
+
+  const guardarMut = useMutation({
+    mutationFn: (valor) => ventasApi.actualizar(pedido.id, { nota_interna: valor }).then(r => r.data),
+    onSuccess: (data) => {
+      queryClient.setQueryData(['pedido', pedido.id], data)
+      queryClient.invalidateQueries({ queryKey: ['pedidos'] })
+      setEditando(false)
+      toast.success('Nota guardada')
+    },
+    onError: (err) => toast.error(err.response?.data?.error || 'No se pudo guardar la nota'),
+  })
+
+  if (!nota && !puedeEditar) return null
+
+  return (
+    <div style={{ padding:'12px 20px', borderBottom:`1px solid ${C.border}`,
+      background: nota || editando ? C.warningBg : C.bg }}>
+      {editando ? (
+        <>
+          <p style={{ fontSize:'11px', color:C.warning, marginBottom:'6px',
+            display:'flex', alignItems:'center', gap:'5px' }}>
+            <StickyNote size={12}/> Nota interna — no sale en la nota del cliente
+          </p>
+          <textarea value={texto} onChange={e => setTexto(e.target.value)} autoFocus rows={3}
+            placeholder="Ej.: entregó Gs. 5.000.000 a cuenta el 15/10, falta el saldo"
+            style={{ width:'100%', padding:'8px 10px', borderRadius:'8px', resize:'vertical',
+              border:`1.5px solid ${C.warningBorder}`, fontSize:'13px', color:C.text,
+              background:C.bg, outline:'none', fontFamily:'inherit', boxSizing:'border-box' }} />
+          <div style={{ display:'flex', gap:'8px', marginTop:'8px' }}>
+            <button onClick={() => setEditando(false)} disabled={guardarMut.isPending}
+              style={{ flex:1, height:'38px', borderRadius:'8px', cursor:'pointer',
+                background:'transparent', border:`1px solid ${C.border}`,
+                color:C.textSec, fontSize:'13px' }}>
+              Cancelar
+            </button>
+            <button onClick={() => guardarMut.mutate(texto)} disabled={guardarMut.isPending}
+              style={{ flex:1, height:'38px', borderRadius:'8px', cursor:'pointer',
+                background:C.sidebar, border:`1px solid ${C.gold}`,
+                color:C.gold, fontSize:'13px', fontWeight:'500' }}>
+              {guardarMut.isPending ? 'Guardando...' : 'Guardar nota'}
+            </button>
+          </div>
+        </>
+      ) : nota ? (
+        <div style={{ display:'flex', alignItems:'flex-start', gap:'10px' }}>
+          <div style={{ flex:1, minWidth:0 }}>
+            <p style={{ fontSize:'11px', color:C.warning, marginBottom:'3px',
+              display:'flex', alignItems:'center', gap:'5px' }}>
+              <StickyNote size={12}/> Nota interna
+            </p>
+            <p style={{ fontSize:'13px', color:C.text, whiteSpace:'pre-wrap' }}>{nota}</p>
+          </div>
+          {puedeEditar && (
+            <button onClick={() => { setTexto(nota); setEditando(true) }} title="Editar nota"
+              style={{ width:'36px', height:'36px', flexShrink:0, borderRadius:'8px',
+                cursor:'pointer', background:C.bg, border:`1px solid ${C.warningBorder}`,
+                color:C.warning, display:'flex', alignItems:'center', justifyContent:'center' }}>
+              <Pencil size={15}/>
+            </button>
+          )}
+        </div>
+      ) : (
+        <button onClick={() => { setTexto(''); setEditando(true) }}
+          style={{ width:'100%', height:'38px', borderRadius:'8px', cursor:'pointer',
+            background:'transparent', border:`1px dashed ${C.warningBorder}`,
+            color:C.warning, fontSize:'13px',
+            display:'flex', alignItems:'center', justifyContent:'center', gap:'6px' }}>
+          <StickyNote size={14}/> Agregar nota interna
+        </button>
+      )}
+    </div>
   )
 }
 
@@ -1149,6 +1264,18 @@ export default function PedidosPage() {
 
   const [pedidoActivo, setPedidoActivo] = useState(null)
   const [mostrarNuevo, setMostrarNuevo] = useState(false)
+
+  // ?abrir=<id>: vuelve del Showroom después de agregar productos y abre ese
+  // pedido para que se vea lo que se sumó.
+  const [searchParams, setSearchParams] = useSearchParams()
+  const abrirId = searchParams.get('abrir')
+  useEffect(() => {
+    if (!abrirId) return
+    ventasApi.detalle(abrirId)
+      .then(r => setPedidoActivo(r.data))
+      .catch(() => {})
+      .finally(() => setSearchParams({}, { replace: true }))
+  }, [abrirId, setSearchParams])
   const [filtroEstado, setFiltroEstado] = useState('')
   // Búsqueda por nombre o CI/RUC del cliente (también entra el número de
   // pedido). Se manda al backend y no se filtra en el cliente: la lista que

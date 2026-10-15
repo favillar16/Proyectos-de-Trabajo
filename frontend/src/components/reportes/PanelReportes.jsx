@@ -1,8 +1,9 @@
 /**
  * PanelReportes
- * Botones para descargar los cinco reportes en PDF o Excel:
+ * Botones para descargar los seis reportes en PDF o Excel:
  * Stock, Balance de Ventas, Extracto de Caja, Productos comercializados
- * (agregado y detalle por fecha) y Arqueo de Caja del día.
+ * (agregado y detalle por fecha), Ganancias (precio cobrado contra costo,
+ * agregado y por venta) y Arqueo de Caja del día.
  * Pensado para incrustarse en el Dashboard (solo admin).
  *
  * Cada reporte declara qué controles de fecha usa (`usa` = 'rango' | 'dia' |
@@ -13,7 +14,7 @@
  */
 import { useState } from 'react'
 import { Package, BarChart3, Wallet, FileText, FileSpreadsheet,
-         Loader2, Boxes, CalendarClock, Calculator } from 'lucide-react'
+         Loader2, Boxes, CalendarClock, Calculator, TrendingUp, ListOrdered } from 'lucide-react'
 import { cajaApi } from '../../services/api'
 import toast from 'react-hot-toast'
 
@@ -44,6 +45,11 @@ const REPORTES = [
     desc:'Cuánto salió de cada producto',   icon:Boxes,         nombre:'productos_vendidos', usa:'rango' },
   { tipo:'productos', clave:'productos-detalle', label:'Productos por fecha',
     desc:'Una fila por venta, con la fecha', icon:CalendarClock, nombre:'productos_detalle',  usa:'rango',
+    extra:{ detalle:1 } },
+  { tipo:'ganancias', label:'Ganancias',
+    desc:'Precio cobrado contra costo, por producto', icon:TrendingUp, nombre:'ganancias', usa:'rango' },
+  { tipo:'ganancias', clave:'ganancias-detalle', label:'Ganancias por venta',
+    desc:'Costo y ganancia de cada venta', icon:ListOrdered, nombre:'ganancias_detalle', usa:'rango',
     extra:{ detalle:1 } },
   { tipo:'arqueo', label:'Arqueo de Caja',     desc:'Conteo del día, para firmar', icon:Calculator,   nombre:'arqueo_caja',        usa:'dia' },
 ]

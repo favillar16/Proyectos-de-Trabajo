@@ -1,14 +1,15 @@
 """
 apps/caja/reportes.py
 Generación de reportes en PDF (reportlab) y Excel (openpyxl).
-Cinco reportes: Stock, Balance de Ventas, Extracto de Caja, Productos
-comercializados y Arqueo de Caja.
+Seis reportes: Stock, Balance de Ventas, Extracto de Caja, Productos
+comercializados, Ganancias y Arqueo de Caja.
 
 Cada función de reporte arma una estructura común:
   { 'titulo', 'subtitulo', 'columnas': [...], 'filas': [[...]], 'totales': {...} }
 y luego se renderiza a PDF o XLSX con los helpers de abajo.
 """
 import io
+from decimal import Decimal
 from datetime import datetime, date
 from django.http import HttpResponse
 from django.db.models import Sum, Count
@@ -351,7 +352,7 @@ def reporte_ventas(desde: date, hasta: date):
 
 
 def reporte_caja(desde: date, hasta: date):
-    from apps.caja.models import SesionCaja, Pago
+    from apps.caja.models import SesionCaja, Pago, PagoMedio
 
     sesiones = SesionCaja.objects.filter(
         fecha_apertura__date__gte=desde,
@@ -602,6 +603,115 @@ def reporte_productos(desde: date, hasta: date, detalle: bool = False):
     }
 
 
+def _pct(valor):
+    return '—' if valor is None else f'{float(valor):.1f} %'.replace('.', ',')
+
+
+def _gs_signo(valor):
+    """Gs. con signo menos adelante: una pérdida tiene que verse a simple vista."""
+    if valor is None:
+        return '—'
+    return f'- {_gs(-valor)}' if valor < 0 else _gs(valor)
+
+
+def reporte_ganancias(desde: date, hasta: date, detalle: bool = False):
+    """
+    Cuánto se gana con lo que se vende: precio cobrado contra costo de
+    adquisición, producto por producto. La cuenta y sus decisiones están en
+    apps/caja/ganancias.py.
+
+    Igual que Productos comercializados, dos vistas: el acumulado por
+    variante (qué deja más y qué deja menos) y el detalle venta por venta.
+    """
+    from . import ganancias
+
+    datos = ganancias.resumen(desde, hasta, con_lineas=True)
+    subtitulo = f'Del {desde.strftime("%d/%m/%Y")} al {hasta.strftime("%d/%m/%Y")}'
+    filas = []
+
+    def unidad(variante):
+        return UNIDAD_CORTA.get(variante.producto.unidad_venta, variante.producto.unidad_venta)
+
+    if detalle:
+        for l in datos['lineas']:
+            v = l.variante
+            costo_u = (l.costo / l.cantidad) if (l.costo is not None and l.cantidad) else None
+            filas.append([
+                _fecha(l.fecha),
+                v.producto.nombre + (' (devolución' + (', dañada' if l.danada else '') + ')'
+                                     if l.devolucion else ''),
+                str(v),
+                _cantidad(l.cantidad, unidad(v)),
+                _gs(costo_u) if costo_u is not None else 'sin costo',
+                _gs(l.ingreso / l.cantidad) if l.cantidad else '—',
+                _gs_signo(l.ingreso),
+                _gs_signo(l.costo),
+                _gs_signo(l.ganancia),
+                _pct(l.ganancia / l.ingreso * 100 if l.ganancia is not None and l.ingreso else None),
+                l.referencia,
+            ])
+        columnas = ['Fecha', 'Producto', 'Variante', 'Cantidad', 'Costo unit.',
+                    'Cobrado unit.', 'Cobrado', 'Costo', 'Ganancia', 'Margen', 'Pedido']
+        cols_derecha = [3, 4, 5, 6, 7, 8, 9]
+        titulo = 'Ganancias — detalle por venta'
+    else:
+        acumulado = {}
+        for l in datos['lineas']:
+            r = acumulado.setdefault(l.variante.id, {
+                'v': l.variante, 'cantidad': Decimal('0'), 'ingreso': Decimal('0'),
+                'costo': Decimal('0'), 'sin_costo': False})
+            r['cantidad'] += l.cantidad
+            r['ingreso'] += l.ingreso
+            if l.costo is None:
+                r['sin_costo'] = True
+            else:
+                r['costo'] += l.costo
+        for r in acumulado.values():
+            r['ganancia'] = None if r['sin_costo'] else r['ingreso'] - r['costo']
+        orden = sorted(acumulado.values(),
+                       key=lambda r: (r['ganancia'] is None, -(r['ganancia'] or 0)))
+        for r in orden:
+            v, cant = r['v'], r['cantidad']
+            filas.append([
+                v.producto.nombre,
+                str(v),
+                _cantidad(cant, unidad(v)),
+                'sin costo' if r['sin_costo'] else (_gs(r['costo'] / cant) if cant else '—'),
+                _gs(r['ingreso'] / cant) if cant else '—',
+                _gs_signo(r['ingreso']),
+                '—' if r['sin_costo'] else _gs_signo(r['costo']),
+                _gs_signo(r['ganancia']),
+                _pct(r['ganancia'] / r['ingreso'] * 100
+                     if r['ganancia'] is not None and r['ingreso'] else None),
+            ])
+        columnas = ['Producto', 'Variante', 'Cantidad', 'Costo unit.', 'Cobrado unit. (prom.)',
+                    'Cobrado', 'Costo', 'Ganancia', 'Margen']
+        cols_derecha = [2, 3, 4, 5, 6, 7, 8]
+        titulo = 'Ganancias por producto'
+
+    totales = {
+        'Cobrado por mercadería': _gs(datos['ingresos']),
+        'Costo de lo vendido': _gs(datos['costo']),
+        'Ganancia bruta': _gs_signo(datos['ganancia_bruta']),
+        'Margen bruto (sobre lo cobrado)': _pct(datos['margen']),
+    }
+    if datos['ingresos_sin_costo']:
+        totales['Cobrado de productos sin costo cargado (fuera de la ganancia)'] = \
+            _gs(datos['ingresos_sin_costo'])
+    totales['Gastos operativos del período (sin pagos a proveedor)'] = _gs(datos['gastos'])
+    totales['Ganancia neta'] = _gs_signo(datos['ganancia_neta'])
+
+    return {
+        'titulo':    titulo,
+        'subtitulo': subtitulo + ' · precios y costos con IVA incluido',
+        'hoja':      'Ganancias',
+        'columnas':  columnas,
+        'cols_derecha': cols_derecha,
+        'filas':     filas,
+        'totales':   totales,
+    }
+
+
 # Denominaciones del guaraní, para la planilla de conteo físico.
 # Se imprimen en blanco: las completa a mano quien cuenta la caja.
 DENOMINACIONES = [100000, 50000, 20000, 10000, 5000, 2000, 1000, 500, 100, 50]
@@ -622,7 +732,7 @@ def reporte_arqueo(dia: date):
     no están en el cajón: confirmarlas contra el extracto es otra tarea, y
     mezclarlas acá haría que un arqueo correcto parezca descuadrado.
     """
-    from apps.caja.models import SesionCaja, Pago
+    from apps.caja.models import SesionCaja, Pago, PagoMedio
 
     sesiones = SesionCaja.objects.filter(
         fecha_apertura__date=dia,
@@ -636,10 +746,13 @@ def reporte_arqueo(dia: date):
     for sesion in sesiones:
         pagos = Pago.objects.filter(sesion_caja=sesion, estado=Pago.ESTADO_CONFIRMADO)
 
+        # Por línea del cobro: del pago mixto, solo su parte en efectivo
+        # está en el cajón. `cantidad` cuenta cobros, no líneas.
+        lineas = PagoMedio.objects.filter(pago__in=pagos)
         por_medio = {}
         for medio, etiqueta in Pago.MEDIOS:
-            agg = pagos.filter(medio_pago=medio).aggregate(
-                total=Sum('monto'), cantidad=Count('id'))
+            agg = lineas.filter(medio=medio).aggregate(
+                total=Sum('monto'), cantidad=Count('pago', distinct=True))
             monto = float(agg['total'] or 0)
             if monto or agg['cantidad']:
                 por_medio[medio] = (etiqueta, monto, int(agg['cantidad'] or 0))
