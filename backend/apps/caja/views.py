@@ -980,6 +980,7 @@ class DevolucionesView(views.APIView):
                 observaciones=request.data.get('observaciones', ''),
                 items=items,
                 pedido_cambio=pedido_cambio,
+                items_cambio=request.data.get('items_cambio') or None,
                 medio_pago=request.data.get('medio_pago', ''),
                 monto_recibido=request.data.get('monto_recibido'),
                 referencia_externa=request.data.get('referencia_externa', ''),

@@ -199,14 +199,92 @@ def _decimal(valor, campo):
     return numero
 
 
+def _armar_pedido_cambio(pago_original, items_cambio, usuario):
+    """
+    El pedido con lo que se lleva el cliente, armado desde caja.
+
+    Antes el vendedor tenía que hacer un pedido aparte y mandarlo a caja para
+    que la cajera lo eligiera en una lista; ahora la cajera marca ahí mismo
+    por qué productos se cambia. El pedido sale como cualquier otro —con su
+    número, su reserva de stock y precio de catálogo— y llega "listo", así
+    el resto del cambio (cobro neto, descuento de stock, comprobante) sigue
+    por el mismo camino que con un pedido armado por el vendedor.
+
+    `items_cambio` es una lista de dicts `{variante_id, cantidad}`. Si falta
+    stock lanza `DevolucionInvalida`, y la transacción de `registrar()`
+    revierte el pedido entero.
+    """
+    from apps.productos.models import Variante
+    from apps.ventas.models import ItemPedido, NotaPedido, StockInsuficienteError
+
+    if not isinstance(items_cambio, list) or not all(isinstance(i, dict) for i in items_cambio):
+        raise DevolucionInvalida('Los productos del cambio vienen en un formato que no se entiende.')
+
+    cantidades = {}
+    for cruda in items_cambio:
+        try:
+            variante = Variante.objects.select_related('producto').get(
+                pk=cruda.get('variante_id'), activa=True, producto__activo=True)
+        except (Variante.DoesNotExist, ValueError, TypeError):
+            raise DevolucionInvalida('Uno de los productos del cambio no existe o está inactivo.')
+        cantidad = _decimal(cruda.get('cantidad'), 'La cantidad del cambio').quantize(
+            Decimal('0.0001'), rounding=ROUND_HALF_UP)
+        if cantidad <= 0:
+            raise DevolucionInvalida(
+                f'La cantidad de {variante.sku} en el cambio tiene que ser mayor a 0.')
+        if not variante.precio_venta or variante.precio_venta <= 0:
+            raise DevolucionInvalida(f'{variante.sku} no tiene precio de venta cargado.')
+        # El mismo producto marcado dos veces es un solo renglón.
+        previa = cantidades.get(variante.pk, (variante, Decimal('0')))[1]
+        cantidades[variante.pk] = (variante, previa + cantidad)
+
+    if not cantidades:
+        raise DevolucionInvalida('Marcá por qué producto se cambia.')
+
+    original = pago_original.pedido
+    pedido = NotaPedido.objects.create(
+        vendedor=usuario,
+        cliente=original.cliente,
+        cliente_nombre=original.cliente_nombre,
+        cliente_ruc=original.cliente_ruc,
+        cliente_telefono=original.cliente_telefono,
+        nota_interna=f'Cambio armado en caja (venta {original.numero}).',
+    )
+    for variante, cantidad in cantidades.values():
+        ItemPedido.objects.create(
+            pedido=pedido, variante=variante, cantidad=cantidad,
+            precio_unitario=variante.precio_venta,
+            # Lo entrega la cajera en el mostrador: no pasa por depósito.
+            preparado=True, cantidad_preparada=cantidad,
+        )
+    pedido.recalcular_totales()
+
+    try:
+        pedido.reservar_stock(usuario=usuario)
+    except StockInsuficienteError as e:
+        # El error de reserva viene como lista de Django ("['No se puede…']").
+        detalle = '; '.join(f"{x['sku']}: " + str(x['error']).strip("[]'")
+                            for x in e.errores)
+        raise DevolucionInvalida(f'No hay stock para el cambio. {detalle}'.strip())
+
+    pedido.estado = NotaPedido.ESTADO_LISTO
+    pedido.save(update_fields=['estado', 'fecha_actualizacion'])
+    return pedido
+
+
 @transaction.atomic
 def registrar(*, pago_original, sesion, usuario, motivo, items,
               motivo_detalle='', observaciones='', pedido_cambio=None,
+              items_cambio=None,
               medio_pago='', monto_recibido=None, referencia_externa=''):
     """
     Registra la devolución completa y devuelve un `Resultado`.
 
     `items` es una lista de dicts `{item_id, cantidad, reingresa_stock}`.
+    Lo que se lleva el cliente llega de una de dos formas: `items_cambio`
+    (`{variante_id, cantidad}`, lo que marca la cajera — el camino de la
+    pantalla de caja) o `pedido_cambio`, un pedido "listo" que armó un
+    vendedor (el camino anterior, que sigue andando).
     `medio_pago` es el de la diferencia: con qué paga el cliente si le toca
     poner, o con qué se le reintegra si le toca recibir.
 
@@ -234,10 +312,14 @@ def registrar(*, pago_original, sesion, usuario, motivo, items,
     motivo_detalle = (motivo_detalle or '').strip()
     if motivo == Devolucion.MOTIVO_OTRO and not motivo_detalle:
         raise DevolucionInvalida('Con "Otro motivo" hay que escribir cuál es.')
-    if motivo == Devolucion.MOTIVO_CAMBIO and pedido_cambio is None:
+    if pedido_cambio is not None and items_cambio:
+        raise DevolucionInvalida(
+            'Indicá lo que se lleva el cliente de una sola forma: un pedido o productos.')
+    if motivo == Devolucion.MOTIVO_CAMBIO and pedido_cambio is None and not items_cambio:
         raise DevolucionInvalida(
             'Un cambio de producto necesita el pedido con lo que se lleva el '
-            'cliente. Si no se lleva nada, es una devolución.')
+            'cliente: marcá por qué producto se cambia. Si no se lleva nada, '
+            'es una devolución.')
 
     # ── Ítems ───────────────────────────────────────────────
     if not items:
@@ -281,6 +363,12 @@ def registrar(*, pago_original, sesion, usuario, motivo, items,
     total_credito = sum((monto for _, _, monto, _ in lineas), Decimal('0'))
 
     # ── Pedido de cambio ────────────────────────────────────
+    # Se arma acá, antes de validar el medio de la diferencia, porque la
+    # diferencia depende de lo que vale. Si después algo no cierra, la
+    # transacción lo revierte junto con su reserva.
+    if items_cambio:
+        pedido_cambio = _armar_pedido_cambio(pago_original, items_cambio, usuario)
+
     nuevo = Decimal('0')
     if pedido_cambio is not None:
         pedido_cambio = NotaPedido.objects.select_for_update().get(pk=pedido_cambio.pk)
@@ -374,6 +462,29 @@ def registrar(*, pago_original, sesion, usuario, motivo, items,
             usuario=usuario, numero_ticket=pago_cambio.numero_ticket)
 
     return Resultado(devolucion=devolucion, errores_stock=errores_stock)
+
+
+# ── Cambios en los reportes ───────────────────────────────────────────────────
+
+def resumen_cambios(devoluciones):
+    """
+    Los cambios de producto de un conjunto de devoluciones, para los reportes.
+
+    Un cambio no es una venta nueva: el cobro de su pedido viene neto del
+    crédito (puede ser 0) y lo que sobra sale como reintegro. Los reportes ya
+    daban bien la plata; esto es para que el cambio se **vea** como cambio y
+    no como un cobro más (de Gs. 0, muchas veces) mezclado con las ventas.
+    """
+    cambios = list(devoluciones.filter(pedido_cambio__isnull=False)
+                   .select_related('pago_cambio', 'pedido_cambio'))
+    return {
+        'cantidad':           len(cambios),
+        'credito':            sum((d.total_credito for d in cambios), Decimal('0')),
+        'valor_llevado':      sum((d.pedido_cambio.monto_a_cobrar for d in cambios), Decimal('0')),
+        'diferencia_cobrada': sum((d.pago_cambio.monto for d in cambios if d.pago_cambio_id),
+                                  Decimal('0')),
+        'reintegrado':        sum((d.monto_reintegro for d in cambios), Decimal('0')),
+    }
 
 
 # ── El papel ──────────────────────────────────────────────────────────────────

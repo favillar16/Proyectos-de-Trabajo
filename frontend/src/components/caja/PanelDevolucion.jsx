@@ -2,9 +2,10 @@
  * PanelDevolucion — devolución o cambio de mercadería ya cobrada.
  *
  * Se abre desde un cobro de la lista ("Cobros del turno" / "Turnos
- * anteriores"). La cajera marca qué vuelve y cuánto, el motivo, y si el
- * cliente se lleva algo a cambio elige el pedido que armó el vendedor (tiene
- * que estar "Listo para cobrar", igual que cualquier cobro). La pantalla
+ * anteriores"). La cajera toca lo que vuelve (se marca con todo lo que
+ * queda; la cantidad se puede bajar), el motivo, y si el cliente se lleva
+ * algo a cambio lo busca ahí mismo y lo marca: el backend arma el pedido de
+ * cambio solo, sin que el vendedor tenga que hacer uno aparte. La pantalla
  * muestra la diferencia antes de confirmar: a cobrar, a reintegrar o nada.
  *
  * La cuenta de verdad la hace el backend (apps/caja/devoluciones.py): el
@@ -13,14 +14,14 @@
  * es una estimación con la misma regla, para que la cajera sepa qué va a
  * pasar antes de tocar la plata.
  */
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import {
   Banknote, CreditCard, ArrowRightLeft, Loader2, AlertCircle, RotateCcw,
-  CheckCircle, Printer,
+  CheckCircle, Printer, Search, X,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
-import { cajaApi } from '../../services/api'
+import { cajaApi, inventarioApi } from '../../services/api'
 
 const C = {
   sidebar:'#453941',
@@ -65,12 +66,15 @@ const input = {
   fontSize:'14px', color:C.text, background:C.bg, outline:'none',
 }
 
-export function PanelDevolucion({ pagoId, pedidosListos, onListo, onCancelar }) {
-  const [motivo, setMotivo]           = useState('estado_inadecuado')
+export function PanelDevolucion({ pagoId, onListo, onCancelar }) {
+  const [motivo, setMotivo]           = useState('cambio')
   const [detalle, setDetalle]         = useState('')
   const [cantidades, setCantidades]   = useState({})
   const [reingresa, setReingresa]     = useState({})
-  const [pedidoCambioId, setPedidoCambioId] = useState('')
+  // Lo que se lleva el cliente: { [variante_id]: { variante, cantidad } }
+  const [llevados, setLlevados]       = useState({})
+  const [busqueda, setBusqueda]       = useState('')
+  const [termino, setTermino]         = useState('')
   const [medio, setMedio]             = useState('efectivo')
   const [recibido, setRecibido]       = useState('')
   const [observaciones, setObservaciones] = useState('')
@@ -80,7 +84,27 @@ export function PanelDevolucion({ pagoId, pedidosListos, onListo, onCancelar }) 
     queryFn:  () => cajaApi.resumenDevolucion(pagoId).then(r => r.data),
   })
 
-  const pedidoCambio = pedidosListos.find(p => String(p.id) === String(pedidoCambioId))
+  // La búsqueda espera a que la cajera deje de tipear.
+  useEffect(() => {
+    const t = setTimeout(() => setTermino(busqueda.trim()), 300)
+    return () => clearTimeout(t)
+  }, [busqueda])
+
+  const { data: encontrados, isFetching: buscando } = useQuery({
+    queryKey: ['cambio-busqueda', termino],
+    queryFn:  () => inventarioApi.consultaRapida(termino).then(r => r.data.resultados || []),
+    enabled:  termino.length >= 2,
+  })
+
+  const elegidos = Object.values(llevados)
+  const agregarLlevado = (v) => {
+    setLlevados(l => l[v.variante_id] ? l : { ...l, [v.variante_id]: { variante: v, cantidad: '1' } })
+    setBusqueda('')
+    setTermino('')
+  }
+  const quitarLlevado = (id) => setLlevados(l => { const n = { ...l }; delete n[id]; return n })
+  const cantidadLlevado = (id, cantidad) =>
+    setLlevados(l => ({ ...l, [id]: { ...l[id], cantidad } }))
 
   // Lo dañado no vuelve al stock vendible: con "estado inadecuado" la casilla
   // arranca destildada, pero la cajera puede cambiarla ítem por ítem.
@@ -97,7 +121,8 @@ export function PanelDevolucion({ pagoId, pedidosListos, onListo, onCancelar }) 
     }, 0)
   }, [venta, cantidades])
 
-  const nuevo      = pedidoCambio ? Number(pedidoCambio.monto_a_cobrar) : 0
+  const nuevo = elegidos.reduce((suma, e) =>
+    suma + Number(e.cantidad || 0) * Number(e.variante.precio_venta || 0), 0)
   const diferencia = nuevo - credito
   const aCobrar    = Math.max(diferencia, 0)
   const aReintegrar = Math.max(-diferencia, 0)
@@ -107,11 +132,14 @@ export function PanelDevolucion({ pagoId, pedidosListos, onListo, onCancelar }) 
     Number(cantidades[i.item_id] || 0) > Number(i.cantidad_disponible))
 
   const faltaMotivo  = motivo === 'otro' && !detalle.trim()
-  const faltaCambio  = motivo === 'cambio' && !pedidoCambio
+  const faltaCambio  = motivo === 'cambio' && elegidos.length === 0
+  const llevadoInvalido = elegidos.some(e => !(Number(e.cantidad) > 0))
+  const llevadoSinStock = elegidos.some(e => Number(e.cantidad) > Number(e.variante.disponible))
   const faltaEfectivo = aCobrar > 0 && medio === 'efectivo' && Number(recibido || 0) < aCobrar
 
   const puedeConfirmar = venta && !venta.bloqueo && itemsElegidos.length > 0 &&
-    !excedido && !faltaMotivo && !faltaCambio && !faltaEfectivo
+    !excedido && !faltaMotivo && !faltaCambio && !faltaEfectivo &&
+    !llevadoInvalido && !llevadoSinStock
 
   const confirmarMut = useMutation({
     mutationFn: () => cajaApi.registrarDevolucion({
@@ -124,7 +152,9 @@ export function PanelDevolucion({ pagoId, pedidosListos, onListo, onCancelar }) 
         cantidad: cantidades[i.item_id],
         reingresa_stock: vuelveAlStock(i.item_id),
       })),
-      pedido_cambio_id: pedidoCambio?.id || null,
+      items_cambio: elegidos.map(e => ({
+        variante_id: e.variante.variante_id, cantidad: e.cantidad,
+      })),
       medio_pago: (aCobrar > 0 || aReintegrar > 0) ? medio : '',
       monto_recibido: aCobrar > 0 && medio === 'efectivo' ? recibido : null,
     }).then(r => r.data),
@@ -225,17 +255,31 @@ export function PanelDevolucion({ pagoId, pedidosListos, onListo, onCancelar }) 
             borderColor: faltaMotivo ? C.dangerBorder : C.border }} />
 
         {/* Qué vuelve */}
-        <p style={etiqueta}>Qué devuelve el cliente</p>
+        <p style={etiqueta}>Qué devuelve el cliente — tocá el producto</p>
         {venta.items.map(item => {
           const disponible = Number(item.cantidad_disponible)
           const valor = cantidades[item.item_id] ?? ''
+          const marcado = Number(valor || 0) > 0
           const pasado = Number(valor || 0) > disponible
           const unidad = UNIDAD[item.unidad] || item.unidad
+          const bloqueado = disponible <= 0 || Boolean(venta.bloqueo)
+          // Tocar el renglón lo marca con todo lo que queda; tocarlo de nuevo
+          // lo desmarca. La cantidad se puede bajar a mano.
+          const alternar = () => {
+            if (bloqueado) return
+            setCantidades(c => ({ ...c, [item.item_id]: marcado ? '' : String(disponible) }))
+          }
           return (
-            <div key={item.item_id} style={{ padding:'10px 0', borderBottom:`1px solid ${C.border}`,
+            <div key={item.item_id} style={{ padding:'10px 12px', marginBottom:'6px',
+              borderRadius:'10px', border:`1.5px solid ${marcado ? C.gold : C.border}`,
+              background: marcado ? C.goldMuted : C.bg,
               opacity: disponible > 0 ? 1 : 0.5 }}>
-              <div style={{ display:'flex', justifyContent:'space-between', gap:'10px' }}>
-                <div style={{ minWidth:0 }}>
+              <div style={{ display:'flex', justifyContent:'space-between', gap:'10px',
+                alignItems:'center' }}>
+                <input type="checkbox" checked={marcado} disabled={bloqueado} onChange={alternar}
+                  style={{ width:'18px', height:'18px', flexShrink:0, cursor:'pointer' }} />
+                <div style={{ minWidth:0, flex:1, cursor: bloqueado ? 'default' : 'pointer' }}
+                  onClick={alternar}>
                   <p style={{ fontSize:'13px', fontWeight:'500', color:C.text }}>{item.producto}</p>
                   <p style={{ fontSize:'11px', color:C.textMuted }}>
                     {item.variante} · vendido {formatCant(item.cantidad_vendida)} {unidad}
@@ -245,19 +289,13 @@ export function PanelDevolucion({ pagoId, pedidosListos, onListo, onCancelar }) 
                 </div>
                 <div style={{ display:'flex', alignItems:'center', gap:'6px', flexShrink:0 }}>
                   <input type="number" min="0" max={disponible} step="0.01"
-                    disabled={disponible <= 0 || Boolean(venta.bloqueo)}
+                    disabled={bloqueado}
                     value={valor}
                     onChange={e => setCantidades(c => ({ ...c, [item.item_id]: e.target.value }))}
                     placeholder="0"
                     style={{ ...input, width:'88px', textAlign:'right',
                       borderColor: pasado ? C.dangerBorder : C.border }} />
-                  <button type="button" disabled={disponible <= 0 || Boolean(venta.bloqueo)}
-                    onClick={() => setCantidades(c => ({ ...c, [item.item_id]: String(disponible) }))}
-                    style={{ height:'40px', padding:'0 10px', borderRadius:'8px', fontSize:'11.5px',
-                      border:`1px solid ${C.border}`, background:C.bgSec, color:C.textSec,
-                      cursor:'pointer' }}>
-                    Todo
-                  </button>
+                  <span style={{ fontSize:'12px', color:C.textMuted, width:'34px' }}>{unidad}</span>
                 </div>
               </div>
               {pasado && (
@@ -281,27 +319,103 @@ export function PanelDevolucion({ pagoId, pedidosListos, onListo, onCancelar }) 
         })}
 
         {/* Qué se lleva */}
-        <p style={{ ...etiqueta, marginTop:'18px' }}>Qué se lleva a cambio</p>
-        <select value={pedidoCambioId} onChange={e => setPedidoCambioId(e.target.value)}
-          style={{ ...input, marginBottom:'6px',
-            borderColor: faltaCambio ? C.dangerBorder : C.border }}>
-          <option value="">Nada — es una devolución</option>
-          {pedidosListos.map(p => (
-            <option key={p.id} value={p.id}>
-              {p.numero} · {p.cliente_nombre || 'Consumidor Final'} · {formatGs(p.monto_a_cobrar)}
-            </option>
-          ))}
-        </select>
-        <p style={{ fontSize:'11.5px', color:C.textMuted, marginBottom:'18px' }}>
-          El vendedor arma el pedido con lo nuevo y lo envía a caja como siempre; acá aparece
-          entre los listos para cobrar.
+        <p style={{ ...etiqueta, marginTop:'18px' }}>
+          Por qué producto se cambia{motivo === 'cambio' ? '' : ' (opcional)'}
         </p>
+        <div style={{ position:'relative', marginBottom:'8px' }}>
+          <Search size={15} style={{ position:'absolute', left:'12px', top:'12px', color:C.textMuted }} />
+          <input value={busqueda} onChange={e => setBusqueda(e.target.value)}
+            disabled={Boolean(venta.bloqueo)}
+            placeholder="Buscar por nombre, código o color"
+            style={{ ...input, paddingLeft:'34px',
+              borderColor: faltaCambio ? C.dangerBorder : C.border }} />
+          {buscando && (
+            <Loader2 size={15} style={{ position:'absolute', right:'12px', top:'12px',
+              color:C.textMuted, animation:'spin 1s linear infinite' }} />
+          )}
+        </div>
+        {termino.length >= 2 && encontrados && (
+          <div style={{ border:`1px solid ${C.border}`, borderRadius:'10px', marginBottom:'10px',
+            maxHeight:'220px', overflowY:'auto' }}>
+            {encontrados.length === 0 && (
+              <p style={{ padding:'10px 12px', fontSize:'12.5px', color:C.textMuted }}>
+                No se encontró nada con “{termino}”.
+              </p>
+            )}
+            {encontrados.map(v => {
+              const sinStock = Number(v.disponible) <= 0
+              return (
+                <button key={v.variante_id} type="button" disabled={sinStock}
+                  onClick={() => agregarLlevado(v)}
+                  style={{ display:'flex', justifyContent:'space-between', gap:'10px', width:'100%',
+                    padding:'9px 12px', border:'none', borderBottom:`1px solid ${C.border}`,
+                    background:'transparent', textAlign:'left',
+                    cursor: sinStock ? 'not-allowed' : 'pointer', opacity: sinStock ? 0.5 : 1 }}>
+                  <span style={{ minWidth:0 }}>
+                    <span style={{ display:'block', fontSize:'13px', color:C.text }}>{v.descripcion}</span>
+                    <span style={{ fontSize:'11px', color:C.textMuted }}>
+                      {v.sku} · disponible {formatCant(v.disponible)} {UNIDAD[v.unidad_venta] || v.unidad_venta}
+                    </span>
+                  </span>
+                  <span style={{ fontSize:'13px', fontWeight:'500', color:C.goldDark, flexShrink:0 }}>
+                    {formatGs(v.precio_venta)}
+                  </span>
+                </button>
+              )
+            })}
+          </div>
+        )}
+        {elegidos.length === 0 ? (
+          <p style={{ fontSize:'11.5px', color:C.textMuted, marginBottom:'18px' }}>
+            {motivo === 'cambio'
+              ? 'Buscá y tocá el producto que se lleva el cliente.'
+              : 'Si no se lleva nada, es una devolución.'}
+          </p>
+        ) : (
+          <div style={{ marginBottom:'18px' }}>
+            {elegidos.map(({ variante: v, cantidad }) => {
+              const unidad = UNIDAD[v.unidad_venta] || v.unidad_venta
+              const pasado = Number(cantidad) > Number(v.disponible)
+              return (
+                <div key={v.variante_id} style={{ padding:'10px 12px', marginBottom:'6px',
+                  borderRadius:'10px', border:`1.5px solid ${C.gold}`, background:C.goldMuted }}>
+                  <div style={{ display:'flex', alignItems:'center', gap:'10px' }}>
+                    <div style={{ minWidth:0, flex:1 }}>
+                      <p style={{ fontSize:'13px', fontWeight:'500', color:C.text }}>{v.descripcion}</p>
+                      <p style={{ fontSize:'11px', color:C.textMuted }}>
+                        {formatGs(v.precio_venta)} / {unidad}
+                        {' · '}{formatGs(Number(cantidad || 0) * Number(v.precio_venta))}
+                      </p>
+                    </div>
+                    <input type="number" min="0" step="0.01" value={cantidad}
+                      onChange={e => cantidadLlevado(v.variante_id, e.target.value)}
+                      style={{ ...input, width:'88px', textAlign:'right',
+                        borderColor: pasado || !(Number(cantidad) > 0) ? C.dangerBorder : C.border }} />
+                    <span style={{ fontSize:'12px', color:C.textMuted, width:'34px' }}>{unidad}</span>
+                    <button type="button" onClick={() => quitarLlevado(v.variante_id)}
+                      title="Quitar"
+                      style={{ width:'32px', height:'32px', borderRadius:'8px', flexShrink:0,
+                        border:`1px solid ${C.border}`, background:C.bg, color:C.textSec,
+                        cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center' }}>
+                      <X size={14} />
+                    </button>
+                  </div>
+                  {pasado && (
+                    <p style={{ fontSize:'11px', color:C.danger, marginTop:'4px' }}>
+                      Hay {formatCant(v.disponible)} {unidad} disponibles.
+                    </p>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+        )}
 
         {/* Cuenta */}
         <div style={{ background:C.bgSec, border:`1px solid ${C.border}`, borderRadius:'12px',
           padding:'14px 16px', marginBottom:'16px' }}>
           <Renglon texto="A favor del cliente (lo que devuelve)" valor={formatGs(credito)} />
-          {pedidoCambio && <Renglon texto={`Lo que se lleva (${pedidoCambio.numero})`} valor={formatGs(nuevo)} />}
+          {elegidos.length > 0 && <Renglon texto="Lo que se lleva" valor={formatGs(nuevo)} />}
           <div style={{ display:'flex', justifyContent:'space-between', alignItems:'baseline',
             paddingTop:'10px', marginTop:'6px', borderTop:`2px solid ${C.border}` }}>
             <span style={{ fontSize:'14px', fontWeight:'600', color:C.text }}>
@@ -373,7 +487,7 @@ export function PanelDevolucion({ pagoId, pedidosListos, onListo, onCancelar }) 
             display:'flex', alignItems:'center', justifyContent:'center', gap:'7px' }}>
           {confirmarMut.isPending
             ? <><Loader2 size={16} style={{ animation:'spin 1s linear infinite' }}/> Registrando...</>
-            : <><RotateCcw size={16}/> Confirmar {pedidoCambio ? 'cambio' : 'devolución'}</>}
+            : <><RotateCcw size={16}/> Confirmar {elegidos.length > 0 ? 'cambio' : 'devolución'}</>}
         </button>
       </div>
     </div>

@@ -358,3 +358,189 @@ class ApiTests(BaseDevolucionTests):
         self.assertEqual(r.data['total_reintegros'], 150000.0)
         self.assertEqual(r.data['total_neto'], 150000.0)
         self.assertEqual(r.data['diferencia'], 0)
+
+
+class CambioDesdeCajaTests(BaseDevolucionTests):
+    """
+    El cambio armado en caja: la cajera marca por qué producto se cambia y el
+    sistema arma el pedido, sin que el vendedor tenga que hacer uno aparte.
+    """
+
+    def _cambiar(self, pago, devuelve, lleva, **kwargs):
+        kwargs.setdefault('motivo', Devolucion.MOTIVO_CAMBIO)
+        return self._devolver(
+            pago, devuelve,
+            items_cambio=[{'variante_id': v.id, 'cantidad': c} for v, c in lleva],
+            **kwargs)
+
+    def test_cambio_por_algo_mas_caro_arma_el_pedido_y_cobra_la_diferencia(self):
+        pago = self._vender([(self.ceramica, '2', '90000')])          # 180.000
+
+        dev = self._cambiar(pago, [(self.ceramica, '2', True)],
+                            [(self.porcelanato, '2')],                 # 300.000
+                            medio_pago='efectivo', monto_recibido='150000')
+
+        nuevo = dev.pedido_cambio
+        self.assertEqual(nuevo.estado, NotaPedido.ESTADO_PAGADO)
+        self.assertEqual(nuevo.monto_a_cobrar, Decimal('300000'))
+        self.assertEqual(nuevo.cliente_nombre, pago.pedido.cliente_nombre)
+        self.assertIn(pago.pedido.numero, nuevo.nota_interna)
+        self.assertEqual(dev.pago_cambio.monto, Decimal('120000'))
+        self.assertEqual(dev.pago_cambio.vuelto, Decimal('30000'))
+        # Lo que se lleva sale del stock y no queda reservado.
+        self.assertEqual(self._stock(self.porcelanato).cantidad, Decimal('98'))
+        self.assertEqual(self._stock(self.porcelanato).cantidad_reservada, 0)
+        # Lo que trae vuelve.
+        self.assertEqual(self._stock(self.ceramica).cantidad, Decimal('100'))
+
+    def test_cambio_por_algo_mas_barato_reintegra(self):
+        pago = self._vender([(self.porcelanato, '2', '150000')])     # 300.000
+
+        dev = self._cambiar(pago, [(self.porcelanato, '2', True)],
+                            [(self.ceramica, '2')],                    # 180.000
+                            medio_pago='efectivo')
+
+        self.assertEqual(dev.monto_reintegro, Decimal('120000'))
+        self.assertEqual(dev.pago_cambio.monto, 0)
+
+    def test_cambio_por_lo_mismo_no_mueve_plata(self):
+        pago = self._vender([(self.ceramica, '2', '90000')])
+        dev = self._cambiar(pago, [(self.ceramica, '1', True)], [(self.ceramica, '1')])
+        self.assertEqual(dev.monto_reintegro, 0)
+        self.assertEqual(dev.pago_cambio.monto, 0)
+
+    def test_el_mismo_producto_marcado_dos_veces_es_un_renglon(self):
+        pago = self._vender([(self.ceramica, '4', '90000')])
+        dev = self._cambiar(pago, [(self.ceramica, '4', True)],
+                            [(self.porcelanato, '1'), (self.porcelanato, '1')],
+                            medio_pago='transferencia')
+        items = list(dev.pedido_cambio.items.all())
+        self.assertEqual(len(items), 1)
+        self.assertEqual(items[0].cantidad, Decimal('2'))
+
+    def test_sin_stock_para_el_cambio_no_deja_nada_a_medias(self):
+        pago = self._vender([(self.ceramica, '2', '90000')])
+        pedidos_antes = NotaPedido.objects.count()
+        stock_ceramica = self._stock(self.ceramica).cantidad
+
+        with self.assertRaisesMessage(devoluciones.DevolucionInvalida, 'No hay stock'):
+            self._cambiar(pago, [(self.ceramica, '2', True)],
+                          [(self.porcelanato, '500')], medio_pago='efectivo',
+                          monto_recibido='99999999')
+
+        self.assertEqual(NotaPedido.objects.count(), pedidos_antes)
+        self.assertEqual(self._stock(self.ceramica).cantidad, stock_ceramica)
+        self.assertEqual(self._stock(self.porcelanato).cantidad_reservada, 0)
+        self.assertFalse(Devolucion.objects.exists())
+
+    def test_un_error_de_la_diferencia_revierte_el_pedido_armado(self):
+        # Falta el monto recibido: el pedido ya se había armado y reservado,
+        # y tiene que desaparecer junto con su reserva.
+        pago = self._vender([(self.ceramica, '2', '90000')])
+        pedidos_antes = NotaPedido.objects.count()
+        with self.assertRaisesMessage(devoluciones.DevolucionInvalida, 'monto recibido'):
+            self._cambiar(pago, [(self.ceramica, '2', True)],
+                          [(self.porcelanato, '2')], medio_pago='efectivo')
+        self.assertEqual(NotaPedido.objects.count(), pedidos_antes)
+        self.assertEqual(self._stock(self.porcelanato).cantidad_reservada, 0)
+
+    def test_cantidad_invalida_se_rechaza(self):
+        pago = self._vender([(self.ceramica, '2', '90000')])
+        with self.assertRaisesMessage(devoluciones.DevolucionInvalida, 'mayor a 0'):
+            self._cambiar(pago, [(self.ceramica, '1', True)], [(self.porcelanato, '0')])
+
+    def test_no_se_mandan_pedido_y_productos_a_la_vez(self):
+        pago = self._vender([(self.ceramica, '2', '90000')])
+        nuevo = self._pedido_listo([(self.porcelanato, '1', '150000')])
+        with self.assertRaisesMessage(devoluciones.DevolucionInvalida, 'una sola forma'):
+            self._cambiar(pago, [(self.ceramica, '1', True)], [(self.porcelanato, '1')],
+                          pedido_cambio=nuevo)
+
+    def test_por_la_api(self):
+        api = APIClient()
+        api.force_authenticate(self.cajero)
+        pago = self._vender([(self.ceramica, '2', '90000')])
+        item = self._item(pago, self.ceramica)
+
+        r = api.post('/api/v1/caja/devoluciones/', {
+            'pago_id': pago.id, 'motivo': 'cambio',
+            'items': [{'item_id': item.id, 'cantidad': 2, 'reingresa_stock': True}],
+            'items_cambio': [{'variante_id': self.porcelanato.id, 'cantidad': 2}],
+            'medio_pago': 'debito',
+        }, format='json')
+
+        self.assertEqual(r.status_code, 201, r.data)
+        c = r.data['comprobante']
+        self.assertEqual(c['total_credito'], 180000.0)
+        self.assertEqual(c['total_nuevo'], 300000.0)
+        self.assertEqual(c['a_cobrar'], 120000.0)
+        self.assertEqual(len(c['llevados']), 1)
+
+
+class CambiosEnReportesTests(BaseDevolucionTests):
+    """Un cambio se ve como cambio en el balance, el arqueo y el tablero."""
+
+    def _cambio(self, pago, devuelve, lleva, **kwargs):
+        kwargs.setdefault('motivo', Devolucion.MOTIVO_CAMBIO)
+        return self._devolver(
+            pago, devuelve,
+            items_cambio=[{'variante_id': v.id, 'cantidad': c} for v, c in lleva],
+            **kwargs)
+
+    def test_el_balance_nombra_el_cambio_y_no_lo_cuenta_como_cobro(self):
+        pago = self._vender([(self.ceramica, '2', '90000')])           # 180.000
+        dev = self._cambio(pago, [(self.ceramica, '2', True)],
+                           [(self.porcelanato, '2')],                    # 300.000
+                           medio_pago='transferencia')                  # cobra 120.000
+
+        reporte = rep.reporte_ventas(date.today(), date.today())
+        fila = next(f for f in reporte['filas'] if f[1] == dev.pago_cambio.numero_ticket)
+        self.assertIn('Cambio', fila[2])
+        self.assertIn(pago.pedido.numero, fila[2])
+        t = reporte['totales']
+        self.assertEqual(t['Total de ventas'], 'Gs. 300.000')          # 180.000 + 120.000
+        self.assertEqual(t['Cantidad de cobros'], 1)                    # el cambio no es venta
+        self.assertEqual(t['Cambios de producto'], 1)
+        self.assertEqual(t['  · Diferencia cobrada en cambios'], 'Gs. 120.000')
+
+    def test_un_cambio_sin_diferencia_no_aparece_como_cobro_en_efectivo(self):
+        pago = self._vender([(self.ceramica, '2', '90000')], medio='transferencia')
+        self._cambio(pago, [(self.ceramica, '1', True)], [(self.ceramica, '1')])
+
+        balance = rep.reporte_ventas(date.today(), date.today())
+        self.assertNotIn('  · Efectivo', balance['totales'])
+        self.assertTrue(any(f[4] == 'Sin diferencia' for f in balance['filas']))
+
+        arqueo = rep.reporte_arqueo(date.today())
+        conceptos = [f[0].strip() for f in arqueo['filas']]
+        self.assertNotIn('Cobrado en efectivo', conceptos)
+        self.assertIn('Cambios de producto', conceptos)
+        self.assertEqual(arqueo['totales']['Cambios de producto en el día'], 1)
+
+    def test_el_arqueo_muestra_la_diferencia_y_el_reintegro_del_cambio(self):
+        pago = self._vender([(self.porcelanato, '2', '150000')])       # 300.000
+        self._cambio(pago, [(self.porcelanato, '2', True)],
+                     [(self.ceramica, '2')], medio_pago='efectivo')    # reintegra 120.000
+
+        arqueo = rep.reporte_arqueo(date.today())
+        filas = {f[0].strip(): f for f in arqueo['filas']}
+        self.assertIn('crédito Gs. 300.000', filas['Cambios de producto'][1])
+        self.assertEqual(filas['Reintegrado (incluido abajo)'][2], '- Gs. 120.000')
+        self.assertEqual(filas['Efectivo que debe haber en el cajón'][2], 'Gs. 180.000')
+
+    def test_el_tablero_cuenta_los_cambios_aparte(self):
+        admin = crear_usuario('admin_dev', rol='admin')
+        api = APIClient()
+        api.force_authenticate(admin)
+        pago = self._vender([(self.ceramica, '2', '90000')])
+        self._cambio(pago, [(self.ceramica, '2', True)], [(self.porcelanato, '2')],
+                     medio_pago='debito')
+
+        r = api.get('/api/v1/caja/kpis/')
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.data['ventas']['hoy']['cantidad'], 1)
+        self.assertEqual(r.data['ventas']['hoy']['total'], 300000.0)
+        self.assertEqual(r.data['cambios_mes']['cantidad'], 1)
+        self.assertEqual(r.data['cambios_mes']['diferencia_cobrada'], 120000.0)
+        self.assertTrue(r.data['ultimas_ventas'][0]['es_cambio'])
+        self.assertIn('Cambio', r.data['ultimas_ventas'][0]['medio'])

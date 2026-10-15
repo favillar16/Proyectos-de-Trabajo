@@ -14,7 +14,7 @@ Agrupa en una sola llamada todos los datos que necesita la pantalla:
 from rest_framework import views
 from rest_framework.response import Response
 from apps.usuarios.permissions import EsAdmin
-from django.db.models import Sum, Count, F
+from django.db.models import Count, F, Q, Sum
 from django.db.models.functions import TruncDate
 from django.utils import timezone
 from datetime import timedelta
@@ -44,7 +44,11 @@ def _ventas_periodo(inicio, fin):
         fecha__gte=inicio,
         fecha__lte=fin,
     )
-    agg = qs.aggregate(total=Sum('monto'), cantidad=Count('id'))
+    # Un cambio no es una venta más: su diferencia suma al total (es plata
+    # que entró) pero no cuenta como cobro, si no inflaba la cantidad de
+    # ventas y bajaba el ticket promedio con cobros de Gs. 0.
+    agg = qs.aggregate(total=Sum('monto'),
+                       cantidad=Count('id', filter=Q(devolucion_aplicada__isnull=True)))
     # Lo reintegrado por devoluciones no es venta: se resta. El crédito que
     # pagó un cambio no hace falta restarlo, porque ese cobro ya viene neto.
     from .models import Devolucion
@@ -110,6 +114,7 @@ class KPIsDashboardView(views.APIView):
         medios_qs = PagoMedio.objects.filter(
             pago__estado=Pago.ESTADO_CONFIRMADO,
             pago__fecha__gte=mes_ini,
+            monto__gt=0,          # un cambio sin diferencia no es un cobro
         ).values('medio').annotate(
             total=Sum('monto'),
             cantidad=Count('pago', distinct=True),
@@ -210,15 +215,22 @@ class KPIsDashboardView(views.APIView):
         ultimas_qs = Pago.objects.filter(
             estado=Pago.ESTADO_CONFIRMADO,
         ).select_related(
-            'pedido', 'cajero',
+            'pedido', 'cajero', 'devolucion_aplicada',
         ).order_by('-fecha')[:8]
+
+        def _medio_feed(p):
+            medio = dict(Pago.MEDIOS_Y_MIXTO).get(p.medio_pago, p.medio_pago)
+            if getattr(p, 'devolucion_aplicada', None) is None:
+                return medio
+            return f'Cambio · {medio}' if p.monto else 'Cambio sin diferencia'
 
         ultimas = [
             {
                 'ticket':  p.numero_ticket,
                 'cliente': p.pedido.cliente_nombre or 'Consumidor Final',
                 'monto':   float(p.monto),
-                'medio':   dict(Pago.MEDIOS_Y_MIXTO).get(p.medio_pago, p.medio_pago),
+                'medio':   _medio_feed(p),
+                'es_cambio': getattr(p, 'devolucion_aplicada', None) is not None,
                 'cajero':  p.cajero.nombre_completo,
                 'fecha':   timezone.localtime(p.fecha).strftime('%d/%m %H:%M'),
                 'hace':    _hace_cuanto(p.fecha, ahora),
@@ -277,6 +289,9 @@ class KPIsDashboardView(views.APIView):
             # ── Costos del período ───────────────────────────────────
             'costos': _resumen_costos(mes_ini, ahora),
 
+            # ── Cambios de producto del período de "Ventas del mes" ──
+            'cambios_mes': _cambios_periodo(mes_ini, ahora),
+
             # ── Ganancia real del mes calendario (ver caja/ganancias.py) ──
             'ganancia_mes': _ganancia_mes(timezone.localdate()),
 
@@ -286,6 +301,14 @@ class KPIsDashboardView(views.APIView):
                 'listo':          pedidos_activos.get(NotaPedido.ESTADO_LISTO, 0),
             },
         })
+
+
+def _cambios_periodo(inicio, fin):
+    """Cambios de producto del período, con la plata que movieron."""
+    from .devoluciones import resumen_cambios
+    from .models import Devolucion
+    r = resumen_cambios(Devolucion.objects.filter(fecha__gte=inicio, fecha__lte=fin))
+    return {k: (float(v) if k != 'cantidad' else v) for k, v in r.items()}
 
 
 def _hace_cuanto(fecha, ahora):

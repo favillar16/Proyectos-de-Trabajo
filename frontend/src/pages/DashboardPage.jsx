@@ -23,7 +23,7 @@ import {
   AlertCircle, XCircle, CheckCircle,
   ChevronRight, RefreshCw, Clock,
   Truck, BarChart3, Banknote,
-  ArrowRightLeft,
+  ArrowRightLeft, RotateCcw,
 } from 'lucide-react'
 import Layout from '../components/layout/Layout'
 import PanelReportes from '../components/reportes/PanelReportes'
@@ -729,6 +729,38 @@ function DashboardAdmin({ navigate }) {
               Ver gastos →
             </button>
           </div>
+        </div>
+      )}
+
+      {/* ── Cambios de producto ──
+          Las ventas de arriba ya los traen netos (la diferencia cobrada suma,
+          el reintegro resta) y no los cuentan como cobros. Esto los muestra
+          aparte para que se vea cuánto movieron. */}
+      {kpi?.cambios_mes?.cantidad > 0 && (
+        <div style={{ marginBottom:'20px', padding:'12px 16px', background:C.bg,
+          border:`1px solid ${C.border}`, borderRadius:'14px',
+          display:'flex', alignItems:'center', gap:'18px', flexWrap:'wrap' }}>
+          <div style={{ display:'flex', alignItems:'center', gap:'8px' }}>
+            <RotateCcw size={16} style={{ color:C.goldDark }} />
+            <span style={{ fontSize:'13px', fontWeight:'600', color:C.text }}>
+              {kpi.cambios_mes.cantidad} cambio{kpi.cambios_mes.cantidad !== 1 ? 's' : ''} de producto
+            </span>
+            <span style={{ fontSize:'11.5px', color:C.textMuted }}>últimos 30 días</span>
+          </div>
+          {[
+            { label:'Crédito de lo devuelto', valor:kpi.cambios_mes.credito, color:C.textSec },
+            { label:'Valor de lo que se llevaron', valor:kpi.cambios_mes.valor_llevado, color:C.textSec },
+            { label:'Diferencia cobrada', valor:kpi.cambios_mes.diferencia_cobrada, color:C.success },
+            { label:'Reintegrado', valor:-kpi.cambios_mes.reintegrado, color:C.danger },
+          ].filter(c => c.valor).map(c => (
+            <div key={c.label}>
+              <p style={{ fontSize:'10.5px', color:C.textMuted, textTransform:'uppercase',
+                letterSpacing:'0.05em' }}>{c.label}</p>
+              <p style={{ fontSize:'14.5px', fontWeight:'600', color:c.color }}>
+                {c.valor < 0 ? '− ' : ''}{formatGs(Math.abs(c.valor), true)}
+              </p>
+            </div>
+          ))}
         </div>
       )}
 

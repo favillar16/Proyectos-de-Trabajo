@@ -12,7 +12,7 @@ import io
 from decimal import Decimal
 from datetime import datetime, date
 from django.http import HttpResponse
-from django.db.models import Sum, Count
+from django.db.models import Count, Q, Sum
 from django.utils import timezone
 
 
@@ -286,36 +286,49 @@ def reporte_ventas(desde: date, hasta: date):
 
     El cobro de un cambio ya viene neto del crédito, así que con restar los
     reintegros el total es lo que efectivamente entró — sin necesidad de
-    listar aparte los créditos que se usaron para pagar otro pedido.
+    listar aparte los créditos que se usaron para pagar otro pedido. Lo que
+    sí se hace es nombrarlo: el renglón dice "Cambio" con la venta original,
+    y un cambio sin diferencia no se cuenta como cobro ni como medio de pago.
     """
-    from apps.caja.models import Pago
+    from apps.caja.models import Devolucion, Pago
+    from apps.caja.devoluciones import resumen_cambios
 
     pagos = Pago.objects.filter(
         estado=Pago.ESTADO_CONFIRMADO,
         fecha__date__gte=desde,
         fecha__date__lte=hasta,
-    ).select_related('pedido', 'cajero').order_by('fecha')
+    ).select_related('pedido', 'cajero',
+                     'devolucion_aplicada__pago_original__pedido').order_by('fecha')
 
     movimientos = []
     for p in pagos:
+        cambio = getattr(p, 'devolucion_aplicada', None)
+        pedido_txt = p.pedido.numero if p.pedido else '—'
+        medio_txt = p.get_medio_pago_display()
+        if cambio is not None:
+            pedido_txt = (f'Cambio {pedido_txt} '
+                          f'(venta {cambio.pago_original.pedido.numero})')
+            if not p.monto:
+                medio_txt = 'Sin diferencia'
         movimientos.append((p.fecha, [
             _fecha(p.fecha),
             p.numero_ticket or '—',
-            p.pedido.numero if p.pedido else '—',
+            pedido_txt,
             p.pedido.cliente_nombre if p.pedido and p.pedido.cliente_nombre else 'Consumidor Final',
-            p.get_medio_pago_display(),
+            medio_txt,
             p.cajero.nombre_completo,
-        ], float(p.monto)))
+        ], float(p.monto), cambio is not None))
     for d in _reintegros(desde, hasta):
         pedido = d.pago_original.pedido
         movimientos.append((d.fecha, [
             _fecha(d.fecha),
             d.numero,
-            f'Devolución {pedido.numero}',
+            (f'Cambio {pedido.numero}: reintegro' if d.pedido_cambio_id
+             else f'Devolución {pedido.numero}'),
             pedido.cliente_nombre or 'Consumidor Final',
             d.get_medio_reintegro_display(),
             d.usuario.nombre_completo,
-        ], -float(d.monto_reintegro)))
+        ], -float(d.monto_reintegro), bool(d.pedido_cambio_id)))
     movimientos.sort(key=lambda m: m[0])
 
     filas = []
@@ -323,20 +336,30 @@ def reporte_ventas(desde: date, hasta: date):
     total_reintegros = 0
     cobros = 0
     por_medio = {}
-    for _, fila, monto in movimientos:
+    for _, fila, monto, es_cambio in movimientos:
         total_general += monto
         if monto < 0:
             total_reintegros += -monto
-        else:
+        elif not es_cambio:
             cobros += 1
-        medio = fila[4]
-        por_medio[medio] = por_medio.get(medio, 0) + monto
+        if monto:
+            medio = fila[4]
+            por_medio[medio] = por_medio.get(medio, 0) + monto
         filas.append(fila + [_gs(monto) if monto >= 0 else f'- {_gs(-monto)}'])
+
+    cambios = resumen_cambios(Devolucion.objects.filter(
+        fecha__date__gte=desde, fecha__date__lte=hasta))
 
     totales = {'Total de ventas': _gs(total_general),
                'Cantidad de cobros': cobros}
     if total_reintegros:
         totales['Reintegros por devolución'] = f'- {_gs(total_reintegros)}'
+    if cambios['cantidad']:
+        totales['Cambios de producto'] = cambios['cantidad']
+        totales['  · Crédito tomado de lo devuelto'] = _gs(cambios['credito'])
+        totales['  · Diferencia cobrada en cambios'] = _gs(cambios['diferencia_cobrada'])
+        if cambios['reintegrado']:
+            totales['  · Reintegrado en cambios'] = f'- {_gs(cambios["reintegrado"])}'
     for medio, m in por_medio.items():
         totales[f'  · {medio}'] = _gs(m) if m >= 0 else f'- {_gs(-m)}'
 
@@ -733,6 +756,7 @@ def reporte_arqueo(dia: date):
     mezclarlas acá haría que un arqueo correcto parezca descuadrado.
     """
     from apps.caja.models import SesionCaja, Pago, PagoMedio
+    from apps.caja.devoluciones import resumen_cambios
 
     sesiones = SesionCaja.objects.filter(
         fecha_apertura__date=dia,
@@ -742,17 +766,20 @@ def reporte_arqueo(dia: date):
     total_cobrado_dia = 0.0
     total_efectivo_dia = 0.0
     diferencia_dia = 0.0
+    cambios_dia = 0
 
     for sesion in sesiones:
         pagos = Pago.objects.filter(sesion_caja=sesion, estado=Pago.ESTADO_CONFIRMADO)
 
         # Por línea del cobro: del pago mixto, solo su parte en efectivo
-        # está en el cajón. `cantidad` cuenta cobros, no líneas.
+        # está en el cajón. `cantidad` cuenta cobros, no líneas, y no cuenta
+        # las líneas en 0 — un cambio sin diferencia no es un cobro.
         lineas = PagoMedio.objects.filter(pago__in=pagos)
         por_medio = {}
         for medio, etiqueta in Pago.MEDIOS:
             agg = lineas.filter(medio=medio).aggregate(
-                total=Sum('monto'), cantidad=Count('pago', distinct=True))
+                total=Sum('monto'),
+                cantidad=Count('pago', distinct=True, filter=Q(monto__gt=0)))
             monto = float(agg['total'] or 0)
             if monto or agg['cantidad']:
                 por_medio[medio] = (etiqueta, monto, int(agg['cantidad'] or 0))
@@ -787,6 +814,23 @@ def reporte_arqueo(dia: date):
             filas.append(['   Sin cobros registrados', '', _gs(0)])
 
         filas.append(['   Total cobrado en el turno', '', _gs(cobrado)])
+
+        # Los cambios, a la vista: si no, una diferencia cobrada se confunde
+        # con una venta y un cambio sin diferencia no aparece en ningún lado.
+        cambios = resumen_cambios(sesion.devoluciones.all())
+        if cambios['cantidad']:
+            cambios_dia += cambios['cantidad']
+            plural = 's' if cambios['cantidad'] != 1 else ''
+            filas.append([
+                f'   Cambios de producto',
+                f'{cambios["cantidad"]} cambio{plural} · crédito {_gs(cambios["credito"])}',
+                '',
+            ])
+            filas.append(['      Diferencia cobrada (incluida arriba)', '',
+                          _gs(cambios['diferencia_cobrada'])])
+            if cambios['reintegrado']:
+                filas.append(['      Reintegrado (incluido abajo)', '',
+                              f'- {_gs(cambios["reintegrado"])}'])
 
         reintegros = (sesion.devoluciones.filter(monto_reintegro__gt=0)
                       .values('medio_reintegro')
@@ -846,6 +890,7 @@ def reporte_arqueo(dia: date):
             'Total cobrado en el día':   _gs(total_cobrado_dia),
             'Efectivo neto (sin reintegros)': _gs(total_efectivo_dia),
             'Diferencia acumulada':      _gs(diferencia_dia),
+            'Cambios de producto en el día': cambios_dia,
         },
     }
 

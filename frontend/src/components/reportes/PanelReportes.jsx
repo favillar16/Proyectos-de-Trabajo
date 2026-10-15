@@ -54,11 +54,29 @@ const REPORTES = [
   { tipo:'arqueo', label:'Arqueo de Caja',     desc:'Conteo del día, para firmar', icon:Calculator,   nombre:'arqueo_caja',        usa:'dia' },
 ]
 
+// YYYY-MM-DD en hora local. `toISOString()` da la fecha UTC: en Asunción,
+// después de las 21 ya marcaba el día siguiente.
+function fechaLocal(d) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+
+function periodosRapidos() {
+  const hoy = new Date()
+  const y = hoy.getFullYear(), m = hoy.getMonth()
+  const rango = (label, d, h) => ({ label, desde: fechaLocal(d), hasta: fechaLocal(h) })
+  return [
+    rango('Este mes',     new Date(y, m, 1),     hoy),
+    rango('1ª quincena',  new Date(y, m, 1),     new Date(y, m, 15)),
+    rango('2ª quincena',  new Date(y, m, 16),    new Date(y, m + 1, 0)),   // día 0 = último del mes
+    rango('Mes anterior', new Date(y, m - 1, 1), new Date(y, m, 0)),
+  ]
+}
+
 export default function PanelReportes() {
   // Rango por defecto: mes actual
   const hoy = new Date()
-  const primerDia = new Date(hoy.getFullYear(), hoy.getMonth(), 1).toISOString().slice(0,10)
-  const hoyStr = hoy.toISOString().slice(0,10)
+  const primerDia = fechaLocal(new Date(hoy.getFullYear(), hoy.getMonth(), 1))
+  const hoyStr = fechaLocal(hoy)
 
   const [desde, setDesde] = useState(primerDia)
   const [hasta, setHasta] = useState(hoyStr)
@@ -127,6 +145,25 @@ export default function PanelReportes() {
             </select>
           </div>
         </div>
+      </div>
+
+      {/* Atajos de período para los balances: el local cierra por mes y por
+          quincena, y armar esas fechas a mano en el selector era lo lento. */}
+      <div style={{ display:'flex', alignItems:'center', gap:'6px', flexWrap:'wrap',
+        marginBottom:'14px' }}>
+        <span style={{ fontSize:'11.5px', color:C.textMuted, marginRight:'2px' }}>Período:</span>
+        {periodosRapidos().map(p => {
+          const activo = desde === p.desde && hasta === p.hasta
+          return (
+            <button key={p.label} onClick={() => { setDesde(p.desde); setHasta(p.hasta) }}
+              style={{ height:'30px', padding:'0 11px', borderRadius:'7px', cursor:'pointer',
+                fontSize:'12px', border:`1px solid ${activo ? C.gold : C.border}`,
+                background: activo ? C.goldMuted : 'transparent',
+                color: activo ? C.goldDark : C.textSec, fontWeight: activo ? '600' : '400' }}>
+              {p.label}
+            </button>
+          )
+        })}
       </div>
 
       <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(240px,1fr))', gap:'10px' }}>

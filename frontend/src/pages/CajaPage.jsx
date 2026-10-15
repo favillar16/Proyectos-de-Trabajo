@@ -2297,7 +2297,6 @@ export default function CajaPage() {
             <PanelDevolucion
               key={devolucionPagoId}
               pagoId={devolucionPagoId}
-              pedidosListos={pedidosListos}
               onCancelar={() => setDevolucionPagoId(null)}
               onListo={(data) => {
                 setDevolucionPagoId(null)
