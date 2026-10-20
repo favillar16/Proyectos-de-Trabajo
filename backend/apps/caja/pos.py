@@ -131,7 +131,7 @@ class TerminalManual(TerminalPOS):
             aprobado=True,
             denominacion=denominacion,
             denominacion_descripcion=datos.get('denominacion_descripcion', ''),
-            forma_procesamiento=codigos.PROCESAMIENTO_POS,
+            forma_procesamiento=codigos.forma_procesamiento(medio),
             codigo_autorizacion=str(datos.get('codigo_autorizacion') or '').strip(),
             titular=str(datos.get('titular') or '').strip()[:30],
             ultimos_digitos=ultimos,
@@ -158,7 +158,7 @@ class TerminalSimulada(TerminalPOS):
         return ResultadoPOS(
             aprobado=True,
             denominacion=codigos.TARJETA_VISA,
-            forma_procesamiento=codigos.PROCESAMIENTO_POS,
+            forma_procesamiento=codigos.forma_procesamiento(medio),
             codigo_autorizacion='000000',
             titular='SIMULADO',
             ultimos_digitos='0000',

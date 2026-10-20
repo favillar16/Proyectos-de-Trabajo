@@ -172,6 +172,12 @@ export const cajaApi = {
   listaDevoluciones:     (params)  => api.get('/caja/devoluciones/', { params }),
   reimprimirDevolucion:  (id)      => api.post(`/caja/devoluciones/${id}/reimprimir/`),
 
+  // Lo invertido por cliente (ventana Clientes) y el mismo listado en archivo
+  resumenClientes:   (params)          => api.get('/caja/clientes/', { params }),
+  descargarClientes: (formato, params) => api.get('/caja/clientes/', {
+    params: { formato, ...params }, responseType: 'blob',
+  }),
+
   // Reportes — descargan un archivo (PDF o Excel)
   descargarReporte: (tipo, formato, params = {}) =>
     api.get(`/caja/reportes/${tipo}/`, {

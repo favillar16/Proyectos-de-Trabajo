@@ -18,7 +18,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import {
   Banknote, CreditCard, ArrowRightLeft, Loader2, AlertCircle, RotateCcw,
-  CheckCircle, Printer, Search, X,
+  CheckCircle, Printer, Search, X, QrCode,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { cajaApi, inventarioApi } from '../../services/api'
@@ -47,6 +47,8 @@ const MEDIOS = [
   { key:'debito',        label:'Débito',         icon:<CreditCard size={16}/> },
   { key:'credito',       label:'Crédito',        icon:<CreditCard size={16}/> },
   { key:'transferencia', label:'Transferencia',  icon:<ArrowRightLeft size={16}/> },
+  { key:'qr_debito',     label:'QR Débito',      icon:<QrCode size={16}/> },
+  { key:'qr_credito',    label:'QR Crédito',     icon:<QrCode size={16}/> },
 ]
 
 const UNIDAD = { m2:'m²', pieza:'u.', juego:'jgo.', caja:'cajas', ml:'ml' }
@@ -431,7 +433,7 @@ export function PanelDevolucion({ pagoId, onListo, onCancelar }) {
         {(aCobrar > 0 || aReintegrar > 0) && (
           <>
             <p style={etiqueta}>{aCobrar > 0 ? 'Cobrar la diferencia con' : 'Reintegrar con'}</p>
-            <div style={{ display:'grid', gridTemplateColumns:'repeat(4, 1fr)', gap:'6px',
+            <div style={{ display:'grid', gridTemplateColumns:'repeat(3, 1fr)', gap:'6px',
               marginBottom:'12px' }}>
               {MEDIOS.map(m => (
                 <button key={m.key} onClick={() => setMedio(m.key)}

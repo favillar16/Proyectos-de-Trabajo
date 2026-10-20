@@ -15,6 +15,7 @@ import InventarioPage from './pages/InventarioPage'
 import UsuariosPage from './pages/UsuariosPage'
 import CostosPage   from './pages/CostosPage'
 import FacturacionPage from './pages/FacturacionPage'
+import ClientesPage from './pages/ClientesPage'
 
 // Styles
 import './styles/design-system.css'
@@ -88,6 +89,12 @@ export default function App() {
               <UsuariosPage />
             </ProtectedRoute>
           } />
+          <Route path="/clientes" element={
+            <ProtectedRoute roles={['admin']}>
+              <ClientesPage />
+            </ProtectedRoute>
+          } />
+
           <Route path="/costos" element={
             <ProtectedRoute roles={['admin']}>
               <CostosPage />

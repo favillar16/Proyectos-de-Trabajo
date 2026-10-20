@@ -22,6 +22,7 @@ import { inventarioApi, productosApi } from '../services/api'
 import { usePedidoSocket } from '../hooks/usePedidoSocket'
 import toast from 'react-hot-toast'
 import { invalidarStock } from '../utils/stockCache'
+import { formatCantidad } from '../utils/cantidad'
 
 const C = {
   sidebar:'#453941', sidebarHov:'#362F31',
@@ -323,7 +324,7 @@ function ConstanciaAjuste({ constancia, item, onCerrar, onVerRegistro }) {
   const filas = [
     ['Producto',   item.descripcion],
     ['Movimiento', TIPO_AJUSTE_LABEL[m.tipo] || m.tipo_display],
-    ['Cantidad',   Number(m.cantidad).toFixed(2)],
+    ['Cantidad',   formatCantidad(m.cantidad)],
     ['Motivo',     m.observaciones || 'Sin motivo cargado'],
     ['Registrado por', m.usuario_nombre],
     ['Fecha',      formatFechaCompleta(m.fecha)],
@@ -343,14 +344,14 @@ function ConstanciaAjuste({ constancia, item, onCerrar, onVerRegistro }) {
         <div style={{ textAlign:'center' }}>
           <p style={{ fontSize:'10.5px', color:C.textMuted }}>Antes</p>
           <p style={{ fontSize:'20px', fontWeight:'600', color:C.textSec }}>
-            {Number(m.cantidad_anterior).toFixed(2)}
+            {formatCantidad(m.cantidad_anterior)}
           </p>
         </div>
         <span style={{ fontSize:'18px', color:C.textMuted }}>→</span>
         <div style={{ textAlign:'center' }}>
           <p style={{ fontSize:'10.5px', color:C.textMuted }}>Ahora</p>
           <p style={{ fontSize:'20px', fontWeight:'600', color:C.text }}>
-            {Number(m.cantidad_posterior).toFixed(2)}
+            {formatCantidad(m.cantidad_posterior)}
           </p>
         </div>
         <div style={{ textAlign:'center', paddingLeft:'14px', borderLeft:`1px solid ${C.border}` }}>
@@ -542,7 +543,7 @@ function PanelRegistroAjustes({ onCerrar }) {
                         {TIPO_AJUSTE_LABEL[m.tipo] || m.tipo_display}
                       </p>
                       <p style={{ fontSize:'13px', color:C.text, marginTop:'1px' }}>
-                        {Number(m.cantidad_anterior).toFixed(2)} → <strong>{Number(m.cantidad_posterior).toFixed(2)}</strong>
+                        {formatCantidad(m.cantidad_anterior)} → <strong>{formatCantidad(m.cantidad_posterior)}</strong>
                       </p>
                     </div>
                   </div>
@@ -658,7 +659,7 @@ function PanelHistorial({ item, onCerrar }) {
                 <p key={r.pedido_id} style={{ fontSize:'12px', color:C.text, marginTop:'3px',
                   display:'flex', alignItems:'center', gap:'5px' }}>
                   <Lock size={11} style={{ color:C.warning, flexShrink:0 }} />
-                  <strong style={{ color:C.warning }}>{Number(r.cantidad).toFixed(2)}</strong>
+                  <strong style={{ color:C.warning }}>{formatCantidad(r.cantidad)}</strong>
                   {r.cliente_nombre || 'Cliente sin nombre'}
                   <span style={{ color:C.textMuted }}>· {r.pedido_numero} · {r.estado_display}</span>
                 </p>
@@ -736,11 +737,11 @@ function PanelHistorial({ item, onCerrar }) {
                     </div>
                     <p style={{ fontSize:'13px', fontWeight:'600', color:C[cfg.color] || C.text,
                       whiteSpace:'nowrap' }}>
-                      {cfg.signo}{Number(m.cantidad).toFixed(2)}
+                      {cfg.signo}{formatCantidad(m.cantidad)}
                     </p>
                   </div>
                   <p style={{ fontSize:'11px', color:C.textMuted, marginTop:'4px' }}>
-                    {Number(m.cantidad_anterior).toFixed(2)} → {Number(m.cantidad_posterior).toFixed(2)}
+                    {formatCantidad(m.cantidad_anterior)} → {formatCantidad(m.cantidad_posterior)}
                     {m.observaciones ? ` · ${m.observaciones}` : ''}
                   </p>
                 </div>
@@ -787,13 +788,13 @@ function FilaStock({ item, onAjustar, onVerHistorial }) {
       <td style={{ padding:'10px 14px', borderBottom:`1px solid ${C.border}`,
         textAlign:'right' }}>
         <p style={{ fontSize:'14px', fontWeight:'600', color:C.text }}>
-          {Number(item.cantidad).toFixed(2)}
+          {formatCantidad(item.cantidad)}
         </p>
       </td>
       <td style={{ padding:'10px 14px', borderBottom:`1px solid ${C.border}`,
         textAlign:'right' }}>
         <p style={{ fontSize:'13px', color:C.warning }}>
-          {Number(item.cantidad_reservada).toFixed(2)}
+          {formatCantidad(item.cantidad_reservada)}
         </p>
       </td>
       <td style={{ padding:'10px 14px', borderBottom:`1px solid ${C.border}`,

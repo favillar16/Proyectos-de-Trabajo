@@ -200,3 +200,15 @@ class NotaPedidoEndpointTests(TestCase):
     def test_deposito_no_accede_porque_el_documento_lleva_precios(self):
         self.client.force_authenticate(self.deposito)
         self.assertEqual(self.client.get(self._url('pdf')).status_code, 403)
+
+
+class CantidadEnLaNotaTests(TestCase):
+    """De a piezas la cantidad tiene más de dos decimales y la nota no puede redondearla."""
+
+    def test_tres_piezas_de_0245_son_0735(self):
+        self.assertEqual(doc._cantidad(Decimal('0.7350')), '0.735')
+
+    def test_conserva_enteros_y_dos_decimales(self):
+        self.assertEqual(doc._cantidad(Decimal('17.0000')), '17')
+        self.assertEqual(doc._cantidad(Decimal('24.9900')), '24.99')
+        self.assertEqual(doc._cantidad(Decimal('2.5000')), '2.50')

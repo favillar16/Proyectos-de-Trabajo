@@ -190,6 +190,12 @@ MEDIO_PAGO = {
     'credito':       PAGO_TARJETA_CREDITO,
     'debito':        PAGO_TARJETA_DEBITO,
     'transferencia': PAGO_TRANSFERENCIA,
+    # El QR es otra forma de cobrar la misma tarjeta: el SIFEN no tiene un
+    # tipo de pago "QR", y declararlo como billetera (7) o pago electrónico
+    # (21) sería mentir sobre qué se cobró. Lo que cambia es la forma de
+    # procesamiento (E626), ver forma_procesamiento().
+    'qr_debito':     PAGO_TARJETA_DEBITO,
+    'qr_credito':    PAGO_TARJETA_CREDITO,
 }
 
 # ─── Pago con tarjeta (grupo E620 gPagTarCD) ─────────────────────────────────
@@ -221,6 +227,19 @@ DENOMINACION_TARJETA = {
 PROCESAMIENTO_POS              = 1
 PROCESAMIENTO_PAGO_ELECTRONICO = 2   # compras por internet
 PROCESAMIENTO_OTRO             = 9
+
+# Medios de Pago.MEDIOS que no pasan por la terminal POS: el QR no es una
+# tarjeta pasada por el POS ni una compra por internet, así que va como "9 =
+# Otro".
+MEDIOS_POR_QR = ('qr_debito', 'qr_credito')
+
+
+def forma_procesamiento(medio: str) -> int:
+    """Código E626 (iForProPa) para un medio de Pago.MEDIOS con tarjeta."""
+    if (medio or '').strip().lower() in MEDIOS_POR_QR:
+        return PROCESAMIENTO_OTRO
+    return PROCESAMIENTO_POS
+
 
 # Medios de pago que obligan a declarar el grupo de tarjeta.
 MEDIOS_CON_TARJETA = (PAGO_TARJETA_CREDITO, PAGO_TARJETA_DEBITO)

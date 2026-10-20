@@ -19,7 +19,7 @@ import {
   ChevronRight, Package, Clock, AlertCircle,
   RefreshCw, Receipt, X, Loader2, TrendingUp,
   Wifi, WifiOff, Search, User, Copy, ClipboardCheck, Eye, RotateCcw,
-  Plus, Trash2, Layers,
+  Plus, Trash2, Layers, QrCode,
 } from 'lucide-react'
 import Layout from '../components/layout/Layout'
 import { PanelDevolucion, ComprobanteDevolucion } from '../components/caja/PanelDevolucion'
@@ -28,6 +28,7 @@ import { usePedidoSocket } from '../hooks/usePedidoSocket'
 import { useDevice } from '../hooks/useDevice'
 import toast from 'react-hot-toast'
 import { invalidarStock } from '../utils/stockCache'
+import { formatCantidad } from '../utils/cantidad'
 
 const C = {
   sidebar:'#453941', sidebarHov:'#362F31',
@@ -50,7 +51,16 @@ const MEDIOS = [
   { key:'credito',      label:'Tarjeta crédito',   icon:<CreditCard size={18}/> },
   { key:'transferencia',label:'Transferencia',     icon:<ArrowRightLeft size={18}/> },
   { key:'cheque',       label:'Cheque',            icon:<ScrollText size={18}/> },
+  { key:'qr_debito',    label:'QR Débito',         icon:<QrCode size={18}/> },
+  { key:'qr_credito',   label:'QR Crédito',        icon:<QrCode size={18}/> },
 ]
+
+// Medios que el SIFEN trata como tarjeta (grupo E620): el QR es otra forma
+// de cobrar la misma tarjeta. Debe coincidir con codigos.MEDIO_PAGO.
+const MEDIOS_TARJETA = ['debito', 'credito', 'qr_debito', 'qr_credito']
+const esMedioTarjeta = m => MEDIOS_TARJETA.includes(m)
+// Los que llevan un número de autorización o de comprobante opcional.
+const conReferencia = m => esMedioTarjeta(m) || m === 'transferencia'
 
 // Bancos de plaza, para que la cajera no tipee el nombre a mano en cada
 // cobro. La lista es una comodidad, no una validación: si el cheque es de
@@ -457,7 +467,7 @@ function faltaEnLinea(l, tipoComprobante) {
   if (!(Number(l.monto) > 0)) return 'falta el monto'
   if (l.medio === 'cheque' && !(l.cheque.numero.trim() && l.cheque.banco.trim().length >= 4))
     return 'faltan número y banco del cheque'
-  if ((l.medio === 'debito' || l.medio === 'credito') && tipoComprobante === 'factura'
+  if (esMedioTarjeta(l.medio) && tipoComprobante === 'factura'
       && !l.tarjeta.denominacion)
     return 'falta con qué tarjeta pagó'
   if (l.medio === 'efectivo' && l.recibido && Number(l.recibido) < Number(l.monto))
@@ -548,10 +558,10 @@ function LineaMedio({ linea, indice, resto, puedeQuitar, hayEfectivo, tipoCompro
       {linea.medio === 'cheque' && (
         <CamposCheque cheque={linea.cheque} setCheque={set('cheque')} device={device} />
       )}
-      {(linea.medio === 'debito' || linea.medio === 'credito') && tipoComprobante === 'factura' && (
+      {esMedioTarjeta(linea.medio) && tipoComprobante === 'factura' && (
         <CamposTarjeta tarjeta={linea.tarjeta} setTarjeta={set('tarjeta')} device={device} />
       )}
-      {(linea.medio === 'debito' || linea.medio === 'credito' || linea.medio === 'transferencia') && (
+      {conReferencia(linea.medio) && (
         <input value={linea.referencia} onChange={e => set('referencia')(e.target.value)}
           placeholder={linea.medio === 'transferencia'
             ? 'Nro. de comprobante (opcional)' : 'Nro. de autorización (opcional)'}
@@ -610,7 +620,7 @@ function PanelCobro({ pedido: pedidoResumen, sesion, onPagado, onCancelar }) {
   const vuelto    = medio === 'efectivo' && Number(recibido) > total
     ? Number(recibido) - total
     : 0
-  const esTarjeta = medio === 'debito' || medio === 'credito'
+  const esTarjeta = esMedioTarjeta(medio)
   // La marca de la tarjeta es obligatoria solo cuando la venta se factura.
   const faltaTarjeta = esTarjeta && tipoComprobante === 'factura' && !tarjeta.denominacion
   const esCheque = medio === 'cheque'
@@ -643,7 +653,7 @@ function PanelCobro({ pedido: pedidoResumen, sesion, onPagado, onCancelar }) {
     monto_recibido: l.medio === 'efectivo' ? (Number(l.recibido) || Number(l.monto)) : undefined,
     referencia_externa: l.referencia,
     datos_cheque: l.medio === 'cheque' ? l.cheque : undefined,
-    datos_tarjeta: (l.medio === 'debito' || l.medio === 'credito') && tipoComprobante === 'factura'
+    datos_tarjeta: esMedioTarjeta(l.medio) && tipoComprobante === 'factura'
       ? { ...l.tarjeta, codigo_autorizacion: l.referencia } : undefined,
   }))
 
@@ -750,7 +760,7 @@ function PanelCobro({ pedido: pedidoResumen, sesion, onPagado, onCancelar }) {
                 {item.descripcion}
               </p>
               <p style={{ fontSize:'11px', color:C.textMuted }}>
-                {Number(item.cantidad).toFixed(2)} × {formatGs(item.precio_unitario)}
+                {formatCantidad(item.cantidad)} × {formatGs(item.precio_unitario)}
               </p>
             </div>
             <p style={{ fontSize:'14px', fontWeight:'600', color:C.goldDark,
@@ -1173,7 +1183,7 @@ function PanelCobro({ pedido: pedidoResumen, sesion, onPagado, onCancelar }) {
         )}
 
         {/* Referencia para tarjeta/transferencia */}
-        {(medio === 'debito' || medio === 'credito' || medio === 'transferencia') && (
+        {conReferencia(medio) && (
           <div style={{ marginBottom:'12px' }}>
             <label style={{ display:'block', fontSize:'12px', fontWeight:'500',
               color:C.textSec, marginBottom:'6px' }}>
@@ -1504,7 +1514,7 @@ function Ticket({ datos, onNuevo, onImprimir }) {
                 <p style={{ color:C.text, fontWeight:'500' }}>{item.descripcion}</p>
                 <div style={{ display:'flex', justifyContent:'space-between',
                   color:C.textSec }}>
-                  <span>{item.cantidad.toFixed(2)} × {formatGs(item.precio_unit)}</span>
+                  <span>{formatCantidad(item.cantidad)} × {formatGs(item.precio_unit)}</span>
                   <span style={{ fontWeight:'600', color:C.text }}>
                     {formatGs(item.subtotal)}
                   </span>

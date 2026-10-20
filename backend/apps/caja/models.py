@@ -73,6 +73,11 @@ class Pago(models.Model):
     MEDIO_TARJETA_CREDITO = 'credito'
     MEDIO_TRANSFERENCIA = 'transferencia'
     MEDIO_CHEQUE = 'cheque'
+    # Tarjeta cobrada leyendo un QR (con la app del banco o de la
+    # procesadora) en vez de pasarla por la terminal. Para el SIFEN siguen
+    # siendo tarjeta de débito / crédito — ver codigos.MEDIO_PAGO.
+    MEDIO_QR_DEBITO = 'qr_debito'
+    MEDIO_QR_CREDITO = 'qr_credito'
     # Cobro con más de un medio distinto (cheque + efectivo, …). No es un
     # medio en sí: el detalle está en las líneas (`PagoMedio`), que es lo que
     # suman el cierre, el arqueo y los reportes por medio.
@@ -84,6 +89,8 @@ class Pago(models.Model):
         (MEDIO_TARJETA_CREDITO, 'Tarjeta de crédito'),
         (MEDIO_TRANSFERENCIA, 'Transferencia bancaria'),
         (MEDIO_CHEQUE, 'Cheque'),
+        (MEDIO_QR_DEBITO, 'QR Débito'),
+        (MEDIO_QR_CREDITO, 'QR Crédito'),
     ]
     MEDIOS_Y_MIXTO = MEDIOS + [(MEDIO_MIXTO, 'Pago mixto')]
 

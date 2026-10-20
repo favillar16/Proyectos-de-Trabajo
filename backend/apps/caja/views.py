@@ -1344,6 +1344,40 @@ class ReporteGananciasView(views.APIView):
                                      tamanio=_tamanio(request))
 
 
+class ClientesResumenView(views.APIView):
+    """
+    Lo invertido por cada cliente, de mayor a menor (apps/caja/clientes.py).
+
+    Por defecto el año en curso, que es para lo que existe: decidir a fin de
+    año un descuento o un regalo. `?anio=2026`, o `?desde=&hasta=` para otro
+    período; `?buscar=` filtra por nombre o CI/RUC. Con `?formato=pdf|xlsx`
+    descarga el mismo listado.
+    """
+    permission_classes = [EsAdmin]
+
+    def get(self, request):
+        from . import clientes
+        hoy = date.today()
+        anio = request.query_params.get('anio')
+        if anio:
+            try:
+                anio = int(anio)
+                desde, hasta = date(anio, 1, 1), date(anio, 12, 31)
+            except ValueError:
+                return Response({'error': 'Año inválido.'}, status=status.HTTP_400_BAD_REQUEST)
+        elif request.query_params.get('desde') or request.query_params.get('hasta'):
+            desde, hasta = _parse_rango(request)
+        else:
+            desde, hasta = date(hoy.year, 1, 1), hoy
+        buscar = request.query_params.get('buscar', '')
+
+        if request.query_params.get('formato'):
+            reporte = clientes.reporte_clientes(desde, hasta, buscar)
+            return rep.responder_reporte(reporte, _formato(request), 'clientes',
+                                         tamanio=_tamanio(request))
+        return Response(clientes.resumen_clientes(desde, hasta, buscar))
+
+
 class ReporteArqueoView(views.APIView):
     """
     Arqueo de un día concreto (?dia=YYYY-MM-DD, por defecto hoy).

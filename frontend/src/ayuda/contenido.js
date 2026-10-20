@@ -258,6 +258,30 @@ export const AYUDA_POR_RUTA = {
     ],
   },
 
+  '/clientes': {
+    titulo: 'Clientes',
+    resumen: 'Lo que invirtió cada cliente, de mayor a menor.',
+    roles: ['admin'],
+    bloques: [
+      {
+        titulo: 'Qué suma',
+        items: [
+          'Solo lo cobrado: un presupuesto o un pedido sin pagar no cuenta.',
+          'Lo reintegrado por una devolución ya está restado; un cambio no cuenta como compra nueva.',
+          'Por defecto muestra el año en curso, para decidir descuentos o regalos de fin de año.',
+        ],
+      },
+      {
+        titulo: 'Cómo reconoce al mismo cliente',
+        items: [
+          'Por su ficha del padrón, si el pedido la tiene.',
+          'Si no, por el CI/RUC: con o sin puntos ni dígito verificador es el mismo cliente.',
+          'Sin documento, por el nombre. Las ventas sin nombre ni documento van aparte.',
+          'Cargar el CI/RUC en el pedido evita que un mismo cliente aparezca dos veces.',
+        ],
+      },
+    ],
+  },
   '/costos': {
     titulo: 'Costos',
     resumen: 'Gastos operativos, proveedores y empleados.',

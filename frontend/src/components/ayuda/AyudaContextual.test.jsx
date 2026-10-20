@@ -181,7 +181,7 @@ describe('integridad del contenido', () => {
   it('cubre todas las pantallas del sistema', () => {
     // Si se agrega una página nueva y se olvida su ayuda, esto lo marca.
     const esperadas = ['/showroom', '/productos', '/pedidos', '/caja',
-                       '/inventario', '/dashboard', '/usuarios', '/costos']
+                       '/inventario', '/dashboard', '/usuarios', '/costos', '/clientes']
     for (const ruta of esperadas) {
       expect(AYUDA_POR_RUTA[ruta], `Falta la ayuda de ${ruta}`).toBeTruthy()
     }

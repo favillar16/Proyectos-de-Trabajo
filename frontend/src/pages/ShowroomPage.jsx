@@ -32,6 +32,7 @@ import { ventasApi, inventarioApi } from '../services/api'
 import { mensajeErrorApi } from '../utils/apiErrors'
 import toast from 'react-hot-toast'
 import { invalidarStock } from '../utils/stockCache'
+import { DECIMALES_CANTIDAD } from '../utils/cantidad'
 
 const C = {
   sidebar:    '#453941', sidebarHov:'#362F31',
@@ -69,7 +70,32 @@ function unidadCorta(u) { return UNIDAD_CORTA[u] || u || '' }
  */
 function fmtCant(v, unidad) {
   const n = Number(v || 0)
-  return `${n.toLocaleString('es-PY', { minimumFractionDigits:2, maximumFractionDigits:2 })} ${unidadCorta(unidad)}`.trim()
+  return `${n.toLocaleString('es-PY', { minimumFractionDigits:2, maximumFractionDigits:DECIMALES_CANTIDAD })} ${unidadCorta(unidad)}`.trim()
+}
+
+// A los decimales que guarda el backend (utils/cantidad.js). Redondear a
+// dos —como se hacía— rompía la venta de a piezas: tres piezas de 0,245 m²
+// son 0,735 y no 0,74.
+function redondearCant(n) {
+  const f = 10 ** DECIMALES_CANTIDAD
+  return Math.round(Number(n) * f) / f
+}
+
+// m² de `piezas` piezas enteras. Se multiplica siempre desde la cantidad de
+// piezas, nunca sumando de a una sobre lo ya redondeado: con una pieza de
+// 2,02/7 m² el redondeo de cada suma se iba acumulando.
+function m2DePiezas(piezas, m2Pieza) {
+  return redondearCant(Math.max(1, piezas) * m2Pieza)
+}
+
+// Una pieza más o menos sobre una cantidad en m².
+function sumarPiezas(cantidad, m2Pieza, delta) {
+  return m2DePiezas(Math.round(Number(cantidad) / m2Pieza) + delta, m2Pieza)
+}
+
+// "0,245 m²": la medida de una pieza, con los decimales que tenga.
+function fmtM2(n) {
+  return `${Number(n).toLocaleString('es-PY', { minimumFractionDigits:2, maximumFractionDigits:DECIMALES_CANTIDAD })} m²`
 }
 
 /**
@@ -103,8 +129,15 @@ function equivalenciaPiezas(cantidad, m2Pieza) {
 // pieza si se cargó de a piezas, una caja si es un producto por m² con
 // rendimiento conocido, si no una unidad.
 function pasoItem(item) {
-  if (item?.modo === 'pieza' && item?.m2_pieza) return item.m2_pieza
   return item?.unidad === 'm2' && Number(item?.m2_caja) > 0 ? Number(item.m2_caja) : 1
+}
+
+// La cantidad tras un toque de +/− (delta = 1 o −1) en el carrito.
+function cantidadTrasPaso(item, delta) {
+  if (item?.modo === 'pieza' && item?.m2_pieza)
+    return sumarPiezas(item.cantidad, item.m2_pieza, delta)
+  const nueva = Number(item.cantidad) + delta * pasoItem(item)
+  return delta < 0 ? Math.max(minimoItem(item), nueva) : nueva
 }
 
 // Lo mínimo que deja el "−" del carrito: una pieza si se conoce su medida, si
@@ -112,7 +145,7 @@ function pasoItem(item) {
 // caja, y en un ítem de menos de una caja el "−" terminaba sumando.
 function minimoItem(item) {
   if (item?.unidad !== 'm2') return 1
-  return item?.m2_pieza ? Math.round(item.m2_pieza * 100) / 100 : 0.01
+  return item?.m2_pieza ? redondearCant(item.m2_pieza) : 0.01
 }
 
 function equivalenciaCajas(disponible, m2Caja) {
@@ -362,7 +395,7 @@ function PanelDetalle({ producto, detalle, stock, cargando, onCerrar, device, on
   // por m² y tiene rendimiento cargado (que es como se pide en el mostrador),
   // o una unidad en el resto de los casos.
   const pasoDe = (v) => (esM2 && Number(v?.m2_calculado) > 0 ? Number(v.m2_calculado) : 1)
-  const redondear = (n) => Math.round(Number(n) * 100) / 100
+  const redondear = redondearCant
   const m2Pieza = esM2 ? m2PorPieza(varianteSel) : null
   const dePiezas = modo === 'pieza' && !!m2Pieza
   const paso = dePiezas ? m2Pieza : pasoDe(varianteSel)
@@ -370,6 +403,10 @@ function PanelDetalle({ producto, detalle, stock, cargando, onCerrar, device, on
   // resto de una caja abierta), así que el piso es 0,01 y no una caja. De a
   // piezas, el piso es una pieza.
   const minimo = esM2 ? (dePiezas ? redondear(m2Pieza) : 0.01) : 1
+  // Un toque de +/−: de a piezas se recalcula desde la cantidad de piezas.
+  const pasoCantidad = (c, delta) => dePiezas
+    ? sumarPiezas(c, m2Pieza, delta)
+    : redondear(Math.max(minimo, c + delta * paso))
 
   // Al cambiar de modo se propone una unidad del modo nuevo: una pieza o una caja.
   const cambiarModo = (nuevo) => {
@@ -496,7 +533,7 @@ function PanelDetalle({ producto, detalle, stock, cargando, onCerrar, device, on
                               hasta ahora había que buscarlo en la ficha. */}
                           {item.m2_por_caja > 0 && (
                             <p style={{ fontSize:'11.5px', color:C.goldDark, marginTop:'3px' }}>
-                              {Number(item.m2_por_caja).toFixed(2)} m² por caja
+                              {fmtM2(item.m2_por_caja)} por caja
                               {item.piezas_por_caja ? ` · ${item.piezas_por_caja} piezas` : ''}
                               {equivalenciaCajas(item.disponible, item.m2_por_caja)
                                 ? ` · hay ${equivalenciaCajas(item.disponible, item.m2_por_caja)}`
@@ -588,7 +625,7 @@ function PanelDetalle({ producto, detalle, stock, cargando, onCerrar, device, on
                         </p>
                         {v.m2_calculado > 0 && (
                           <p style={{ fontSize:'10.5px', color:C.goldDark, marginTop:'1px' }}>
-                            {Number(v.m2_calculado).toFixed(2)} m² por caja
+                            {fmtM2(v.m2_calculado)} por caja
                             {v.piezas_por_caja ? ` · ${v.piezas_por_caja} piezas` : ''}
                             {!sinStock && equivalenciaCajas(st, v.m2_calculado)
                               ? ` · ${equivalenciaCajas(st, v.m2_calculado)}`
@@ -642,14 +679,14 @@ function PanelDetalle({ producto, detalle, stock, cargando, onCerrar, device, on
                     ? ` (${equivalenciaCajas(stockSel, varianteSel.m2_calculado)})`
                     : ''}
                   {dePiezas
-                    ? ` · cada pieza son ${m2Pieza.toFixed(2)} m²`
-                    : paso !== 1 && ` · cada caja son ${paso.toFixed(2)} m²`}
+                    ? ` · cada pieza son ${fmtM2(m2Pieza)}`
+                    : paso !== 1 && ` · cada caja son ${fmtM2(paso)}`}
                 </p>
               )}
               <div style={{ display:'flex', alignItems:'center', gap:'10px' }}>
                 <div style={{ display:'flex', alignItems:'center', gap:'6px' }}>
                   <button
-                    onClick={() => setCantidad(c => redondear(Math.max(minimo, c - paso)))}
+                    onClick={() => setCantidad(c => pasoCantidad(c, -1))}
                     style={{ width: device.isTouch?'44px':'38px', height: device.isTouch?'44px':'38px',
                       borderRadius:'9px', background:C.bg, border:`1px solid ${C.border}`,
                       cursor:'pointer', color:C.textSec, display:'flex', alignItems:'center',
@@ -659,9 +696,11 @@ function PanelDetalle({ producto, detalle, stock, cargando, onCerrar, device, on
                   <input
                     // step 0.01 y no 1: un pedido de 12,60 m² es lo normal acá,
                     // y con step entero el navegador lo marcaba como inválido.
+                    // "any" en m²: 0,735 (tres piezas de 0,245) no es múltiplo
+                    // de 0,01 y el navegador lo marcaba como inválido.
                     type="number" min={esM2 ? '0.01' : '1'}
                     max={stockSel === Infinity ? undefined : stockSel}
-                    step={esM2 ? '0.01' : '1'}
+                    step={esM2 ? 'any' : '1'}
                     value={cantidad}
                     onChange={e => {
                       const pedido = Number(e.target.value)
@@ -673,7 +712,7 @@ function PanelDetalle({ producto, detalle, stock, cargando, onCerrar, device, on
                       fontSize:'15px', fontWeight:'500', color:C.text, background:C.bg, outline:'none' }}
                   />
                   <button
-                    onClick={() => setCantidad(c => redondear(Math.min(c + paso, stockSel)))}
+                    onClick={() => setCantidad(c => Math.min(pasoCantidad(c, 1), stockSel))}
                     disabled={cantidad >= stockSel}
                     style={{ width: device.isTouch?'44px':'38px', height: device.isTouch?'44px':'38px',
                       borderRadius:'9px', background:C.bg, border:`1px solid ${C.border}`,
@@ -1036,8 +1075,7 @@ function CarritoShowroom({ items, onCambiarCantidad, onEliminar, onVaciar, onCer
               </div>
               <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between' }}>
                 <div style={{ display:'flex', alignItems:'center', gap:'6px' }}>
-                  <button onClick={() => onCambiarCantidad(idx,
-                    Math.max(minimoItem(item), Number(item.cantidad) - pasoItem(item)))}
+                  <button onClick={() => onCambiarCantidad(idx, cantidadTrasPaso(item, -1))}
                     style={{ width:'32px', height:'32px', borderRadius:'8px', background:C.bgSec,
                       border:`1px solid ${C.border}`, cursor:'pointer', color:C.textSec,
                       display:'flex', alignItems:'center', justifyContent:'center' }}>
@@ -1045,7 +1083,7 @@ function CarritoShowroom({ items, onCambiarCantidad, onEliminar, onVaciar, onCer
                   </button>
                   <input type="number" min={item.unidad === 'm2' ? '0.01' : '1'}
                     max={item.stock_disponible ?? undefined}
-                    step={item.unidad === 'm2' ? '0.01' : '1'}
+                    step={item.unidad === 'm2' ? 'any' : '1'}
                     value={item.cantidad}
                     onChange={e => onCambiarCantidad(idx,
                       Math.max(item.unidad === 'm2' ? 0.01 : 1, Number(e.target.value) || 0))}
@@ -1054,7 +1092,7 @@ function CarritoShowroom({ items, onCambiarCantidad, onEliminar, onVaciar, onCer
                       fontSize:'14px', fontWeight:'500', color:C.text, background:C.bg, outline:'none' }} />
                   <button
                     disabled={item.stock_disponible != null && Number(item.cantidad) >= item.stock_disponible}
-                    onClick={() => onCambiarCantidad(idx, Number(item.cantidad) + pasoItem(item))}
+                    onClick={() => onCambiarCantidad(idx, cantidadTrasPaso(item, 1))}
                     style={{ width:'32px', height:'32px', borderRadius:'8px', background:C.bgSec,
                       border:`1px solid ${C.border}`, cursor:'pointer', color:C.textSec,
                       display:'flex', alignItems:'center', justifyContent:'center',
@@ -1227,8 +1265,8 @@ export default function ShowroomPage() {
 
   const cambiarCantidad = useCallback((idx, cant) => {
     setCarrito(prev => prev.map((i, n) => n === idx
-      ? { ...i, cantidad: Math.round(
-            Math.min(Number(cant), i.stock_disponible ?? Infinity) * 100) / 100 }
+      ? { ...i, cantidad: redondearCant(
+            Math.min(Number(cant), i.stock_disponible ?? Infinity)) }
       : i))
   }, [])
   const eliminarDelCarrito = useCallback((idx) => {

@@ -23,7 +23,7 @@ import {
   AlertCircle, XCircle, CheckCircle,
   ChevronRight, RefreshCw, Clock,
   Truck, BarChart3, Banknote,
-  ArrowRightLeft, RotateCcw,
+  ArrowRightLeft, RotateCcw, QrCode,
 } from 'lucide-react'
 import Layout from '../components/layout/Layout'
 import PanelReportes from '../components/reportes/PanelReportes'
@@ -269,7 +269,8 @@ function BarraDistribucion({ items, total }) {
   )
   const COLORES = [C.gold, C.success, C.info, C.warning]
   const ICONOS  = { efectivo:<Banknote size={14}/>, debito:<CreditCard size={14}/>,
-    credito:<CreditCard size={14}/>, transferencia:<ArrowRightLeft size={14}/> }
+    credito:<CreditCard size={14}/>, transferencia:<ArrowRightLeft size={14}/>,
+    qr_debito:<QrCode size={14}/>, qr_credito:<QrCode size={14}/> }
 
   return (
     <div>

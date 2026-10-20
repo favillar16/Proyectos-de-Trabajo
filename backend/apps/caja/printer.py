@@ -171,7 +171,7 @@ class TicketBuilder:
             # Línea 1: nombre del producto
             buf += self._l(nombre)
             # Línea 2: detalle + cantidad × precio = subtotal
-            cant_str  = f'{cant:.2f}'.rstrip('0').rstrip('.')
+            cant_str  = f'{cant:.4f}'.rstrip('0').rstrip('.')
             linea2    = f'  {detalle[:22]}' if detalle and detalle != nombre else ''
             buf += self._2col(
                 f'  {cant_str} x {_formatGs(precio)}',
@@ -325,7 +325,7 @@ class FacturaBuilder:
             cant     = item.get('cantidad', 0)
             precio   = item.get('precio_unit', 0)
             subtotal = item.get('subtotal', 0)
-            cant_str = f'{cant:.2f}'.rstrip('0').rstrip('.')
+            cant_str = f'{cant:.4f}'.rstrip('0').rstrip('.')
             buf += self._l(nombre)
             buf += self._2col(f'  {cant_str} x {_formatGs(precio)}', _formatGs(subtotal))
         buf += self._sep()
@@ -552,7 +552,7 @@ class TicketDevolucionBuilder:
         buf += BOLD_OFF
         for item in d.get('devueltos', []):
             buf += self._l(str(item.get('descripcion', ''))[:self.cols])
-            cant = f'{item.get("cantidad", 0):.2f}'.rstrip('0').rstrip('.')
+            cant = f'{item.get("cantidad", 0):.4f}'.rstrip('0').rstrip('.')
             buf += self._2col(f'  {cant} - {str(item.get("detalle", ""))[:22]}',
                               _formatGs(item.get('subtotal', 0)))
             if not item.get('reingresa_stock', True):
@@ -566,7 +566,7 @@ class TicketDevolucionBuilder:
             buf += BOLD_OFF
             for item in d.get('llevados', []):
                 buf += self._l(str(item.get('descripcion', ''))[:self.cols])
-                cant = f'{item.get("cantidad", 0):.2f}'.rstrip('0').rstrip('.')
+                cant = f'{item.get("cantidad", 0):.4f}'.rstrip('0').rstrip('.')
                 buf += self._2col(f'  {cant} x {_formatGs(item.get("precio_unit", 0))}',
                                   _formatGs(item.get('subtotal', 0)))
             buf += self._2col('Total del cambio:', _formatGs(d.get('total_nuevo', 0)))
@@ -791,7 +791,7 @@ def ticket_devolucion_a_texto(d: dict) -> str:
 
     def g(v): return f'Gs. {int(v):,}'.replace(',', '.')
     def r(i, d_): return i + ' ' * max(1, cols - len(i) - len(d_)) + d_
-    def c(v): return f'{v:.2f}'.rstrip('0').rstrip('.')
+    def c(v): return f'{v:.4f}'.rstrip('0').rstrip('.')
 
     titulo = 'CAMBIO DE PRODUCTO' if d.get('pedido_cambio') else 'DEVOLUCION'
     lineas = [
@@ -862,7 +862,7 @@ def ticket_a_texto(datos_ticket: dict) -> str:
     ]
 
     for item in d.get('items', []):
-        cant = f"{item['cantidad']:.2f}".rstrip('0').rstrip('.')
+        cant = f"{item['cantidad']:.4f}".rstrip('0').rstrip('.')
         lineas.append(item['descripcion'][:cols])
         lineas.append(r(
             f"  {cant} x {g(item['precio_unit'])}",

@@ -6,6 +6,7 @@ from .views import (
     ReporteStockView, ReporteVentasView, ReporteCajaView,
     ReporteProductosView, ReporteGananciasView, ReporteArqueoView,
     DevolucionResumenView, DevolucionesView, ReimprimirDevolucionView,
+    ClientesResumenView,
 )
 from .kpis import KPIsDashboardView
 
@@ -35,5 +36,7 @@ urlpatterns = [
     path('reportes/productos/',            ReporteProductosView.as_view(), name='reporte-productos'),
     # Arqueo del día (?dia=YYYY-MM-DD)
     path('reportes/ganancias/',           ReporteGananciasView.as_view(), name='reporte-ganancias'),
+    # Lo invertido por cliente, para descuentos o regalos de fin de año.
+    path('clientes/',                      ClientesResumenView.as_view(),  name='clientes-resumen'),
     path('reportes/arqueo/',               ReporteArqueoView.as_view(),    name='reporte-arqueo'),
 ]

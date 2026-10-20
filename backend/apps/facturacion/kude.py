@@ -142,6 +142,18 @@ def _num(valor, decimales=2) -> str:
     return texto.replace(',', 'X').replace('.', ',').replace('X', '.')
 
 
+def _cantidad(valor) -> str:
+    """
+    Cantidad con los decimales que viajaron en el DE, entre dos y cuatro:
+    '2,35' y no '2,3500', pero '0,735' y no '0,74' — el KuDE no puede
+    mostrar algo distinto de lo que se firmó (§13.2).
+    """
+    texto = _num(valor, 4)
+    entero, _, decimales = texto.partition(',')
+    decimales = decimales.rstrip('0').ljust(2, '0')
+    return f'{entero},{decimales}'
+
+
 def _fecha(momento, formato='%d/%m/%Y %H:%M') -> str:
     if momento is None:
         return ''
@@ -416,7 +428,7 @@ def render_pdf(documento) -> bytes:
             Paragraph(item['codigo'], st_codigo),
             Paragraph(item['descripcion'], st_celda),
             Paragraph(item['unidad'], st_celda),
-            Paragraph(_num(item['cantidad']), st_der),
+            Paragraph(_cantidad(item['cantidad']), st_der),
             Paragraph(_gs(item['precio_unitario']), st_der),
             Paragraph(_gs(item['descuento']) if item['descuento'] else '—', st_der),
             Paragraph(_gs(item['exentas']) if item['exentas'] else '—', st_der),

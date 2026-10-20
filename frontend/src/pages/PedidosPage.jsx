@@ -26,6 +26,7 @@ import { usePedidoSocket } from '../hooks/usePedidoSocket'
 import toast from 'react-hot-toast'
 import { invalidarStock } from '../utils/stockCache'
 import { imprimirPdf } from '../utils/imprimirPdf'
+import { formatCantidad } from '../utils/cantidad'
 
 const C = {
   sidebar:'#453941', sidebarHov:'#362F31',
@@ -472,8 +473,8 @@ function PanelDetalle({ pedido: pedidoResumen, rol, puedeEditarPrecio, onCerrar 
                       </p>
                       <p style={{ fontSize:'11px', color:C.textMuted, marginTop:'1px' }}>
                         {rol === 'deposito'
-                          ? `${Number(item.cantidad).toFixed(2)} unidad${Number(item.cantidad)!==1?'es':''}`
-                          : `${Number(item.cantidad).toFixed(2)} × ${formatGs(item.precio_unitario)} = ${formatGs(item.subtotal)}`}
+                          ? `${formatCantidad(item.cantidad)} unidad${Number(item.cantidad)!==1?'es':''}`
+                          : `${formatCantidad(item.cantidad)} × ${formatGs(item.precio_unitario)} = ${formatGs(item.subtotal)}`}
                       </p>
                       {item.observaciones && (
                         <p style={{ fontSize:'11px', color:C.info, marginTop:'2px' }}>

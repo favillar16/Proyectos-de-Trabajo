@@ -15,7 +15,7 @@ import {
   LayoutDashboard, Package, ShoppingCart, CreditCard,
   BarChart3, LogOut, Layers, Warehouse, ChevronRight,
   ChevronLeft, Bell, Settings, Menu, X, ChevronDown,
-  Users, Calculator, ReceiptText,
+  Users, Calculator, ReceiptText, Contact,
 } from 'lucide-react'
 import { useAuthStore } from '../../store/authStore'
 import { useDevice } from '../../hooks/useDevice'
@@ -78,6 +78,12 @@ const NAV_ITEMS = [
     icon:  CreditCard,
     path:  '/caja',
     roles: ['admin', 'cajero'],
+  },
+  {
+    label: 'Clientes',
+    icon:  Contact,
+    path:  '/clientes',
+    roles: ['admin'],
   },
   {
     label: 'Usuarios',

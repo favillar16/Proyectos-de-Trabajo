@@ -68,12 +68,20 @@ def _gs(valor) -> str:
 
 
 def _cantidad(valor) -> str:
-    """Muestra 17 en vez de 17,00 pero conserva los decimales de 24,99."""
+    """
+    Muestra 17 en vez de 17,00 pero conserva los decimales de 24,99 — y los
+    de 0,735, que son tres piezas de 0,245 m²: con dos decimales la nota
+    decía 0,74 y la cuenta contra el precio no cerraba. Hasta cuatro, los
+    que guarda `ItemPedido.cantidad`.
+    """
     try:
         f = float(valor)
     except (TypeError, ValueError):
         return '0'
-    return f'{f:.0f}' if abs(f - round(f)) < 0.005 else f'{f:.2f}'
+    if abs(f - round(f)) < 0.00005:
+        return f'{f:.0f}'
+    texto = f'{f:.4f}'.rstrip('0')
+    return texto if len(texto.split('.')[1]) >= 2 else f'{f:.2f}'
 
 
 def _empresa() -> dict:

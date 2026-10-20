@@ -16,7 +16,7 @@ exige que esté y lo que prohíbe que esté:
 """
 from decimal import Decimal
 
-from django.test import TestCase, override_settings
+from django.test import SimpleTestCase, TestCase, override_settings
 from django.urls import reverse
 from rest_framework.test import APIClient
 
@@ -329,3 +329,13 @@ class GeometriaDelEncabezadoTests(TestCase):
         alto = kude._alto_encabezado_mm(datos)
         minimo = kude.TOPE_MM + 5 * kude.ALTO_LINEA_TITULO_MM
         self.assertGreater(alto, minimo)
+
+
+class CantidadDelKudeTests(SimpleTestCase):
+    """El KuDE muestra la cantidad que viajó en el DE, sin redondearla a dos decimales."""
+
+    def test_cantidad_con_tres_decimales(self):
+        from apps.facturacion.kude import _cantidad
+        self.assertEqual(_cantidad(0.735), '0,735')
+        self.assertEqual(_cantidad(2.35), '2,35')
+        self.assertEqual(_cantidad(17), '17,00')
