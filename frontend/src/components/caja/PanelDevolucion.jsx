@@ -18,7 +18,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import {
   Banknote, CreditCard, ArrowRightLeft, Loader2, AlertCircle, RotateCcw,
-  CheckCircle, Printer, Search, X, QrCode,
+  CheckCircle, Printer, Search, X, QrCode, Zap,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { cajaApi, inventarioApi } from '../../services/api'
@@ -49,6 +49,7 @@ const MEDIOS = [
   { key:'transferencia', label:'Transferencia',  icon:<ArrowRightLeft size={16}/> },
   { key:'qr_debito',     label:'QR Débito',      icon:<QrCode size={16}/> },
   { key:'qr_credito',    label:'QR Crédito',     icon:<QrCode size={16}/> },
+  { key:'pix',           label:'PIX',            icon:<Zap size={16}/> },
 ]
 
 const UNIDAD = { m2:'m²', pieza:'u.', juego:'jgo.', caja:'cajas', ml:'ml' }

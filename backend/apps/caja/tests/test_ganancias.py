@@ -11,7 +11,7 @@ Lo que tiene que quedar bien:
   · los gastos del período no incluyen los pagos a proveedor (esa
     mercadería ya entra como costo de lo vendido).
 """
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
 
 from django.test import TestCase, override_settings
@@ -111,10 +111,67 @@ class GananciaTests(BaseDevolucionTests):
         self.assertEqual(fila[3], reportes._gs(100000))   # costo unitario
         self.assertEqual(fila[4], reportes._gs(150000))   # cobrado unitario
         self.assertEqual(fila[7], reportes._gs(100000))   # ganancia
-        self.assertEqual(rep['totales']['Ganancia bruta'], reportes._gs(100000))
+        self.assertEqual(rep['totales']['(=) Ganancia bruta'], reportes._gs(100000))
 
         detalle = reportes.reporte_ganancias(self.hoy, self.hoy, detalle=True)
         self.assertEqual(len(detalle['filas']), 1)
+
+    def test_recargo_sobre_el_costo_y_margen_sobre_lo_cobrado(self):
+        # Costó 100.000, se cobró 150.000: 50 % de recargo, 33,3 % de margen.
+        # Son la misma ganancia; la propietaria piensa sus precios en recargo.
+        self._vender([(self.porcelanato, '2', '150000')])
+        r = self._resumen()
+        self.assertEqual(r['recargo'], Decimal('50'))
+        rep = reportes.reporte_ganancias(self.hoy, self.hoy)
+        self.assertEqual(rep['totales']['Recargo sobre el costo (nota 2)'], '50,0 %')
+        self.assertEqual(rep['totales']['Margen sobre lo cobrado (nota 2)'], '33,3 %')
+
+    def test_los_totales_se_pueden_restar_a_mano(self):
+        # Con un producto sin costo, el reporte muestra la resta paso a paso:
+        # cobrado − sin costo = con costo; con costo − costo = ganancia bruta.
+        self._vender([(self.porcelanato, '1', '150000'), (self.ceramica, '1', '90000')])
+        t = reportes.reporte_ganancias(self.hoy, self.hoy)['totales']
+        self.assertEqual(t['Cobrado por mercadería'], reportes._gs(240000))
+        self.assertEqual(t['(-) Cobrado de productos sin costo cargado (nota 1)'], reportes._gs(90000))
+        self.assertEqual(t['(=) Cobrado de productos con costo cargado'], reportes._gs(150000))
+        self.assertEqual(t['(-) Costo de esa mercadería'], reportes._gs(100000))
+        self.assertEqual(t['(=) Ganancia bruta'], reportes._gs(50000))
+
+    def test_los_pagos_a_proveedor_se_muestran_pero_no_restan(self):
+        prov = CategoriaGasto.objects.create(nombre='Prov test', tipo=CategoriaGasto.TIPO_PROVEEDOR)
+        GastoOperativo.objects.create(
+            categoria=prov, descripcion='x', monto=Decimal('9000000'),
+            anio=2026, mes=9, registrado_por=self.cajero)
+        self.assertEqual(ganancias.pagos_proveedor(date(2026, 9, 1), date(2026, 9, 30)),
+                         Decimal('9000000'))
+        r = ganancias.resumen(date(2026, 9, 1), date(2026, 9, 30))
+        self.assertEqual(r['pagos_proveedor'], Decimal('9000000'))
+        self.assertEqual(r['gastos'], Decimal('0'))
+
+    def test_el_reporte_explica_sus_cuentas(self):
+        self._vender([(self.porcelanato, '1', '150000'), (self.ceramica, '1', '90000')])
+        rep = reportes.reporte_ganancias(self.hoy, self.hoy)
+        self.assertEqual([n[:2] for n in rep['notas']], ['1.', '2.', '3.'])
+        # Las notas salen en los dos formatos
+        from io import BytesIO
+        from openpyxl import load_workbook
+        ws = load_workbook(BytesIO(reportes.render_xlsx(rep))).active
+        textos = [c.value for fila in ws.iter_rows() for c in fila if isinstance(c.value, str)]
+        self.assertIn(rep['notas'][1], textos)
+        self.assertTrue(reportes.render_pdf(rep).startswith(b'%PDF'))
+
+        # El PDF abre con una hoja de resumen y el detalle va desde la 2:
+        # con una sola venta, son exactamente dos hojas.
+        import re
+        pdf = reportes.render_pdf(rep)
+        self.assertEqual(len(re.findall(rb'/Type /Page\b(?!s)', pdf)), 2)
+        self.assertEqual(rep['resumen']['destacados'][-1][0], 'Ganancia neta')
+
+        # Sin productos sin costo, no aparece la nota 1 ni su renglón
+        mes_pasado = self.hoy.replace(day=1) - timedelta(days=1)
+        rep = reportes.reporte_ganancias(mes_pasado, mes_pasado)
+        self.assertNotIn('(-) Cobrado de productos sin costo cargado (nota 1)', rep['totales'])
+        self.assertEqual([n[:2] for n in rep['notas']], ['2.', '3.'])
 
 
 class ReporteGananciasApiTests(TestCase):

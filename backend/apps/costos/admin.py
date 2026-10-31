@@ -26,7 +26,7 @@ class EmpleadoAdmin(admin.ModelAdmin):
 class GastoAdmin(admin.ModelAdmin):
     list_display = ['descripcion','categoria','proveedor','monto','metodo_pago','mes','anio','estado']
     list_filter = ['estado','categoria','metodo_pago','anio','mes']
-    search_fields = ['descripcion','comprobante','cheque_numero']
+    search_fields = ['descripcion','comprobante','cheques__numero']
     date_hierarchy = 'fecha_creacion'
 
 @admin.register(PedidoProveedor)

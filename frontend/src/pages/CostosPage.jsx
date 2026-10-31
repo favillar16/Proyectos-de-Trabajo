@@ -1,17 +1,18 @@
 /**
  * CostosPage — Costos Operativos (Oga Porã)
- * Solapas: Gastos del mes · Proveedores · Pedidos a proveedor · Empleados
+ * Solapas: Gastos del mes · Proveedores · Pedidos a proveedor · Empleados ·
+ * Comisiones bancarias
  * Incluye método de pago (efectivo/transferencia/crédito/cheque) con datos
  * de cheque y alertas de cheques por cobrar y pedidos por llegar.
  */
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   Plus, Trash2, Edit2, X, Loader2, Users, Receipt, TrendingDown,
-  Building2, Truck, Bell, AlertTriangle, Calendar, CreditCard, Check,
+  Building2, Truck, Bell, AlertTriangle, Calendar, CreditCard, Check, Search, Landmark,
 } from 'lucide-react'
 import Layout from '../components/layout/Layout'
-import { costosApi, productosApi } from '../services/api'
+import { costosApi, productosApi, cajaApi } from '../services/api'
 import { mensajeErrorApi } from '../utils/apiErrors'
 import toast from 'react-hot-toast'
 
@@ -51,6 +52,28 @@ const ESTADOS_PEDPROV = {
 }
 
 const formatGs = v => `Gs. ${Number(v||0).toLocaleString('es-PY')}`
+
+function useDebounce(value, delay = 350) {
+  const [d, setD] = useState(value)
+  useEffect(() => {
+    const t = setTimeout(() => setD(value), delay)
+    return () => clearTimeout(t)
+  }, [value, delay])
+  return d
+}
+
+// Fechas sin hora ('2026-10-20'): `new Date()` las toma como medianoche UTC
+// y en Asunción (UTC-3) se mostraban un día antes. Se arman a mano.
+const fmtDia = iso => {
+  if (!iso) return ''
+  const [a, m, d] = String(iso).slice(0, 10).split('-')
+  return `${d}/${m}/${a}`
+}
+// Hoy en hora local — `toISOString()` da la fecha UTC, que de noche ya es mañana.
+const hoyLocal = () => {
+  const h = new Date()
+  return `${h.getFullYear()}-${String(h.getMonth()+1).padStart(2,'0')}-${String(h.getDate()).padStart(2,'0')}`
+}
 
 const Badge = ({ cfg }) => <span style={{ padding:'2px 8px', borderRadius:'20px',
   fontSize:'11px', fontWeight:'500', background:cfg.bg, color:cfg.color }}>{cfg.label}</span>
@@ -201,6 +224,8 @@ function BannerAlertas() {
 // ════════════════════════════════════════════════════════
 // MODAL GASTO (con método de pago + cheque)
 // ════════════════════════════════════════════════════════
+const CHEQUE_VACIO = { numero:'', banco:'', fecha_cobro:'', monto:'' }
+
 function ModalGasto({ gasto, anio, mes, categorias, empleados, proveedores, onCerrar, onGuardado }) {
   const esEdicion = Boolean(gasto)
   const [form, setForm] = useState({
@@ -208,18 +233,44 @@ function ModalGasto({ gasto, anio, mes, categorias, empleados, proveedores, onCe
     categoria_id: gasto?.categoria_id||'', empleado_id: gasto?.empleado_id||'',
     proveedor_id: gasto?.proveedor_id||'',
     anio: gasto?.anio||anio, mes: gasto?.mes||mes,
-    estado: gasto?.estado||'pendiente', fecha_pago: gasto?.fecha_pago||'',
+    // Un gasto nuevo del mes en curso nace con la fecha de hoy; uno de otro
+    // mes, sin fecha, para no inventarle un día que no es.
+    estado: gasto?.estado||'pendiente',
+    fecha_pago: gasto ? (gasto.fecha_pago||'')
+      : (hoyLocal().startsWith(`${anio}-${String(mes).padStart(2,'0')}`) ? hoyLocal() : ''),
     metodo_pago: gasto?.metodo_pago||'',
-    cheque_numero: gasto?.cheque_numero||'', cheque_banco: gasto?.cheque_banco||'',
-    cheque_fecha_cobro: gasto?.cheque_fecha_cobro||'',
     comprobante: gasto?.comprobante||'', notas: gasto?.notas||'',
   })
+  // Un pago puede ir en varios cheques, cada uno con su plazo. Con uno solo
+  // el monto no se pide: es el del gasto.
+  const [cheques, setCheques] = useState(() =>
+    gasto?.cheques?.length
+      ? gasto.cheques.map(c => ({ numero:c.numero||'', banco:c.banco||'',
+          fecha_cobro:c.fecha_cobro||'', monto: gasto.cheques.length > 1 ? String(Math.round(Number(c.monto))) : '' }))
+      : [CHEQUE_VACIO])
   const [errores, setErrores] = useState({})
+  const cambiarCheque = (i, k, v) => {
+    setCheques(cs => cs.map((c, j) => j === i ? { ...c, [k]: v } : c))
+    setErrores(e => ({ ...e, cheques: undefined }))
+  }
+  const agregarCheque = () => setCheques(cs => [...cs, CHEQUE_VACIO])
+  const quitarCheque = i => setCheques(cs => cs.filter((_, j) => j !== i))
   const sf = (k,v) => { setForm(f=>({...f,[k]:v})); setErrores(e=>({...e,[k]:undefined})) }
+  // Elegir la fecha acomoda el período: un gasto del 15/09 es de septiembre.
+  const cambiarFecha = v => {
+    sf('fecha_pago', v)
+    if (v) {
+      const [a, m] = v.split('-').map(Number)
+      setForm(f=>({...f, anio:a, mes:m}))
+    }
+  }
   const catSel = categorias.find(c=>String(c.id)===String(form.categoria_id))
   const esSalario = catSel?.tipo === 'salario'
   const esProveedor = catSel?.tipo === 'proveedor'
   const esCheque = form.metodo_pago === 'cheque'
+  const montoTotal = Number(String(form.monto).replace(/[^\d.]/g, '')) || 0
+  const variosCheques = cheques.length > 1
+  const sumaCheques = cheques.reduce((s, c) => s + (Number(c.monto) || 0), 0)
 
   const mut = useMutation({
     mutationFn: () => {
@@ -228,14 +279,29 @@ function ModalGasto({ gasto, anio, mes, categorias, empleados, proveedores, onCe
       payload.monto = Number(String(form.monto).replace(/[^\d.]/g, ''))
       if (!payload.empleado_id) delete payload.empleado_id
       if (!payload.proveedor_id) delete payload.proveedor_id
-      if (!payload.fecha_pago) delete payload.fecha_pago
-      if (!payload.cheque_fecha_cobro) delete payload.cheque_fecha_cobro
+      // Al editar se manda null para poder borrar una fecha mal cargada.
+      if (!payload.fecha_pago) { if (esEdicion) payload.fecha_pago = null; else delete payload.fecha_pago }
+      if (esCheque) {
+        payload.cheques = cheques.map(c => ({
+          numero: c.numero.trim(), banco: c.banco.trim(), fecha_cobro: c.fecha_cobro,
+          monto: variosCheques ? Number(c.monto) : null,
+        }))
+      }
       return esEdicion
         ? costosApi.actualizarGasto(gasto.id, payload).then(r=>r.data)
         : costosApi.crearGasto(payload).then(r=>r.data)
     },
     onSuccess: () => { toast.success(esEdicion?'Gasto actualizado':'Gasto registrado'); onGuardado() },
-    onError: (err) => { setErrores(err.response?.data||{}); toast.error(mensajeErrorApi(err, 'Revisá los campos marcados')) },
+    onError: (err) => {
+      const datos = err.response?.data || {}
+      // Un error por cheque llega como lista de objetos; se muestra uno solo.
+      if (Array.isArray(datos.cheques) && typeof datos.cheques[0] !== 'string') {
+        const primero = datos.cheques.find(c => c && Object.keys(c).length)
+        datos.cheques = primero ? Object.values(primero).flat()[0] : 'Revisá los cheques'
+      }
+      setErrores(datos)
+      toast.error(mensajeErrorApi(err, 'Revisá los campos marcados'))
+    },
   })
 
   const guardar = () => {
@@ -244,7 +310,12 @@ function ModalGasto({ gasto, anio, mes, categorias, empleados, proveedores, onCe
     const montoNum = Number(String(form.monto).replace(/[^\d.]/g, ''))
     if (!montoNum || montoNum <= 0) e.monto = 'Ingresá un monto válido'
     if (!form.categoria_id) e.categoria_id = 'Seleccioná una categoría'
-    if (esCheque && !form.cheque_fecha_cobro) e.cheque_fecha_cobro = 'Obligatoria para cheque'
+    if (esCheque) {
+      if (cheques.some(c => !c.fecha_cobro)) e.cheques = 'Cada cheque lleva su fecha de cobro'
+      else if (variosCheques && cheques.some(c => !(Number(c.monto) > 0))) e.cheques = 'Cada cheque lleva su monto'
+      else if (variosCheques && sumaCheques !== montoNum)
+        e.cheques = `Los cheques suman ${formatGs(sumaCheques)} y el gasto es de ${formatGs(montoNum)}`
+    }
     if (Object.keys(e).length) {
       setErrores(e)
       toast.error('Faltan datos: ' + Object.values(e).join(', '))
@@ -291,6 +362,12 @@ function ModalGasto({ gasto, anio, mes, categorias, empleados, proveedores, onCe
         </Campo>
       </div>}
 
+      <div style={{ gridColumn:'1/-1' }}>
+        <Campo label="Fecha del gasto / pago" error={errores.fecha_pago}>
+          <FInput type="date" value={form.fecha_pago}
+            onChange={e=>cambiarFecha(e.target.value)} error={errores.fecha_pago}/>
+        </Campo>
+      </div>
       <Campo label="Mes *">
         <FSelect value={form.mes} onChange={e=>sf('mes',Number(e.target.value))}>
           {MESES.slice(1).map((m,i)=><option key={i+1} value={i+1}>{m}</option>)}
@@ -318,26 +395,71 @@ function ModalGasto({ gasto, anio, mes, categorias, empleados, proveedores, onCe
         </FSelect>
       </Campo>
 
-      {esCheque && <>
-        <div style={{ gridColumn:'1/-1', marginTop:'4px', marginBottom:'4px' }}>
+      {esCheque && <div style={{ gridColumn:'1/-1', marginBottom:'14px' }}>
+        <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between',
+          marginTop:'4px', marginBottom:'8px' }}>
           <p style={{ fontSize:'11.5px', fontWeight:'500', color:C.goldDark,
-            textTransform:'uppercase', letterSpacing:'0.05em' }}>Datos del cheque</p>
+            textTransform:'uppercase', letterSpacing:'0.05em' }}>
+            {variosCheques ? `Cheques (${cheques.length})` : 'Datos del cheque'}
+          </p>
+          {variosCheques && (
+            <p style={{ fontSize:'11.5px', fontWeight:'500',
+              color: sumaCheques === montoTotal ? C.success : C.warning }}>
+              {sumaCheques === montoTotal
+                ? `Suman ${formatGs(sumaCheques)}`
+                : `Suman ${formatGs(sumaCheques)} de ${formatGs(montoTotal)}`}
+            </p>
+          )}
         </div>
-        <Campo label="Nº de cheque">
-          <FInput value={form.cheque_numero} onChange={e=>sf('cheque_numero',e.target.value)}
-            placeholder="Ej: 0012345"/>
-        </Campo>
-        <Campo label="Banco">
-          <FInput value={form.cheque_banco} onChange={e=>sf('cheque_banco',e.target.value)}
-            placeholder="Ej: Banco Itaú"/>
-        </Campo>
-        <div style={{ gridColumn:'1/-1' }}>
-          <Campo label="Fecha de cobro (plazo) *" error={errores.cheque_fecha_cobro}>
-            <FInput type="date" value={form.cheque_fecha_cobro}
-              onChange={e=>sf('cheque_fecha_cobro',e.target.value)} error={errores.cheque_fecha_cobro}/>
-          </Campo>
-        </div>
-      </>}
+        {cheques.map((c, i) => (
+          <div key={i} style={{ padding: variosCheques ? '10px 10px 0' : 0, marginBottom:'8px',
+            border: variosCheques ? `1px solid ${C.border}` : 'none', borderRadius:'9px',
+            background: variosCheques ? C.bgSec : 'transparent' }}>
+            {variosCheques && (
+              <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:'6px' }}>
+                <span style={{ fontSize:'11.5px', color:C.textSec, fontWeight:'500' }}>Cheque {i + 1}</span>
+                <button type="button" onClick={()=>quitarCheque(i)} title="Quitar este cheque"
+                  style={{ background:'none', border:'none', cursor:'pointer', color:C.danger,
+                    display:'flex', padding:'2px' }}><Trash2 size={13}/></button>
+              </div>
+            )}
+            <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'0 12px' }}>
+              <Campo label="Nº de cheque">
+                <FInput value={c.numero} onChange={e=>cambiarCheque(i,'numero',e.target.value)}
+                  placeholder="Ej: 0012345"/>
+              </Campo>
+              <Campo label="Banco">
+                <FInput value={c.banco} onChange={e=>cambiarCheque(i,'banco',e.target.value)}
+                  placeholder="Ej: Banco Itaú"/>
+              </Campo>
+              <div style={{ gridColumn: variosCheques ? 'auto' : '1/-1' }}>
+                <Campo label="Fecha de cobro (plazo) *">
+                  <FInput type="date" value={c.fecha_cobro}
+                    onChange={e=>cambiarCheque(i,'fecha_cobro',e.target.value)}
+                    error={errores.cheques && !c.fecha_cobro}/>
+                </Campo>
+              </div>
+              {variosCheques && (
+                <Campo label="Monto (Gs.) *">
+                  <FInput type="number" min="1" step="1000" value={c.monto}
+                    onChange={e=>cambiarCheque(i,'monto',e.target.value)}
+                    placeholder={String(Math.max(montoTotal - sumaCheques, 0))}
+                    error={errores.cheques && !(Number(c.monto) > 0)}
+                    style={{ textAlign:'right', fontWeight:'600' }}/>
+                </Campo>
+              )}
+            </div>
+          </div>
+        ))}
+        {errores.cheques && <p style={{ fontSize:'11.5px', color:C.danger, marginBottom:'6px' }}>
+          {String(errores.cheques)}</p>}
+        <button type="button" onClick={agregarCheque}
+          style={{ display:'flex', alignItems:'center', gap:'6px', padding:'7px 12px',
+            background:'transparent', border:`1px dashed ${C.gold}`, borderRadius:'8px',
+            color:C.goldDark, fontSize:'12.5px', cursor:'pointer' }}>
+          <Plus size={13}/> Agregar otro cheque
+        </button>
+      </div>}
 
       <div style={{ gridColumn:'1/-1' }}>
         <Campo label="Nº comprobante / factura">
@@ -370,9 +492,21 @@ function SolapaGastos() {
   const [mes,  setMes]  = useState(hoy.getMonth()+1)
   const [modal, setModal] = useState(false)
   const [editando, setEditando] = useState(null)
+  // Buscador: "San Carlos" trae todo lo pagado a ese proveedor. Por defecto
+  // busca en todos los meses — lo que se quiere ver es el historial, no un mes.
+  const [buscar, setBuscar] = useState('')
+  const [todosLosMeses, setTodosLosMeses] = useState(true)
+  const [tipo, setTipo] = useState('')
+  const buscarDeb = useDebounce(buscar.trim())
+  const historial = Boolean(buscarDeb) && todosLosMeses
+  const filtros = {
+    ...(historial ? {} : { anio, mes }),
+    ...(buscarDeb ? { buscar: buscarDeb } : {}),
+    ...(tipo ? { tipo } : {}),
+  }
 
-  const {data, isLoading} = useQuery({ queryKey:['gastos',anio,mes],
-    queryFn:()=>costosApi.gastos({anio,mes}).then(r=>r.data), staleTime:30_000 })
+  const {data, isLoading} = useQuery({ queryKey:['gastos',filtros],
+    queryFn:()=>costosApi.gastos(filtros).then(r=>r.data), staleTime:30_000 })
   const {data:catData} = useQuery({ queryKey:['cat-gasto'],
     queryFn:()=>costosApi.categorias({activas:1}).then(r=>r.data), staleTime:300_000 })
   const {data:empData} = useQuery({ queryKey:['empleados'],
@@ -389,7 +523,7 @@ function SolapaGastos() {
   // Al pasar a 'pagado', el backend lo excluye de las alertas y aquí se
   // refresca la consulta de alertas para que la notificación desaparezca.
   const pagarMut = useMutation({
-    mutationFn: (id) => costosApi.actualizarGasto(id, { estado: 'pagado', fecha_pago: new Date().toISOString().slice(0,10) }).then(r=>r.data),
+    mutationFn: (id) => costosApi.actualizarGasto(id, { estado: 'pagado', fecha_pago: hoyLocal() }).then(r=>r.data),
     onSuccess: () => {
       qc.invalidateQueries({queryKey:['gastos']})
       qc.invalidateQueries({queryKey:['costos-alertas']})
@@ -436,15 +570,42 @@ function SolapaGastos() {
       </div>
     )}
     <div style={{ display:'flex', gap:'10px', alignItems:'center', marginBottom:'16px', flexWrap:'wrap' }}>
-      <FSelect value={mes} onChange={e=>setMes(Number(e.target.value))} style={{ width:'140px' }}>
+      <FSelect value={mes} onChange={e=>setMes(Number(e.target.value))} disabled={historial}
+        style={{ width:'140px', opacity: historial ? 0.45 : 1 }}>
         {MESES.slice(1).map((m,i)=><option key={i+1} value={i+1}>{m}</option>)}
       </FSelect>
-      <FSelect value={anio} onChange={e=>setAnio(Number(e.target.value))} style={{ width:'90px' }}>
+      <FSelect value={anio} onChange={e=>setAnio(Number(e.target.value))} disabled={historial}
+        style={{ width:'90px', opacity: historial ? 0.45 : 1 }}>
         {anios.map(a=><option key={a} value={a}>{a}</option>)}
       </FSelect>
+      <div style={{ position:'relative', flex:'1 1 220px', maxWidth:'320px' }}>
+        <Search size={14} style={{ position:'absolute', left:'10px', top:'50%',
+          transform:'translateY(-50%)', color:C.textMuted, pointerEvents:'none' }}/>
+        <FInput value={buscar} onChange={e=>setBuscar(e.target.value)}
+          placeholder="Buscar proveedor, funcionario, descripción…"
+          style={{ paddingLeft:'30px', paddingRight: buscar ? '30px' : '10px' }}/>
+        {buscar && <button onClick={()=>setBuscar('')} title="Limpiar búsqueda"
+          style={{ position:'absolute', right:'6px', top:'50%', transform:'translateY(-50%)',
+            background:'none', border:'none', cursor:'pointer', color:C.textMuted,
+            display:'flex', padding:'4px' }}><X size={14}/></button>}
+      </div>
+      <FSelect value={tipo} onChange={e=>setTipo(e.target.value)} style={{ width:'150px' }}>
+        <option value="">Todas las categorías</option>
+        <option value="proveedor">Proveedores</option>
+        <option value="salario">Salarios</option>
+        <option value="servicio">Servicios</option>
+        <option value="otro">Otros gastos</option>
+      </FSelect>
+      {buscarDeb && <label style={{ display:'flex', alignItems:'center', gap:'6px',
+          fontSize:'12.5px', color:C.textSec, cursor:'pointer', whiteSpace:'nowrap' }}>
+        <input type="checkbox" checked={todosLosMeses} onChange={e=>setTodosLosMeses(e.target.checked)}/>
+        En todos los meses
+      </label>}
       <div style={{ marginLeft:'auto', display:'flex', alignItems:'center', gap:'12px' }}>
         <div style={{ textAlign:'right' }}>
-          <p style={{ fontSize:'11px', color:C.textMuted }}>Total del período</p>
+          <p style={{ fontSize:'11px', color:C.textMuted }}>
+            {historial ? 'Total encontrado' : 'Total del período'}
+          </p>
           <p style={{ fontSize:'18px', fontWeight:'700', color:C.danger }}>{formatGs(total)}</p>
         </div>
         <button onClick={()=>{setEditando(null);setModal(true)}}
@@ -460,12 +621,16 @@ function SolapaGastos() {
       {isLoading ? <div style={{ padding:'40px', textAlign:'center', color:C.textMuted }}>Cargando...</div>
       : gastos.length===0 ? <div style={{ padding:'50px', textAlign:'center', color:C.textMuted }}>
           <TrendingDown size={40} style={{ margin:'0 auto 12px', opacity:0.2 }}/>
-          <p style={{ fontSize:'15px', color:C.textSec }}>Sin gastos para {MESES[mes]} {anio}</p>
+          <p style={{ fontSize:'15px', color:C.textSec }}>
+            {buscarDeb
+              ? `Ningún gasto coincide con «${buscarDeb}»${historial ? '' : ` en ${MESES[mes]} ${anio}`}`
+              : `Sin gastos para ${MESES[mes]} ${anio}`}
+          </p>
         </div>
       : <div style={{ overflowX:'auto' }}>
           <table style={{ width:'100%', borderCollapse:'collapse' }}>
             <thead><tr style={{ background:C.bgSec }}>
-              {['Descripción','Categoría','Proveedor','Monto','Método','Estado',''].map(h=>(
+              {['Fecha','Descripción','Categoría','Proveedor','Monto','Método','Estado',''].map(h=>(
                 <th key={h} style={{ padding:'9px 14px', textAlign:'left', fontSize:'10.5px',
                   fontWeight:'500', letterSpacing:'0.06em', textTransform:'uppercase',
                   color:C.textMuted, borderBottom:`1px solid ${C.border}` }}>{h}</th>))}
@@ -473,11 +638,23 @@ function SolapaGastos() {
             <tbody>
               {gastos.map(g=>(
                 <tr key={g.id} style={{ borderBottom:`1px solid ${C.border}` }}>
+                  {/* La fecha del gasto si se cargó; si no, el día en que se registró */}
+                  <td style={{ padding:'10px 14px', whiteSpace:'nowrap' }}>
+                    {g.fecha_pago
+                      ? <p style={{ fontSize:'12.5px', color:C.text }}>{fmtDia(g.fecha_pago)}</p>
+                      : <p style={{ fontSize:'11.5px', color:C.textMuted }} title="El gasto no tiene fecha cargada">
+                          Registrado {new Date(g.fecha_creacion).toLocaleDateString('es-PY')}
+                        </p>}
+                    {/* Buscando en todo el historial, el mes al que se imputa */}
+                    {historial && <p style={{ fontSize:'11px', color:C.textMuted }}>{g.mes_label}</p>}
+                  </td>
                   <td style={{ padding:'10px 14px' }}>
                     <p style={{ fontSize:'13px', fontWeight:'500', color:C.text }}>{g.descripcion}</p>
-                    {g.metodo_pago==='cheque' && g.cheque_fecha_cobro &&
+                    {g.metodo_pago==='cheque' && g.proximo_cobro &&
                       <p style={{ fontSize:'11px', color:C.warning }}>
-                        Cheque cobra: {new Date(g.cheque_fecha_cobro).toLocaleDateString('es-PY')}
+                        {g.cheques?.length > 1
+                          ? `${g.cheques.length} cheques · el próximo cobra ${fmtDia(g.proximo_cobro)}`
+                          : `Cheque cobra: ${fmtDia(g.proximo_cobro)}`}
                         {typeof g.dias_cheque==='number' && g.dias_cheque>=0 ? ` (en ${g.dias_cheque}d)` : ''}
                       </p>}
                   </td>
@@ -641,7 +818,7 @@ function SolapaProveedores() {
 // ════════════════════════════════════════════════════════
 function ModalPedidoProveedor({ pedido, proveedores, onCerrar, onGuardado }) {
   const esEdicion = Boolean(pedido)
-  const hoyStr = new Date().toISOString().slice(0,10)
+  const hoyStr = hoyLocal()
   const [form, setForm] = useState({
     proveedor_id: pedido?.proveedor_id||'', descripcion: pedido?.descripcion||'',
     producto_id: pedido?.producto_id||'', cantidad_pedida: pedido?.cantidad_pedida||'',
@@ -950,7 +1127,7 @@ function SolapaPedidosProveedor() {
   const delMut = useMutation({ mutationFn: id=>costosApi.eliminarPedidoProveedor(id),
     onSuccess: ()=>{ qc.invalidateQueries({queryKey:['pedidos-prov']}); qc.invalidateQueries({queryKey:['costos-alertas']}); toast.success('Pedido eliminado') } })
 
-  const fmtFecha = f => f ? new Date(f).toLocaleDateString('es-PY') : '—'
+  const fmtFecha = f => fmtDia(f) || '—'
 
   return <div>
     <div style={{ display:'flex', justifyContent:'flex-end', marginBottom:'16px' }}>
@@ -1145,6 +1322,155 @@ function SolapaEmpleados() {
 // ════════════════════════════════════════════════════════
 // PÁGINA PRINCIPAL
 // ════════════════════════════════════════════════════════
+// ════════════════════════════════════════════════════════
+// SOLAPA COMISIONES BANCARIAS
+// ════════════════════════════════════════════════════════
+// Lo que el banco descuenta de cada cobro con tarjeta, QR o PIX: comisión,
+// su IVA y las retenciones de renta e IVA. La cuenta está en
+// backend/apps/caja/comisiones.py. Una tasa no se edita: se carga una nueva
+// con su fecha, y los cobros anteriores siguen con la de entonces.
+const pct = v => `${Number(v).toLocaleString('es-PY', { maximumFractionDigits:3 })} %`
+
+function ModalTasa({ tasa, onCerrar, onGuardado }) {
+  const [form, setForm] = useState({
+    porcentaje: String(tasa.porcentaje), iva_aparte: tasa.iva_aparte,
+    retencion_renta: String(tasa.retencion_renta), retencion_iva: String(tasa.retencion_iva),
+    vigente_desde: hoyLocal(),
+  })
+  const sf = (k, v) => setForm(f => ({ ...f, [k]: v }))
+  const num = v => Number(String(v).replace(',', '.'))
+  const mut = useMutation({
+    mutationFn: () => cajaApi.nuevaComision({
+      medio: tasa.medio, iva_aparte: form.iva_aparte, vigente_desde: form.vigente_desde,
+      porcentaje: num(form.porcentaje), retencion_renta: num(form.retencion_renta),
+      retencion_iva: num(form.retencion_iva),
+    }),
+    onSuccess: () => { toast.success('Tasa actualizada'); onGuardado() },
+    onError: err => toast.error(mensajeErrorApi(err, 'No se pudo guardar la tasa')),
+  })
+  // Un ejemplo con Gs. 1.000.000, para ver qué significa cada número.
+  const ejemplo = 1000000
+  const com = ejemplo * num(form.porcentaje) / 100
+  const descuento = (form.iva_aparte ? com * 1.1 : com)
+    + ejemplo * num(form.retencion_renta) / 100 + ejemplo / 11 * num(form.retencion_iva) / 100
+
+  return <Modal titulo={`Tasa de ${tasa.medio_label}`} onCerrar={onCerrar} ancho="460px">
+    <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'0 12px' }}>
+      <Campo label="Comisión (%)">
+        <FInput type="number" min="0" step="0.1" value={form.porcentaje}
+          onChange={e=>sf('porcentaje', e.target.value)} style={{ textAlign:'right' }}/>
+      </Campo>
+      <Campo label="IVA de la comisión">
+        <FSelect value={form.iva_aparte ? 'si' : 'no'} onChange={e=>sf('iva_aparte', e.target.value === 'si')}>
+          <option value="si">+ IVA (10 % aparte)</option>
+          <option value="no">IVA incluido</option>
+        </FSelect>
+      </Campo>
+      <Campo label="Retención de renta (% del cobro)">
+        <FInput type="number" min="0" step="0.1" value={form.retencion_renta}
+          onChange={e=>sf('retencion_renta', e.target.value)} style={{ textAlign:'right' }}/>
+      </Campo>
+      <Campo label="Retención de IVA (% del IVA)">
+        <FInput type="number" min="0" step="1" value={form.retencion_iva}
+          onChange={e=>sf('retencion_iva', e.target.value)} style={{ textAlign:'right' }}/>
+      </Campo>
+      <div style={{ gridColumn:'1/-1' }}>
+        <Campo label="Rige desde">
+          <FInput type="date" value={form.vigente_desde} onChange={e=>sf('vigente_desde', e.target.value)}/>
+        </Campo>
+      </div>
+    </div>
+    <p style={{ fontSize:'12px', color:C.textSec, margin:'0 0 6px' }}>
+      De un cobro de {formatGs(ejemplo)} el banco descontaría {formatGs(Math.round(descuento))}.
+    </p>
+    <p style={{ fontSize:'11.5px', color:C.textMuted, margin:'0 0 14px' }}>
+      Los cobros anteriores a esa fecha siguen calculándose con la tasa que tenían.
+    </p>
+    <div style={{ display:'flex', gap:'10px' }}>
+      <BtnCancelar onClick={onCerrar}/>
+      <BtnGuardar pending={mut.isPending} onClick={()=>mut.mutate()} label="Guardar tasa"/>
+    </div>
+  </Modal>
+}
+
+function SolapaComisiones() {
+  const qc = useQueryClient()
+  const [editando, setEditando] = useState(null)
+  const { data, isLoading } = useQuery({ queryKey:['comisiones-bancarias'],
+    queryFn: () => cajaApi.comisiones().then(r => r.data), staleTime:60_000 })
+
+  if (isLoading) return <div style={{ padding:'40px', textAlign:'center', color:C.textMuted }}>Cargando...</div>
+  const vigentes = data?.vigentes || []
+  const mes = data?.mes
+  const th = { padding:'9px 14px', textAlign:'left', fontSize:'10.5px', fontWeight:'500',
+    letterSpacing:'0.06em', textTransform:'uppercase', color:C.textMuted, borderBottom:`1px solid ${C.border}` }
+  const td = { padding:'10px 14px', fontSize:'13px', color:C.text }
+
+  return <div>
+    {mes && mes.total.cobrado > 0 && (
+      <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(170px,1fr))', gap:'10px',
+        marginBottom:'16px', padding:'14px 16px', background:C.bg, border:`1px solid ${C.border}`, borderRadius:'12px' }}>
+        {[
+          { label:'Cobrado con tarjetas, QR y PIX', valor:mes.total.cobrado, color:C.text },
+          { label:'Comisiones + IVA', valor:-mes.total.costo, color:C.danger, nota:'costo del local' },
+          { label:'Retenciones', valor:-mes.total.retenciones, color:C.warning, nota:'a cuenta de impuestos' },
+          { label:'Neto que acredita el banco', valor:mes.total.neto, color:C.success },
+        ].map(c => (
+          <div key={c.label}>
+            <p style={{ fontSize:'10.5px', fontWeight:'500', color:C.textMuted, textTransform:'uppercase',
+              letterSpacing:'0.06em', marginBottom:'4px' }}>{c.label}</p>
+            <p style={{ fontSize:'18px', fontWeight:'600', color:c.color }}>
+              {c.valor < 0 ? '− ' : ''}{formatGs(Math.abs(c.valor))}</p>
+            {c.nota && <p style={{ fontSize:'11px', color:C.textMuted }}>{c.nota}</p>}
+          </div>
+        ))}
+        <p style={{ gridColumn:'1/-1', fontSize:'11.5px', color:C.textMuted, margin:0 }}>
+          Del 1° del mes a hoy. El detalle cobro por cobro está en Dashboard → Reportes → Comisiones bancarias.
+        </p>
+      </div>
+    )}
+
+    <div style={{ background:C.bg, border:`1px solid ${C.border}`, borderRadius:'12px', overflow:'hidden' }}>
+      <div style={{ overflowX:'auto' }}>
+        <table style={{ width:'100%', borderCollapse:'collapse' }}>
+          <thead><tr style={{ background:C.bgSec }}>
+            {['Medio','Comisión','Ret. renta','Ret. IVA','Rige desde','Este mes',''].map(h =>
+              <th key={h} style={th}>{h}</th>)}
+          </tr></thead>
+          <tbody>
+            {vigentes.map(t => {
+              const delMes = mes?.por_medio?.find(m => m.medio === t.medio)
+              return <tr key={t.medio} style={{ borderBottom:`1px solid ${C.border}` }}>
+                <td style={{ ...td, fontWeight:'500' }}>{t.medio_label}</td>
+                <td style={td}>{pct(t.porcentaje)}{t.iva_aparte ? ' + IVA' : ' (IVA incluido)'}</td>
+                <td style={td}>{pct(t.retencion_renta)} del cobro</td>
+                <td style={td}>{pct(t.retencion_iva)} del IVA</td>
+                <td style={{ ...td, color:C.textSec }}>{fmtDia(t.vigente_desde)}</td>
+                <td style={{ ...td, fontSize:'12px', color:C.textSec }}>
+                  {delMes ? `${formatGs(delMes.cobrado)} → descuentan ${formatGs(delMes.costo + delMes.retenciones)}` : '—'}
+                </td>
+                <td style={td}>
+                  <button onClick={()=>setEditando(t)} title="Cargar una tasa nueva"
+                    style={{ width:'28px', height:'28px', borderRadius:'7px', cursor:'pointer',
+                      background:C.bgSec, border:`1px solid ${C.border}`, color:C.textSec,
+                      display:'flex', alignItems:'center', justifyContent:'center' }}><Edit2 size={12}/></button>
+                </td>
+              </tr>
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+    <p style={{ fontSize:'11.5px', color:C.textMuted, marginTop:'10px' }}>
+      La ganancia neta resta la comisión y su IVA. Las retenciones de renta e IVA no son una pérdida:
+      el banco las paga a la DNIT a nombre del local y se descuentan en la liquidación de impuestos.
+    </p>
+
+    {editando && <ModalTasa tasa={editando} onCerrar={()=>setEditando(null)}
+      onGuardado={()=>{ qc.invalidateQueries({queryKey:['comisiones-bancarias']}); setEditando(null) }}/>}
+  </div>
+}
+
 export default function CostosPage() {
   const [solapa, setSolapa] = useState('gastos')
   const SOLAPAS = [
@@ -1152,6 +1478,7 @@ export default function CostosPage() {
     { id:'proveedores',label:'Proveedores',      icon:<Building2 size={15}/> },
     { id:'pedidos',   label:'Pedidos a proveedor',icon:<Truck size={15}/> },
     { id:'empleados', label:'Empleados',          icon:<Users size={15}/> },
+    { id:'comisiones',label:'Comisiones bancarias', icon:<Landmark size={15}/> },
   ]
   return <Layout pageTitle="Costos Operativos" breadcrumbs={['Costos Operativos']}>
     <BannerAlertas/>
@@ -1169,6 +1496,7 @@ export default function CostosPage() {
     {solapa==='proveedores' && <SolapaProveedores/>}
     {solapa==='pedidos'     && <SolapaPedidosProveedor/>}
     {solapa==='empleados'   && <SolapaEmpleados/>}
+    {solapa==='comisiones'  && <SolapaComisiones/>}
     <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
   </Layout>
 }

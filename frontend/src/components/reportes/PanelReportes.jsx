@@ -1,9 +1,9 @@
 /**
  * PanelReportes
- * Botones para descargar los seis reportes en PDF o Excel:
+ * Botones para descargar los siete reportes en PDF o Excel:
  * Stock, Balance de Ventas, Extracto de Caja, Productos comercializados
  * (agregado y detalle por fecha), Ganancias (precio cobrado contra costo,
- * agregado y por venta) y Arqueo de Caja del día.
+ * agregado y por venta), Comisiones bancarias y Arqueo de Caja del día.
  * Pensado para incrustarse en el Dashboard (solo admin).
  *
  * Cada reporte declara qué controles de fecha usa (`usa` = 'rango' | 'dia' |
@@ -14,7 +14,8 @@
  */
 import { useState } from 'react'
 import { Package, BarChart3, Wallet, FileText, FileSpreadsheet,
-         Loader2, Boxes, CalendarClock, Calculator, TrendingUp, ListOrdered } from 'lucide-react'
+         Loader2, Boxes, CalendarClock, Calculator, TrendingUp, ListOrdered,
+         Landmark } from 'lucide-react'
 import { cajaApi } from '../../services/api'
 import toast from 'react-hot-toast'
 
@@ -51,6 +52,8 @@ const REPORTES = [
   { tipo:'ganancias', clave:'ganancias-detalle', label:'Ganancias por venta',
     desc:'Costo y ganancia de cada venta', icon:ListOrdered, nombre:'ganancias_detalle', usa:'rango',
     extra:{ detalle:1 } },
+  { tipo:'comisiones', label:'Comisiones bancarias',
+    desc:'Lo que descuenta el banco de tarjetas, QR y PIX', icon:Landmark, nombre:'comisiones_bancarias', usa:'rango' },
   { tipo:'arqueo', label:'Arqueo de Caja',     desc:'Conteo del día, para firmar', icon:Calculator,   nombre:'arqueo_caja',        usa:'dia' },
 ]
 

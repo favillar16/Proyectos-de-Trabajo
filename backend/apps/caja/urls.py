@@ -6,7 +6,7 @@ from .views import (
     ReporteStockView, ReporteVentasView, ReporteCajaView,
     ReporteProductosView, ReporteGananciasView, ReporteArqueoView,
     DevolucionResumenView, DevolucionesView, ReimprimirDevolucionView,
-    ClientesResumenView,
+    ClientesResumenView, ReporteComisionesView, ComisionesBancariasView,
 )
 from .kpis import KPIsDashboardView
 
@@ -39,4 +39,7 @@ urlpatterns = [
     # Lo invertido por cliente, para descuentos o regalos de fin de año.
     path('clientes/',                      ClientesResumenView.as_view(),  name='clientes-resumen'),
     path('reportes/arqueo/',               ReporteArqueoView.as_view(),    name='reporte-arqueo'),
+    # Lo que descuenta el banco de tarjetas, QR y PIX, y las tasas por medio.
+    path('reportes/comisiones/',           ReporteComisionesView.as_view(), name='reporte-comisiones'),
+    path('comisiones/',                    ComisionesBancariasView.as_view(), name='comisiones-bancarias'),
 ]

@@ -196,6 +196,9 @@ MEDIO_PAGO = {
     # procesamiento (E626), ver forma_procesamiento().
     'qr_debito':     PAGO_TARJETA_DEBITO,
     'qr_credito':    PAGO_TARJETA_CREDITO,
+    # PIX: el cliente transfiere desde su banco y el local recibe guaraníes.
+    # Decidido el 30/10/2026 como transferencia (5); no pide grupo de tarjeta.
+    'pix':           PAGO_TRANSFERENCIA,
 }
 
 # ─── Pago con tarjeta (grupo E620 gPagTarCD) ─────────────────────────────────

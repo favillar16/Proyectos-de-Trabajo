@@ -4,6 +4,7 @@ import { useAuthStore } from '../store/authStore'
 import toast from 'react-hot-toast'
 import { Eye, EyeOff, Loader2 } from 'lucide-react'
 import logoOgaPora from '../assets/logo_oga_pora.png'
+import FirmaAngiruTech from '../components/layout/FirmaAngiruTech'
 
 export default function LoginPage() {
   const [form, setForm] = useState({ username: '', password: '' })
@@ -189,6 +190,9 @@ export default function LoginPage() {
         }}>
           Oga Porã — Acabados de Construcción v1.0
         </p>
+        <div style={{ display: 'flex', justifyContent: 'center', marginTop: '10px' }}>
+          <FirmaAngiruTech />
+        </div>
       </div>
 
       <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>

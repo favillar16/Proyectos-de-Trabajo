@@ -23,7 +23,7 @@ import {
   AlertCircle, XCircle, CheckCircle,
   ChevronRight, RefreshCw, Clock,
   Truck, BarChart3, Banknote,
-  ArrowRightLeft, RotateCcw, QrCode,
+  ArrowRightLeft, RotateCcw, QrCode, Zap,
 } from 'lucide-react'
 import Layout from '../components/layout/Layout'
 import PanelReportes from '../components/reportes/PanelReportes'
@@ -270,7 +270,7 @@ function BarraDistribucion({ items, total }) {
   const COLORES = [C.gold, C.success, C.info, C.warning]
   const ICONOS  = { efectivo:<Banknote size={14}/>, debito:<CreditCard size={14}/>,
     credito:<CreditCard size={14}/>, transferencia:<ArrowRightLeft size={14}/>,
-    qr_debito:<QrCode size={14}/>, qr_credito:<QrCode size={14}/> }
+    qr_debito:<QrCode size={14}/>, qr_credito:<QrCode size={14}/>, pix:<Zap size={14}/> }
 
   return (
     <div>
@@ -690,9 +690,21 @@ function DashboardAdmin({ navigate }) {
               { label:'Costo de lo vendido', valor:-ganancia.costo, color:C.danger },
               { label:'Ganancia bruta', valor:ganancia.ganancia_bruta,
                 color: ganancia.ganancia_bruta >= 0 ? C.success : C.danger,
-                nota: ganancia.margen != null ? `Margen ${Math.round(ganancia.margen)}%` : null },
+                // Recargo (sobre el costo) es como el local piensa sus precios;
+                // el margen (sobre lo cobrado) sale más bajo y solo, confundía.
+                nota: ganancia.recargo != null
+                  ? `${Math.round(ganancia.recargo)}% sobre el costo · ${Math.round(ganancia.margen)}% de lo cobrado`
+                  : null },
               { label:'Gastos del mes', valor:-ganancia.gastos, color:C.danger,
-                nota:'sin compras de mercadería' },
+                nota: ganancia.pagos_proveedor > 0
+                  ? `no incluye ${formatGs(ganancia.pagos_proveedor, true)} pagados a proveedores: lo vendido ya resta su costo`
+                  : 'sin compras de mercadería' },
+              // Lo que se queda el banco de tarjetas, QR y PIX (comisión + IVA).
+              // Las retenciones no restan: se recuperan al liquidar impuestos.
+              { label:'Comisiones bancarias', valor:-(ganancia.comisiones_bancarias||0), color:C.danger,
+                nota: ganancia.retenciones_bancarias > 0
+                  ? `+ ${formatGs(ganancia.retenciones_bancarias, true)} retenidos a cuenta de impuestos`
+                  : 'tarjetas, QR y PIX' },
               { label:'Ganancia neta', valor:ganancia.ganancia_neta, grande:true,
                 color: ganancia.ganancia_neta >= 0 ? C.success : C.danger },
             ].map(c => (
@@ -719,7 +731,7 @@ function DashboardAdmin({ navigate }) {
               {ganancia.ingresos_sin_costo > 0 && (
                 <span style={{ color:C.warning }}>
                   {' '}{formatGs(ganancia.ingresos_sin_costo)} cobrados de productos sin costo
-                  cargado no entran en la ganancia: cargá su costo en Productos.
+                  cargado no entran en la ganancia (no se sabe cuánto dejaron): cargá su costo en Productos.
                 </span>
               )}
             </p>

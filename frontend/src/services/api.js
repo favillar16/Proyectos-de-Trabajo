@@ -178,6 +178,10 @@ export const cajaApi = {
     params: { formato, ...params }, responseType: 'blob',
   }),
 
+  // Comisiones bancarias: tasas vigentes por medio y una tasa nueva
+  comisiones:      ()          => api.get('/caja/comisiones/'),
+  nuevaComision:   (data)      => api.post('/caja/comisiones/', data),
+
   // Reportes — descargan un archivo (PDF o Excel)
   descargarReporte: (tipo, formato, params = {}) =>
     api.get(`/caja/reportes/${tipo}/`, {

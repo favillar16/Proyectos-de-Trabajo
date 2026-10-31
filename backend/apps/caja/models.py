@@ -78,6 +78,9 @@ class Pago(models.Model):
     # siendo tarjeta de débito / crédito — ver codigos.MEDIO_PAGO.
     MEDIO_QR_DEBITO = 'qr_debito'
     MEDIO_QR_CREDITO = 'qr_credito'
+    # Transferencia instantánea brasileña: el cliente paga en reales desde su
+    # banco y el local recibe guaraníes. Para el SIFEN es una transferencia.
+    MEDIO_PIX = 'pix'
     # Cobro con más de un medio distinto (cheque + efectivo, …). No es un
     # medio en sí: el detalle está en las líneas (`PagoMedio`), que es lo que
     # suman el cierre, el arqueo y los reportes por medio.
@@ -91,6 +94,7 @@ class Pago(models.Model):
         (MEDIO_CHEQUE, 'Cheque'),
         (MEDIO_QR_DEBITO, 'QR Débito'),
         (MEDIO_QR_CREDITO, 'QR Crédito'),
+        (MEDIO_PIX, 'PIX'),
     ]
     MEDIOS_Y_MIXTO = MEDIOS + [(MEDIO_MIXTO, 'Pago mixto')]
 
@@ -594,3 +598,54 @@ class ItemDevolucion(models.Model):
 
     def __str__(self):
         return f'{self.variante} × {self.cantidad} = {self.monto}'
+
+
+class ComisionBancaria(models.Model):
+    """
+    Lo que el banco o la procesadora se queda de cada cobro con un medio
+    bancario (tarjeta, QR, PIX), con la fecha desde la que rige.
+
+    La propietaria lo vio en la liquidación del banco: de un cobro por QR
+    crédito de Gs. 2.778.000 llegaron 2.633.291, porque además de la comisión
+    (3 %) descuentan el IVA de esa comisión (10 %), una retención de renta
+    (1 % del cobro) y una retención de IVA (10 % del IVA que trae el cobro,
+    o sea 1/110). La cuenta está en `apps/caja/comisiones.py`.
+
+    Una tasa no se edita: cuando el banco la cambia se carga otra con su
+    `vigente_desde`. Así un cobro de hace tres meses se sigue calculando con
+    la tasa de entonces, y la ganancia de ese mes no cambia sola.
+    """
+    medio = models.CharField(max_length=20, choices=Pago.MEDIOS)
+    vigente_desde = models.DateField()
+    porcentaje = models.DecimalField(
+        max_digits=6, decimal_places=3, validators=[MinValueValidator(0)],
+        help_text='Comisión del banco, en % del cobro.')
+    iva_aparte = models.BooleanField(
+        default=True,
+        help_text='True = "x % + IVA": el banco cobra además el 10 % de IVA sobre '
+                  'la comisión. False = el porcentaje ya trae el IVA adentro.')
+    retencion_renta = models.DecimalField(
+        max_digits=6, decimal_places=3, default=1, validators=[MinValueValidator(0)],
+        help_text='Retención de renta, en % del cobro.')
+    retencion_iva = models.DecimalField(
+        max_digits=6, decimal_places=3, default=10, validators=[MinValueValidator(0)],
+        help_text='Retención de IVA, en % del IVA incluido en el cobro (cobro / 11).')
+    registrada_por = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL,
+        null=True, blank=True, related_name='+')
+    fecha_creacion = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'caja_comisiones_bancarias'
+        ordering = ['medio', '-vigente_desde']
+        verbose_name = 'Comisión bancaria'
+        verbose_name_plural = 'Comisiones bancarias'
+        constraints = [
+            models.UniqueConstraint(fields=['medio', 'vigente_desde'],
+                                    name='unique_comision_medio_vigencia'),
+        ]
+
+    def __str__(self):
+        iva = ' + IVA' if self.iva_aparte else ''
+        return (f'{self.get_medio_display()}: {self.porcentaje.normalize()} %{iva} '
+                f'desde {self.vigente_desde:%d/%m/%Y}')

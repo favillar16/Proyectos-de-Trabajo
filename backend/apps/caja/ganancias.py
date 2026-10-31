@@ -12,6 +12,7 @@ Acá se calcula como se hace en un comercio:
 
   ganancia bruta = lo cobrado por cada ítem − su costo de adquisición
   ganancia neta  = ganancia bruta − gastos operativos del período
+                   − comisiones bancarias (comisión + su IVA, ver comisiones.py)
 
 Tres decisiones que conviene no deshacer:
 
@@ -117,6 +118,19 @@ def gastos_operativos(desde: date, hasta: date) -> Decimal:
     que corta un mes por la mitad se toma la parte proporcional a los días:
     el alquiler de octubre no se gasta entero el 1° de octubre.
     """
+    return _gastos_prorrateados(desde, hasta, proveedor=False)
+
+
+def pagos_proveedor(desde: date, hasta: date) -> Decimal:
+    """
+    Lo pagado a proveedores en el período, prorrateado igual que los gastos.
+    No resta de la ganancia: se muestra para que quien lee el reporte vea
+    adónde fue esa plata y por qué no está en "gastos operativos".
+    """
+    return _gastos_prorrateados(desde, hasta, proveedor=True)
+
+
+def _gastos_prorrateados(desde: date, hasta: date, proveedor: bool) -> Decimal:
     from apps.costos.models import CategoriaGasto, GastoOperativo
 
     total = Decimal('0')
@@ -127,8 +141,11 @@ def gastos_operativos(desde: date, hasta: date) -> Decimal:
         fin = min(hasta, date(dia.year, dia.month, dias_mes))
         del_mes = (GastoOperativo.objects
                    .filter(anio=dia.year, mes=dia.month)
-                   .exclude(estado=GastoOperativo.ESTADO_CANCELADO)
-                   .exclude(categoria__tipo=CategoriaGasto.TIPO_PROVEEDOR))
+                   .exclude(estado=GastoOperativo.ESTADO_CANCELADO))
+        if proveedor:
+            del_mes = del_mes.filter(categoria__tipo=CategoriaGasto.TIPO_PROVEEDOR)
+        else:
+            del_mes = del_mes.exclude(categoria__tipo=CategoriaGasto.TIPO_PROVEEDOR)
         suma = sum((g.monto for g in del_mes), Decimal('0'))
         total += suma * Decimal((fin - ini).days + 1) / Decimal(dias_mes)
         dia = date(dia.year, dia.month, dias_mes) + timedelta(days=1)
@@ -136,7 +153,15 @@ def gastos_operativos(desde: date, hasta: date) -> Decimal:
 
 
 def resumen(desde: date, hasta: date, con_lineas=False) -> dict:
-    """Los totales del período. `margen` es sobre lo cobrado, en %."""
+    """
+    Los totales del período, en Gs. y en %.
+
+    La misma ganancia se mide de dos maneras, y las dos van porque se leen
+    distinto: `recargo` es sobre el costo (lo que el local le suma al costo
+    para poner el precio: un 32 % de recargo) y `margen` es sobre lo cobrado
+    (de cada 100 Gs. que entran, cuántos quedan: ese mismo 32 % da 24 %).
+    Mostrar solo el margen hacía pensar que la cuenta estaba mal.
+    """
     todas = list(lineas(desde, hasta))
     con_costo = [l for l in todas if l.costo is not None]
 
@@ -145,6 +170,10 @@ def resumen(desde: date, hasta: date, con_lineas=False) -> dict:
     costo = sum((l.costo for l in con_costo), Decimal('0'))
     bruta = ingresos_con_costo - costo
     gastos = gastos_operativos(desde, hasta)
+    # Lo que se queda el banco de los cobros con tarjeta, QR y PIX. Las
+    # retenciones no restan: son impuesto adelantado (ver comisiones.py).
+    from . import comisiones
+    banco = comisiones.resumen(desde, hasta)['total']
 
     datos = {
         'ingresos':           ingresos,
@@ -153,8 +182,12 @@ def resumen(desde: date, hasta: date, con_lineas=False) -> dict:
         'costo':              costo,
         'ganancia_bruta':     bruta,
         'margen':             (bruta / ingresos_con_costo * 100) if ingresos_con_costo else None,
+        'recargo':            (bruta / costo * 100) if costo else None,
         'gastos':             gastos,
-        'ganancia_neta':      bruta - gastos,
+        'pagos_proveedor':    pagos_proveedor(desde, hasta),
+        'comisiones_bancarias': banco.costo,
+        'retenciones_bancarias': banco.retenciones,
+        'ganancia_neta':      bruta - gastos - banco.costo,
     }
     if con_lineas:
         datos['lineas'] = todas

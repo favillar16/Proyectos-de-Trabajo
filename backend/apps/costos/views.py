@@ -7,12 +7,12 @@ from rest_framework.response import Response
 from django.contrib.auth import get_user_model
 from django.shortcuts import get_object_or_404
 from django.db import transaction
-from django.db.models import Sum, Count, F as models_F
+from django.db.models import Q, Sum, Count, F as models_F
 from datetime import date, timedelta
 
 from rest_framework import serializers
 from .models import (
-    CategoriaGasto, Empleado, GastoOperativo,
+    CategoriaGasto, ChequeGasto, Empleado, GastoOperativo,
     Proveedor, PedidoProveedor,
 )
 from apps.productos.models import Producto
@@ -52,6 +52,22 @@ class EmpleadoSerializer(serializers.ModelSerializer):
         read_only_fields = ["fecha_creacion"]
 
 
+class ChequeGastoSerializer(serializers.ModelSerializer):
+    id          = serializers.IntegerField(read_only=True)
+    numero      = serializers.CharField(max_length=50, required=False, allow_blank=True, default="")
+    banco       = serializers.CharField(max_length=80, required=False, allow_blank=True, default="")
+    fecha_cobro = serializers.DateField(error_messages={
+                      "required": "La fecha de cobro es obligatoria para cada cheque.",
+                      "null": "La fecha de cobro es obligatoria para cada cheque."})
+    # Opcional solo cuando es un único cheque: entonces vale el gasto entero.
+    monto       = serializers.DecimalField(max_digits=14, decimal_places=2,
+                      min_value=Decimal("0.01"), required=False, allow_null=True)
+
+    class Meta:
+        model  = ChequeGasto
+        fields = ["id","numero","banco","fecha_cobro","monto"]
+
+
 class GastoReadSerializer(serializers.ModelSerializer):
     categoria_nombre = serializers.CharField(source="categoria.nombre",  read_only=True)
     categoria_tipo   = serializers.CharField(source="categoria.tipo",    read_only=True)
@@ -61,6 +77,8 @@ class GastoReadSerializer(serializers.ModelSerializer):
     metodo_pago_label= serializers.CharField(source="get_metodo_pago_display", read_only=True)
     mes_label        = serializers.CharField(source="periodo_label",      read_only=True)
     dias_cheque      = serializers.IntegerField(source="dias_para_cobro_cheque", read_only=True)
+    cheques          = ChequeGastoSerializer(many=True, read_only=True)
+    proximo_cobro    = serializers.SerializerMethodField()
     registrado_por_nombre = serializers.CharField(
         source="registrado_por.nombre_completo", read_only=True)
 
@@ -72,7 +90,7 @@ class GastoReadSerializer(serializers.ModelSerializer):
             "proveedor_id","proveedor_nombre",
             "estado","estado_label","fecha_pago",
             "metodo_pago","metodo_pago_label",
-            "cheque_numero","cheque_banco","cheque_fecha_cobro","dias_cheque",
+            "cheques","proximo_cobro","dias_cheque",
             "comprobante","notas",
             "registrado_por_nombre","fecha_creacion"]
 
@@ -80,6 +98,9 @@ class GastoReadSerializer(serializers.ModelSerializer):
         return obj.empleado.nombre_completo if obj.empleado else None
     def get_proveedor_nombre(self, obj):
         return obj.proveedor.nombre if obj.proveedor else None
+    def get_proximo_cobro(self, obj):
+        cheque = obj.proximo_cheque
+        return cheque.fecha_cobro.isoformat() if cheque else None
 
 
 class GastoWriteSerializer(serializers.Serializer):
@@ -100,20 +121,94 @@ class GastoWriteSerializer(serializers.Serializer):
     fecha_pago   = serializers.DateField(required=False, allow_null=True)
     metodo_pago  = serializers.ChoiceField(choices=GastoOperativo.METODOS_PAGO,
                        required=False, allow_blank=True, default="")
-    cheque_numero      = serializers.CharField(max_length=50, required=False, allow_blank=True, default="")
-    cheque_banco       = serializers.CharField(max_length=80, required=False, allow_blank=True, default="")
-    cheque_fecha_cobro = serializers.DateField(required=False, allow_null=True)
+    # Un pago puede ir en varios cheques, cada uno con su plazo.
+    cheques      = ChequeGastoSerializer(many=True, required=False)
+    # Formato viejo, de un solo cheque: se sigue aceptando y se convierte.
+    cheque_numero      = serializers.CharField(max_length=50, required=False, allow_blank=True, write_only=True)
+    cheque_banco       = serializers.CharField(max_length=80, required=False, allow_blank=True, write_only=True)
+    cheque_fecha_cobro = serializers.DateField(required=False, allow_null=True, write_only=True)
     comprobante  = serializers.CharField(max_length=100, required=False, allow_blank=True, default="")
     notas        = serializers.CharField(required=False, allow_blank=True, default="")
 
     def validate(self, attrs):
-        # Si es cheque, la fecha de cobro es obligatoria
-        if attrs.get('metodo_pago') == GastoOperativo.PAGO_CHEQUE:
-            if not attrs.get('cheque_fecha_cobro'):
-                raise serializers.ValidationError({
-                    'cheque_fecha_cobro': 'La fecha de cobro es obligatoria para pagos con cheque.'
-                })
+        """
+        Deja en `attrs['cheques']` la lista final de cheques, o no la deja si
+        el pedido no toca los cheques (un PATCH que solo marca "pagado").
+
+        Al editar, `self.instance` es el gasto: el método y el monto que no
+        vienen en el PATCH se toman de ahí.
+        """
+        gasto = self.instance
+        viejo = {k: attrs.pop(k) for k in ("cheque_numero", "cheque_banco", "cheque_fecha_cobro")
+                 if k in attrs}
+        if "cheques" not in attrs and viejo.get("cheque_fecha_cobro"):
+            attrs["cheques"] = [{"numero": viejo.get("cheque_numero", ""),
+                                 "banco": viejo.get("cheque_banco", ""),
+                                 "fecha_cobro": viejo["cheque_fecha_cobro"], "monto": None}]
+
+        metodo = attrs.get("metodo_pago", gasto.metodo_pago if gasto else "")
+        monto = attrs.get("monto", gasto.monto if gasto else None)
+
+        if metodo != GastoOperativo.PAGO_CHEQUE:
+            # Pasar a otro método borra los cheques que hubiera.
+            if gasto is None or "metodo_pago" in attrs:
+                attrs["cheques"] = []
+            else:
+                attrs.pop("cheques", None)
+            return attrs
+
+        if "cheques" not in attrs:
+            # El PATCH no trae cheques: valen los guardados, que tienen que
+            # seguir cuadrando si cambió el monto o si recién pasa a cheque.
+            if gasto is None or "monto" in attrs or "metodo_pago" in attrs:
+                guardados = list(gasto.cheques.all()) if gasto else []
+                if not guardados:
+                    raise serializers.ValidationError(
+                        {"cheques": "Cargá al menos un cheque con su fecha de cobro."})
+                if len(guardados) == 1:
+                    attrs["cheques"] = [{"numero": guardados[0].numero, "banco": guardados[0].banco,
+                                         "fecha_cobro": guardados[0].fecha_cobro, "monto": monto}]
+                elif sum(c.monto for c in guardados) != monto:
+                    raise serializers.ValidationError(
+                        {"cheques": "Los cheques no suman el monto del gasto."})
+            return attrs
+
+        cheques = attrs["cheques"]
+        if not cheques:
+            raise serializers.ValidationError(
+                {"cheques": "Cargá al menos un cheque con su fecha de cobro."})
+        if len(cheques) == 1 and not cheques[0].get("monto"):
+            cheques[0]["monto"] = monto
+        if any(not c.get("monto") for c in cheques):
+            raise serializers.ValidationError(
+                {"cheques": "Con varios cheques, cada uno lleva su monto."})
+        suma = sum(Decimal(c["monto"]) for c in cheques)
+        if suma != monto:
+            raise serializers.ValidationError({"cheques":
+                f"Los cheques suman Gs. {_gs(suma)} y el gasto es de Gs. {_gs(monto)}."})
+        numeros = [c["numero"].strip() for c in cheques if c.get("numero", "").strip()]
+        if len(numeros) != len(set(numeros)):
+            raise serializers.ValidationError({"cheques": "Hay dos cheques con el mismo número."})
         return attrs
+
+
+def _gs(valor):
+    return f"{valor:,.0f}".replace(",", ".")
+
+
+def _guardar_cheques(gasto, cheques):
+    """Reemplaza los cheques del gasto. `None` = el pedido no los tocó."""
+    if cheques is None:
+        return
+    gasto.cheques.all().delete()
+    ChequeGasto.objects.bulk_create([
+        ChequeGasto(gasto=gasto, numero=c.get("numero", ""), banco=c.get("banco", ""),
+                    fecha_cobro=c["fecha_cobro"], monto=c["monto"])
+        for c in cheques
+    ])
+
+
+_GASTO_RELACIONES = ("categoria", "empleado", "proveedor", "registrado_por")
 
 
 class PedidoProveedorReadSerializer(serializers.ModelSerializer):
@@ -277,34 +372,60 @@ class EmpleadoDetailView(views.APIView):
 class GastoListCreateView(views.APIView):
     permission_classes = [EsAdmin]
     def get(self, request):
-        qs = GastoOperativo.objects.select_related("categoria","empleado","proveedor","registrado_por")
+        qs = (GastoOperativo.objects.select_related(*_GASTO_RELACIONES)
+              .prefetch_related("cheques"))
         for param, field in [("anio","anio"),("mes","mes"),("estado","estado"),
                              ("categoria","categoria_id"),("proveedor","proveedor_id"),
                              ("metodo_pago","metodo_pago")]:
             v = request.query_params.get(param)
             if v: qs = qs.filter(**{field: v})
-        total = float(qs.aggregate(t=Sum("monto"))["t"] or 0)
+        # Por tipo de categoría: "todo lo de proveedores", "todos los salarios".
+        tipo = request.query_params.get("tipo")
+        if tipo: qs = qs.filter(categoria__tipo=tipo)
+        # Un solo campo que cruza a quién se le pagó y qué se pagó: quien busca
+        # "San Carlos" quiere ver todo lo pagado a ese proveedor, lo haya
+        # elegido en el desplegable o lo haya escrito en la descripción.
+        buscar = (request.query_params.get("buscar") or "").strip()
+        for palabra in buscar.split():
+            qs = qs.filter(
+                Q(descripcion__icontains=palabra) | Q(proveedor__nombre__icontains=palabra)
+                | Q(empleado__nombre_completo__icontains=palabra)
+                | Q(categoria__nombre__icontains=palabra) | Q(comprobante__icontains=palabra)
+                | Q(cheques__numero__icontains=palabra) | Q(notas__icontains=palabra))
+        if buscar:
+            qs = qs.distinct()   # el cruce con los cheques repite el gasto
+        # Un gasto cancelado se sigue listando (con su estado), pero no se gastó.
+        total = float(qs.exclude(estado=GastoOperativo.ESTADO_CANCELADO)
+                      .aggregate(t=Sum("monto"))["t"] or 0)
         return Response({"results": GastoReadSerializer(qs, many=True).data,
                          "count": qs.count(), "total": total})
     def post(self, request):
         s = GastoWriteSerializer(data=request.data)
         if not s.is_valid(): return Response(s.errors, status=400)
-        gasto = GastoOperativo.objects.create(registrado_por=request.user, **s.validated_data)
+        datos = dict(s.validated_data)
+        cheques = datos.pop("cheques", None)
+        with transaction.atomic():
+            gasto = GastoOperativo.objects.create(registrado_por=request.user, **datos)
+            _guardar_cheques(gasto, cheques)
         return Response(GastoReadSerializer(gasto).data, status=201)
 
 
 class GastoDetailView(views.APIView):
     permission_classes = [EsAdmin]
     def get(self, request, pk):
-        g = get_object_or_404(GastoOperativo.objects.select_related("categoria","empleado","proveedor","registrado_por"), pk=pk)
+        g = get_object_or_404(GastoOperativo.objects.select_related(*_GASTO_RELACIONES), pk=pk)
         return Response(GastoReadSerializer(g).data)
     def patch(self, request, pk):
         g = get_object_or_404(GastoOperativo, pk=pk)
-        s = GastoWriteSerializer(data=request.data, partial=True)
+        s = GastoWriteSerializer(g, data=request.data, partial=True)
         if not s.is_valid(): return Response(s.errors, status=400)
-        for campo, valor in s.validated_data.items(): setattr(g, campo, valor)
-        g.save()
-        return Response(GastoReadSerializer(GastoOperativo.objects.select_related("categoria","empleado","proveedor","registrado_por").get(pk=pk)).data)
+        datos = dict(s.validated_data)
+        cheques = datos.pop("cheques", None)
+        with transaction.atomic():
+            for campo, valor in datos.items(): setattr(g, campo, valor)
+            g.save()
+            _guardar_cheques(g, cheques)
+        return Response(GastoReadSerializer(GastoOperativo.objects.select_related(*_GASTO_RELACIONES).get(pk=pk)).data)
     def delete(self, request, pk):
         get_object_or_404(GastoOperativo, pk=pk).delete()
         return Response(status=204)
@@ -451,24 +572,29 @@ class AlertasCostosView(views.APIView):
         hoy = date.today()
         limite = hoy + timedelta(days=dias)
 
-        # Cheques: pendientes con fecha de cobro <= límite (incluye vencidos)
-        cheques_qs = GastoOperativo.objects.filter(
-            metodo_pago=GastoOperativo.PAGO_CHEQUE,
-            cheque_fecha_cobro__isnull=False,
-            cheque_fecha_cobro__lte=limite,
-        ).exclude(estado=GastoOperativo.ESTADO_CANCELADO).select_related("proveedor")
+        # Cheques que se cobran dentro de `dias`, y los que se cobraron en los
+        # últimos `dias` (por si no había fondos). Uno cobrado hace un mes ya
+        # no es un aviso: es historia, y dejaría el banner lleno para siempre.
+        cheques_qs = ChequeGasto.objects.filter(
+            gasto__metodo_pago=GastoOperativo.PAGO_CHEQUE,
+            fecha_cobro__gte=hoy - timedelta(days=dias),
+            fecha_cobro__lte=limite,
+        ).exclude(gasto__estado=GastoOperativo.ESTADO_CANCELADO).select_related("gasto__proveedor")
 
         cheques = []
-        for g in cheques_qs:
-            d = (g.cheque_fecha_cobro - hoy).days
+        for ch in cheques_qs:
+            g = ch.gasto
+            d = (ch.fecha_cobro - hoy).days
             cheques.append({
-                "id": g.id,
+                "id": ch.id,
+                "gasto_id": g.id,
                 "proveedor": g.proveedor.nombre if g.proveedor else (g.descripcion or "Proveedor"),
-                "monto": float(g.monto),
-                "fecha_cobro": g.cheque_fecha_cobro.isoformat(),
+                "monto": float(ch.monto),
+                "fecha_cobro": ch.fecha_cobro.isoformat(),
                 "dias": d,
-                "cheque_numero": g.cheque_numero,
-                "cheque_banco": g.cheque_banco,
+                "cheque_numero": ch.numero,
+                "cheque_banco": ch.banco,
+                "periodo": g.periodo_label,
                 "vencido": d < 0,
             })
 
@@ -493,8 +619,24 @@ class AlertasCostosView(views.APIView):
         cheques.sort(key=lambda x: x["dias"])
         pedidos.sort(key=lambda x: x["dias"])
 
+        # El banner de Costos muestra un aviso por proveedor con sus cheques
+        # adentro. Lo esperaba desde siempre y nadie lo armaba: por eso los
+        # avisos de cheques nunca aparecían, solo los de pedidos.
+        grupos = {}
+        for ch in cheques:
+            grp = grupos.setdefault(ch["proveedor"], {
+                "proveedor": ch["proveedor"], "cantidad": 0, "monto_total": 0.0,
+                "proximo_dias": ch["dias"], "hay_vencidos": False, "cheques": []})
+            grp["cantidad"] += 1
+            grp["monto_total"] += ch["monto"]
+            grp["hay_vencidos"] = grp["hay_vencidos"] or ch["vencido"]
+            if ch["dias"] >= 0 and (grp["proximo_dias"] < 0 or ch["dias"] < grp["proximo_dias"]):
+                grp["proximo_dias"] = ch["dias"]
+            grp["cheques"].append(ch)
+
         return Response({
             "cheques":  cheques,
+            "cheques_agrupados": list(grupos.values()),
             "pedidos":  pedidos,
             "total_alertas": len(cheques) + len(pedidos),
         })

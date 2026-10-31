@@ -21,6 +21,7 @@ import { useAuthStore } from '../../store/authStore'
 import { useDevice } from '../../hooks/useDevice'
 import logoOgaPora from '../../assets/logo_oga_pora.png'
 import AyudaContextual from '../ayuda/AyudaContextual'
+import FirmaAngiruTech from './FirmaAngiruTech'
 
 // ─── Paleta inline (espejo de design-system.css) ─────────────────────────────
 // Se definen aquí para poder usarlos en lógica JS (estados hover)
@@ -623,6 +624,10 @@ function PieCopyright({ noPadding }) {
       <span style={{ fontSize: '11.5px', color: colorTexto, opacity: 0.7 }}>
         Sistema de Gestión Comercial v1.0
       </span>
+      {/* Renglón propio: en la tablet no entra al lado del copyright */}
+      <div style={{ flexBasis: '100%', display: 'flex', justifyContent: 'center', marginTop: '4px' }}>
+        <FirmaAngiruTech />
+      </div>
     </footer>
   )
 }

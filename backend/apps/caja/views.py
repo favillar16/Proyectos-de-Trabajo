@@ -1398,3 +1398,93 @@ class ReporteArqueoView(views.APIView):
         return rep.responder_reporte(reporte, _formato(request),
                                      f'arqueo_caja_{dia.strftime("%Y%m%d")}',
                                      tamanio=_tamanio(request))
+
+class ReporteComisionesView(views.APIView):
+    """
+    Lo que descontó el banco de cada cobro con tarjeta, QR o PIX, como la
+    liquidación del banco. Ver apps/caja/comisiones.py.
+    """
+    permission_classes = [EsAdmin]
+
+    def get(self, request):
+        desde, hasta = _parse_rango(request)
+        reporte = rep.reporte_comisiones(desde, hasta)
+        return rep.responder_reporte(reporte, _formato(request), 'comisiones_bancarias',
+                                     tamanio=_tamanio(request))
+
+
+class ComisionesBancariasView(views.APIView):
+    """
+    GET  /caja/comisiones/ — la tasa vigente de cada medio bancario, con el
+         historial, y el desglose del mes en curso.
+    POST /caja/comisiones/ — una tasa nueva ({medio, porcentaje, iva_aparte,
+         retencion_renta, retencion_iva, vigente_desde?}). No se edita la
+         anterior: rige hasta el día antes de la nueva (ver ComisionBancaria).
+    """
+    permission_classes = [EsAdmin]
+
+    def get(self, request):
+        from .models import ComisionBancaria
+        from . import comisiones
+        hoy = timezone.localdate()
+        tasas = comisiones.Tasas()
+        etiquetas = dict(Pago.MEDIOS)
+
+        def fila(t):
+            return {
+                'id': t.id, 'medio': t.medio, 'medio_label': etiquetas.get(t.medio, t.medio),
+                'vigente_desde': t.vigente_desde.isoformat(),
+                'porcentaje': float(t.porcentaje), 'iva_aparte': t.iva_aparte,
+                'retencion_renta': float(t.retencion_renta),
+                'retencion_iva': float(t.retencion_iva),
+            }
+
+        vigentes = [fila(t) for m in tasas.medios
+                    if (t := tasas.vigente(m, hoy)) is not None]
+        orden = [m for m, _ in Pago.MEDIOS]
+        vigentes.sort(key=lambda f: orden.index(f['medio']))
+        mes = comisiones.resumen(hoy.replace(day=1), hoy)
+        return Response({
+            'vigentes': vigentes,
+            'historial': [fila(t) for t in ComisionBancaria.objects.all()],
+            'mes': {
+                'total': comisiones.como_dict(mes['total']),
+                'por_medio': [dict(medio=m, medio_label=etiquetas.get(m, m), **comisiones.como_dict(d))
+                              for m, d in mes['por_medio'].items()],
+            },
+            'medios_posibles': [{'medio': m, 'label': etiquetas[m]}
+                                for m in MEDIOS_CON_COMISION],
+        })
+
+    def post(self, request):
+        from .models import ComisionBancaria
+        datos = request.data
+        medio = datos.get('medio')
+        if medio not in MEDIOS_CON_COMISION:
+            return Response({'medio': 'Elegí un medio bancario.'}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            valores = {k: Decimal(str(datos.get(k, defecto))) for k, defecto in
+                       (('porcentaje', None), ('retencion_renta', '1'), ('retencion_iva', '10'))}
+        except Exception:
+            return Response({'porcentaje': 'Ingresá porcentajes válidos (ej. 2,5).'},
+                            status=status.HTTP_400_BAD_REQUEST)
+        if any(v < 0 or v >= 100 for v in valores.values()):
+            return Response({'porcentaje': 'Los porcentajes van de 0 a 100.'},
+                            status=status.HTTP_400_BAD_REQUEST)
+        try:
+            desde = (datetime.strptime(datos['vigente_desde'], '%Y-%m-%d').date()
+                     if datos.get('vigente_desde') else timezone.localdate())
+        except ValueError:
+            return Response({'vigente_desde': 'Fecha inválida.'}, status=status.HTTP_400_BAD_REQUEST)
+        iva_aparte = datos.get('iva_aparte', True) in (True, 'true', 'True', '1', 1)
+        # Dos cambios el mismo día: vale el último (se corrige un error de tipeo).
+        tasa, _ = ComisionBancaria.objects.update_or_create(
+            medio=medio, vigente_desde=desde,
+            defaults=dict(iva_aparte=iva_aparte, registrada_por=request.user, **valores))
+        return Response({'id': tasa.id, 'detalle': str(tasa)}, status=status.HTTP_201_CREATED)
+
+
+# Los medios que pasan por un banco o una procesadora. Efectivo, cheque y
+# transferencia llegan enteros.
+MEDIOS_CON_COMISION = [Pago.MEDIO_TARJETA_DEBITO, Pago.MEDIO_TARJETA_CREDITO,
+                       Pago.MEDIO_QR_DEBITO, Pago.MEDIO_QR_CREDITO, Pago.MEDIO_PIX]

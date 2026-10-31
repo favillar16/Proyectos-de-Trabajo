@@ -19,7 +19,7 @@ import {
   ChevronRight, Package, Clock, AlertCircle,
   RefreshCw, Receipt, X, Loader2, TrendingUp,
   Wifi, WifiOff, Search, User, Copy, ClipboardCheck, Eye, RotateCcw,
-  Plus, Trash2, Layers, QrCode,
+  Plus, Trash2, Layers, QrCode, Zap,
 } from 'lucide-react'
 import Layout from '../components/layout/Layout'
 import { PanelDevolucion, ComprobanteDevolucion } from '../components/caja/PanelDevolucion'
@@ -53,6 +53,7 @@ const MEDIOS = [
   { key:'cheque',       label:'Cheque',            icon:<ScrollText size={18}/> },
   { key:'qr_debito',    label:'QR Débito',         icon:<QrCode size={18}/> },
   { key:'qr_credito',   label:'QR Crédito',        icon:<QrCode size={18}/> },
+  { key:'pix',          label:'PIX',               icon:<Zap size={18}/> },
 ]
 
 // Medios que el SIFEN trata como tarjeta (grupo E620): el QR es otra forma
@@ -60,7 +61,7 @@ const MEDIOS = [
 const MEDIOS_TARJETA = ['debito', 'credito', 'qr_debito', 'qr_credito']
 const esMedioTarjeta = m => MEDIOS_TARJETA.includes(m)
 // Los que llevan un número de autorización o de comprobante opcional.
-const conReferencia = m => esMedioTarjeta(m) || m === 'transferencia'
+const conReferencia = m => esMedioTarjeta(m) || m === 'transferencia' || m === 'pix'
 
 // Bancos de plaza, para que la cajera no tipee el nombre a mano en cada
 // cobro. La lista es una comodidad, no una validación: si el cheque es de

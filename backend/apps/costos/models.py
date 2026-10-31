@@ -118,7 +118,10 @@ class GastoOperativo(models.Model):
     metodo_pago     = models.CharField(max_length=20, choices=METODOS_PAGO,
                           blank=True, default='')
 
-    # Datos del cheque (solo si metodo_pago == cheque)
+    # Datos del cheque — columnas VIEJAS, de cuando un gasto tenía un solo
+    # cheque. Desde la migración 0007 los cheques viven en `ChequeGasto`
+    # (`gasto.cheques`), que copió lo que había acá; nada las lee ni las
+    # escribe. Se dejaron en la tabla para no borrar datos con una migración.
     cheque_numero       = models.CharField(max_length=50, blank=True)
     cheque_banco        = models.CharField(max_length=80, blank=True)
     cheque_fecha_cobro  = models.DateField(null=True, blank=True,
@@ -149,11 +152,49 @@ class GastoOperativo(models.Model):
         return f'{dict(self.MESES).get(self.mes, self.mes)} {self.anio}'
 
     @property
+    def proximo_cheque(self):
+        """
+        El próximo cheque en cobrarse; si ya se cobraron todos, el último.
+        None si el gasto no es con cheque.
+        """
+        if self.metodo_pago != self.PAGO_CHEQUE:
+            return None
+        cheques = sorted(self.cheques.all(), key=lambda c: c.fecha_cobro)
+        if not cheques:
+            return None
+        hoy = date.today()
+        return next((c for c in cheques if c.fecha_cobro >= hoy), cheques[-1])
+
+    @property
     def dias_para_cobro_cheque(self):
-        """Días que faltan para la fecha de cobro del cheque. None si no aplica."""
-        if self.metodo_pago == self.PAGO_CHEQUE and self.cheque_fecha_cobro:
-            return (self.cheque_fecha_cobro - date.today()).days
-        return None
+        """Días que faltan para que se cobre el próximo cheque. None si no aplica."""
+        cheque = self.proximo_cheque
+        return (cheque.fecha_cobro - date.today()).days if cheque else None
+
+
+class ChequeGasto(models.Model):
+    """
+    Un cheque con el que se pagó un gasto.
+
+    Un pago a proveedor grande se suele hacer con varios cheques diferidos
+    (uno a 30 días, otro a 60…): cada uno tiene su número, su banco, su fecha
+    de cobro y su monto, y cada uno tiene que avisar cuando se acerca su
+    fecha. Los montos de los cheques de un gasto suman el monto del gasto.
+    """
+    gasto       = models.ForeignKey(GastoOperativo, on_delete=models.CASCADE, related_name='cheques')
+    numero      = models.CharField(max_length=50, blank=True)
+    banco       = models.CharField(max_length=80, blank=True)
+    fecha_cobro = models.DateField(help_text='Fecha en que el cheque puede cobrarse (plazo)')
+    monto       = models.DecimalField(max_digits=14, decimal_places=2,
+                      validators=[MinValueValidator(Decimal('0.01'))])
+
+    class Meta:
+        db_table='gastos_cheques'; ordering=['fecha_cobro','id']
+        verbose_name='Cheque de un gasto'; verbose_name_plural='Cheques de gastos'
+        indexes=[models.Index(fields=['fecha_cobro'], name='idx_cheque_gasto_cobro')]
+
+    def __str__(self):
+        return f'Cheque {self.numero or "s/n"} — {self.banco or "sin banco"} — Gs. {self.monto:,.0f}'
 
 
 class PedidoProveedor(models.Model):
