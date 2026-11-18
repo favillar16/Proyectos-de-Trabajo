@@ -1448,8 +1448,12 @@ class ComisionesBancariasView(views.APIView):
             'vigentes': vigentes,
             'historial': [fila(t) for t in ComisionBancaria.objects.all()],
             'mes': {
-                'total': comisiones.como_dict(mes['total']),
-                'por_medio': [dict(medio=m, medio_label=etiquetas.get(m, m), **comisiones.como_dict(d))
+                'desde': hoy.replace(day=1).isoformat(),
+                'hasta': hoy.isoformat(),
+                'total': {**comisiones.como_dict(mes['total']),
+                          'cobros': sum(mes['cobros'].values())},
+                'por_medio': [dict(medio=m, medio_label=etiquetas.get(m, m),
+                                   cobros=mes['cobros'].get(m, 0), **comisiones.como_dict(d))
                               for m, d in mes['por_medio'].items()],
             },
             'medios_posibles': [{'medio': m, 'label': etiquetas[m]}

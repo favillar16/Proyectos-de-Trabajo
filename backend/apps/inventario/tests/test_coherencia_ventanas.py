@@ -140,7 +140,13 @@ class CoherenciaEntreVentanasTests(TestCase):
     def test_reporte_de_stock_usa_las_mismas_variantes(self):
         from apps.caja.reportes import reporte_stock
         reporte = reporte_stock()
-        skus = {f[1] for f in reporte['filas']}
-        self.assertEqual(skus, {self.arena.sku, self.gris.sku})
+        col_sku = reporte['columnas'].index('SKU')
+        col_disp = reporte['columnas'].index('Disponible')
+        disponible = {f[col_sku]: f[col_disp] for f in reporte['filas']}
+        self.assertEqual(set(disponible), {self.arena.sku, self.gris.sku})
         self.assertEqual(reporte['totales']['Variantes sin stock'], 1)
-        self.assertEqual(reporte['totales']['Total unidades disponibles'], '70.00')
+        # Vendible 70: Arena 100 − 30 reservados; Gris tiene 50, todos reservados.
+        self.assertEqual(disponible[self.arena.sku].split()[0], '70,00')
+        self.assertEqual(disponible[self.gris.sku].split()[0], '0,00')
+        # Lo que falta va primero: Gris está sin stock.
+        self.assertEqual(reporte['filas'][0][col_sku], self.gris.sku)

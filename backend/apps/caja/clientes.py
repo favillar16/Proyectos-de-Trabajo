@@ -223,4 +223,11 @@ def reporte_clientes(desde: date, hasta: date, buscar: str = '') -> dict:
         'cols_derecha': [0, 3, 5, 6],
         'filas':     filas,
         'totales':   totales,
+        'resumen': {'destacados': [
+            ('Total invertido', _gs(datos['totales']['invertido']), 'por los clientes de la lista'),
+            ('Clientes', datos['totales']['clientes'], None),
+            ('El que más compró', filas[0][1] if filas else '—',
+             filas[0][6] if filas else None),
+        ]},
+        'titulo_detalle': 'Detalle — del que más invirtió al que menos',
     }

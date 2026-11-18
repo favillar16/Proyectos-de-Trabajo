@@ -290,7 +290,7 @@ class CajaYReportesTests(BaseDevolucionTests):
         self._devolver(pago, [(self.porcelanato, '1', True)], medio_pago='efectivo')
 
         reporte = rep.reporte_ventas(date.today(), date.today())
-        self.assertEqual(reporte['totales']['Total de ventas'], 'Gs. 150.000')
+        self.assertEqual(reporte['totales']['(=) Total de ventas'], 'Gs. 150.000')
         self.assertEqual(reporte['totales']['Cantidad de cobros'], 1)
 
     def test_productos_comercializados_resta_lo_devuelto(self):
@@ -494,11 +494,12 @@ class CambiosEnReportesTests(BaseDevolucionTests):
                            medio_pago='transferencia')                  # cobra 120.000
 
         reporte = rep.reporte_ventas(date.today(), date.today())
-        fila = next(f for f in reporte['filas'] if f[1] == dev.pago_cambio.numero_ticket)
+        col_ticket = reporte['columnas'].index('Ticket')
+        fila = next(f for f in reporte['filas'] if f[col_ticket] == dev.pago_cambio.numero_ticket)
         self.assertIn('Cambio', fila[2])
         self.assertIn(pago.pedido.numero, fila[2])
         t = reporte['totales']
-        self.assertEqual(t['Total de ventas'], 'Gs. 300.000')          # 180.000 + 120.000
+        self.assertEqual(t['(=) Total de ventas'], 'Gs. 300.000')          # 180.000 + 120.000
         self.assertEqual(t['Cantidad de cobros'], 1)                    # el cambio no es venta
         self.assertEqual(t['Cambios de producto'], 1)
         self.assertEqual(t['  · Diferencia cobrada en cambios'], 'Gs. 120.000')
@@ -508,8 +509,9 @@ class CambiosEnReportesTests(BaseDevolucionTests):
         self._cambio(pago, [(self.ceramica, '1', True)], [(self.ceramica, '1')])
 
         balance = rep.reporte_ventas(date.today(), date.today())
-        self.assertNotIn('  · Efectivo', balance['totales'])
-        self.assertTrue(any(f[4] == 'Sin diferencia' for f in balance['filas']))
+        medios = [f[0] for f in balance['resumen']['desglose']['filas']]
+        self.assertNotIn('Efectivo', medios)
+        self.assertTrue(any(f[3] == 'Sin diferencia' for f in balance['filas']))
 
         arqueo = rep.reporte_arqueo(date.today())
         conceptos = [f[0].strip() for f in arqueo['filas']]

@@ -9,7 +9,7 @@ import { useState, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   Plus, Trash2, Edit2, X, Loader2, Users, Receipt, TrendingDown,
-  Building2, Truck, Bell, AlertTriangle, Calendar, CreditCard, Check, Search, Landmark,
+  Building2, Truck, Bell, AlertTriangle, Calendar, CreditCard, Check, Search, Landmark, ChevronDown,
 } from 'lucide-react'
 import Layout from '../components/layout/Layout'
 import { costosApi, productosApi, cajaApi } from '../services/api'
@@ -1354,7 +1354,11 @@ function ModalTasa({ tasa, onCerrar, onGuardado }) {
   const descuento = (form.iva_aparte ? com * 1.1 : com)
     + ejemplo * num(form.retencion_renta) / 100 + ejemplo / 11 * num(form.retencion_iva) / 100
 
-  return <Modal titulo={`Tasa de ${tasa.medio_label}`} onCerrar={onCerrar} ancho="460px">
+  return <Modal titulo={`Cambiar la tasa de ${tasa.medio_label}`} onCerrar={onCerrar} ancho="460px">
+    <p style={{ fontSize:'12.5px', color:C.textSec, margin:'0 0 14px', lineHeight:1.5 }}>
+      Usalo solo cuando el banco cambie lo que cobra. Los cobros no se cargan acá:
+      entran solos desde Caja.
+    </p>
     <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'0 12px' }}>
       <Campo label="Comisión (%)">
         <FInput type="number" min="0" step="0.1" value={form.porcentaje}
@@ -1381,7 +1385,7 @@ function ModalTasa({ tasa, onCerrar, onGuardado }) {
       </div>
     </div>
     <p style={{ fontSize:'12px', color:C.textSec, margin:'0 0 6px' }}>
-      De un cobro de {formatGs(ejemplo)} el banco descontaría {formatGs(Math.round(descuento))}.
+      Ejemplo: de un cobro de {formatGs(ejemplo)}, el banco descontaría {formatGs(Math.round(descuento))} en total.
     </p>
     <p style={{ fontSize:'11.5px', color:C.textMuted, margin:'0 0 14px' }}>
       Los cobros anteriores a esa fecha siguen calculándose con la tasa que tenían.
@@ -1393,28 +1397,61 @@ function ModalTasa({ tasa, onCerrar, onGuardado }) {
   </Modal>
 }
 
+// La propietaria creía que había que volver a cargar acá el monto de cada
+// cobro con tarjeta (video del 18/11/2026). No: todo sale de los cobros de
+// Caja. Por eso la solapa abre diciendo eso, muestra primero lo que pasó en
+// el mes —medio por medio, con cuántos cobros— y deja las tasas del banco
+// plegadas al final, porque solo se tocan cuando el banco cambia lo que cobra.
 function SolapaComisiones() {
   const qc = useQueryClient()
   const [editando, setEditando] = useState(null)
+  const [verTasas, setVerTasas] = useState(false)
   const { data, isLoading } = useQuery({ queryKey:['comisiones-bancarias'],
     queryFn: () => cajaApi.comisiones().then(r => r.data), staleTime:60_000 })
 
   if (isLoading) return <div style={{ padding:'40px', textAlign:'center', color:C.textMuted }}>Cargando...</div>
   const vigentes = data?.vigentes || []
   const mes = data?.mes
+  const porMedio = mes?.por_medio || []
+  const hayCobros = mes && mes.total.cobrado > 0
+  // "Noviembre 2026 · del 1 al 18". La fecha viene como YYYY-MM-DD: se parte
+  // a mano para que la zona horaria no corra el día.
+  const [anio, nMes, dia] = (mes?.hasta || '').split('-').map(Number)
+  const periodo = anio ? `${MESES[nMes]} ${anio} · del 1 al ${dia}` : 'Este mes'
+
   const th = { padding:'9px 14px', textAlign:'left', fontSize:'10.5px', fontWeight:'500',
-    letterSpacing:'0.06em', textTransform:'uppercase', color:C.textMuted, borderBottom:`1px solid ${C.border}` }
+    letterSpacing:'0.06em', textTransform:'uppercase', color:C.textMuted, borderBottom:`1px solid ${C.border}`,
+    whiteSpace:'nowrap' }
+  const thNum = { ...th, textAlign:'right' }
   const td = { padding:'10px 14px', fontSize:'13px', color:C.text }
+  const tdNum = { ...td, textAlign:'right', whiteSpace:'nowrap' }
+  const caja = { background:C.bg, border:`1px solid ${C.border}`, borderRadius:'12px' }
 
   return <div>
-    {mes && mes.total.cobrado > 0 && (
-      <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(170px,1fr))', gap:'10px',
-        marginBottom:'16px', padding:'14px 16px', background:C.bg, border:`1px solid ${C.border}`, borderRadius:'12px' }}>
+    <div style={{ display:'flex', gap:'10px', alignItems:'flex-start', padding:'12px 16px', marginBottom:'16px',
+      background:C.successBg, border:`1px solid ${C.successBorder}`, borderRadius:'12px' }}>
+      <Check size={18} style={{ color:C.success, flexShrink:0, marginTop:'1px' }}/>
+      <div style={{ fontSize:'13px', color:C.text, lineHeight:1.5 }}>
+        <strong>Esto se calcula solo.</strong> Cada cobro con tarjeta, QR o PIX que se registra en Caja
+        ya aparece acá con lo que descuenta el banco. No hace falta cargar ningún monto.
+      </div>
+    </div>
+
+    <p style={{ fontSize:'13px', fontWeight:'500', color:C.text, margin:'0 0 10px' }}>{periodo}</p>
+
+    {!hayCobros ? (
+      <div style={{ ...caja, padding:'28px 16px', textAlign:'center', color:C.textMuted, fontSize:'13px', marginBottom:'12px' }}>
+        Todavía no hubo cobros con tarjeta, QR o PIX este mes. Apenas se registre uno en Caja, aparece acá.
+      </div>
+    ) : (<>
+      <div style={{ ...caja, display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(170px,1fr))', gap:'10px',
+        marginBottom:'12px', padding:'14px 16px' }}>
         {[
-          { label:'Cobrado con tarjetas, QR y PIX', valor:mes.total.cobrado, color:C.text },
-          { label:'Comisiones + IVA', valor:-mes.total.costo, color:C.danger, nota:'costo del local' },
+          { label:'Cobrado con tarjetas, QR y PIX', valor:mes.total.cobrado, color:C.text,
+            nota:`${mes.total.cobros} cobro${mes.total.cobros !== 1 ? 's' : ''}` },
+          { label:'Comisiones + IVA', valor:-mes.total.costo, color:C.danger, nota:'lo que cobra el banco' },
           { label:'Retenciones', valor:-mes.total.retenciones, color:C.warning, nota:'a cuenta de impuestos' },
-          { label:'Neto que acredita el banco', valor:mes.total.neto, color:C.success },
+          { label:'Te acredita el banco', valor:mes.total.neto, color:C.success },
         ].map(c => (
           <div key={c.label}>
             <p style={{ fontSize:'10.5px', fontWeight:'500', color:C.textMuted, textTransform:'uppercase',
@@ -1424,47 +1461,84 @@ function SolapaComisiones() {
             {c.nota && <p style={{ fontSize:'11px', color:C.textMuted }}>{c.nota}</p>}
           </div>
         ))}
-        <p style={{ gridColumn:'1/-1', fontSize:'11.5px', color:C.textMuted, margin:0 }}>
-          Del 1° del mes a hoy. El detalle cobro por cobro está en Dashboard → Reportes → Comisiones bancarias.
-        </p>
       </div>
-    )}
 
-    <div style={{ background:C.bg, border:`1px solid ${C.border}`, borderRadius:'12px', overflow:'hidden' }}>
-      <div style={{ overflowX:'auto' }}>
-        <table style={{ width:'100%', borderCollapse:'collapse' }}>
-          <thead><tr style={{ background:C.bgSec }}>
-            {['Medio','Comisión','Ret. renta','Ret. IVA','Rige desde','Este mes',''].map(h =>
-              <th key={h} style={th}>{h}</th>)}
-          </tr></thead>
-          <tbody>
-            {vigentes.map(t => {
-              const delMes = mes?.por_medio?.find(m => m.medio === t.medio)
-              return <tr key={t.medio} style={{ borderBottom:`1px solid ${C.border}` }}>
-                <td style={{ ...td, fontWeight:'500' }}>{t.medio_label}</td>
-                <td style={td}>{pct(t.porcentaje)}{t.iva_aparte ? ' + IVA' : ' (IVA incluido)'}</td>
-                <td style={td}>{pct(t.retencion_renta)} del cobro</td>
-                <td style={td}>{pct(t.retencion_iva)} del IVA</td>
-                <td style={{ ...td, color:C.textSec }}>{fmtDia(t.vigente_desde)}</td>
-                <td style={{ ...td, fontSize:'12px', color:C.textSec }}>
-                  {delMes ? `${formatGs(delMes.cobrado)} → descuentan ${formatGs(delMes.costo + delMes.retenciones)}` : '—'}
-                </td>
-                <td style={td}>
-                  <button onClick={()=>setEditando(t)} title="Cargar una tasa nueva"
-                    style={{ width:'28px', height:'28px', borderRadius:'7px', cursor:'pointer',
-                      background:C.bgSec, border:`1px solid ${C.border}`, color:C.textSec,
-                      display:'flex', alignItems:'center', justifyContent:'center' }}><Edit2 size={12}/></button>
-                </td>
-              </tr>
-            })}
-          </tbody>
-        </table>
+      <div style={{ ...caja, overflow:'hidden', marginBottom:'8px' }}>
+        <div style={{ overflowX:'auto' }}>
+          <table style={{ width:'100%', borderCollapse:'collapse' }}>
+            <thead><tr style={{ background:C.bgSec }}>
+              <th style={th}>Medio</th>
+              <th style={thNum}>Cobros</th>
+              <th style={thNum}>Cobrado</th>
+              <th style={thNum}>Comisión + IVA</th>
+              <th style={thNum}>Retenciones</th>
+              <th style={thNum}>Te acredita</th>
+            </tr></thead>
+            <tbody>
+              {porMedio.map(m => (
+                <tr key={m.medio} style={{ borderBottom:`1px solid ${C.border}` }}>
+                  <td style={{ ...td, fontWeight:'500' }}>{m.medio_label}</td>
+                  <td style={{ ...tdNum, color:C.textSec }}>{m.cobros}</td>
+                  <td style={tdNum}>{formatGs(m.cobrado)}</td>
+                  <td style={{ ...tdNum, color:C.danger }}>− {formatGs(m.costo)}</td>
+                  <td style={{ ...tdNum, color:C.warning }}>− {formatGs(m.retenciones)}</td>
+                  <td style={{ ...tdNum, color:C.success, fontWeight:'500' }}>{formatGs(m.neto)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       </div>
-    </div>
-    <p style={{ fontSize:'11.5px', color:C.textMuted, marginTop:'10px' }}>
-      La ganancia neta resta la comisión y su IVA. Las retenciones de renta e IVA no son una pérdida:
-      el banco las paga a la DNIT a nombre del local y se descuentan en la liquidación de impuestos.
+    </>)}
+
+    <p style={{ fontSize:'11.5px', color:C.textMuted, margin:'0 0 20px', lineHeight:1.5 }}>
+      La comisión y su IVA son el costo del local y se restan de la ganancia. Las retenciones no son una
+      pérdida: el banco las paga a la DNIT a nombre del local y se descuentan en la liquidación de impuestos.
+      El detalle cobro por cobro está en Dashboard → Reportes → Comisiones bancarias.
     </p>
+
+    <div style={caja}>
+      <button onClick={() => setVerTasas(v => !v)}
+        style={{ width:'100%', display:'flex', alignItems:'center', gap:'10px', padding:'12px 16px',
+          background:'transparent', border:'none', cursor:'pointer', textAlign:'left' }}>
+        <ChevronDown size={16} style={{ color:C.textSec, flexShrink:0,
+          transform: verTasas ? 'none' : 'rotate(-90deg)', transition:'transform 150ms' }}/>
+        <span style={{ flex:1 }}>
+          <span style={{ display:'block', fontSize:'13px', fontWeight:'500', color:C.text }}>
+            Lo que cobra cada banco</span>
+          <span style={{ display:'block', fontSize:'11.5px', color:C.textMuted }}>
+            Solo hace falta tocarlo si el banco cambia su comisión.</span>
+        </span>
+      </button>
+      {verTasas && (
+        <div style={{ overflowX:'auto', borderTop:`1px solid ${C.border}` }}>
+          <table style={{ width:'100%', borderCollapse:'collapse' }}>
+            <thead><tr style={{ background:C.bgSec }}>
+              {['Medio','Comisión','Ret. renta','Ret. IVA','Rige desde',''].map(h =>
+                <th key={h} style={th}>{h}</th>)}
+            </tr></thead>
+            <tbody>
+              {vigentes.map(t => (
+                <tr key={t.medio} style={{ borderBottom:`1px solid ${C.border}` }}>
+                  <td style={{ ...td, fontWeight:'500' }}>{t.medio_label}</td>
+                  <td style={td}>{pct(t.porcentaje)}{t.iva_aparte ? ' + IVA' : ' (IVA incluido)'}</td>
+                  <td style={td}>{pct(t.retencion_renta)} del cobro</td>
+                  <td style={td}>{pct(t.retencion_iva)} del IVA</td>
+                  <td style={{ ...td, color:C.textSec }}>{fmtDia(t.vigente_desde)}</td>
+                  <td style={{ ...td, textAlign:'right' }}>
+                    <button onClick={()=>setEditando(t)}
+                      style={{ display:'inline-flex', alignItems:'center', gap:'6px', padding:'0 12px',
+                        height:'30px', borderRadius:'7px', cursor:'pointer', whiteSpace:'nowrap',
+                        background:C.bgSec, border:`1px solid ${C.border}`, color:C.textSec, fontSize:'12px' }}>
+                      <Edit2 size={12}/> Cambiar tasa</button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
 
     {editando && <ModalTasa tasa={editando} onCerrar={()=>setEditando(null)}
       onGuardado={()=>{ qc.invalidateQueries({queryKey:['comisiones-bancarias']}); setEditando(null) }}/>}

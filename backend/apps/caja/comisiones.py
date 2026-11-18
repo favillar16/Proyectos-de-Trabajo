@@ -168,13 +168,18 @@ def resumen(desde, hasta, pagos=None) -> dict:
 
     total = Desglose(cobrado=Decimal('0'))
     por_medio = {}
+    # Cuántas líneas de cobro hubo por medio: es lo que permite reconocer en
+    # pantalla "estos son mis 12 cobros con tarjeta" sin abrir el reporte.
+    cobros = {}
     for l in lineas(desde, hasta, pagos=pagos):
         total = total + l.desglose
         por_medio[l.linea.medio] = por_medio.get(l.linea.medio, Desglose(cobrado=Decimal('0'))) + l.desglose
+        cobros[l.linea.medio] = cobros.get(l.linea.medio, 0) + 1
     orden = [m for m, _ in Pago.MEDIOS]
     return {
         'total': total,
         'por_medio': dict(sorted(por_medio.items(), key=lambda kv: orden.index(kv[0]))),
+        'cobros': cobros,
     }
 
 

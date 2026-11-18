@@ -6,10 +6,27 @@ comercializados, Ganancias, Comisiones bancarias y Arqueo de Caja.
 
 Cada función de reporte arma una estructura común:
   { 'titulo', 'subtitulo', 'columnas': [...], 'filas': [[...]], 'totales': {...} }
-más 'notas': [...] opcional (aclaraciones en castellano llano, debajo de los
-totales) y luego se renderiza a PDF o XLSX con los helpers de abajo.
+y, opcionales:
+  'notas'        aclaraciones en castellano llano, debajo de los totales.
+  'resumen'      lo que se mira primero: {'destacados': [(etiqueta, valor,
+                 nota)], 'desglose': {'titulo', 'columnas', 'filas',
+                 'cols_derecha'}}. En el PDF va arriba de la hoja 1, antes del
+                 detalle; con 'hoja_aparte' ocupa la hoja 1 entera y el detalle
+                 empieza en la 2 (Ganancias, a pedido de la propietaria).
+  'solo_excel'   columnas que el PDF no imprime (SKU, cajero): sirven para
+                 buscar y filtrar en la planilla, en papel solo ocupan lugar.
+  'filas_titulo' índices de filas que son encabezado de sección (el arqueo).
+  'titulo_detalle' el título de la tabla de detalle cuando hay resumen.
+  'totales_solo_excel' el PDF no repite los totales (el arqueo: ya están en
+                 el resumen y debajo de las firmas no se leerían).
+
+Rediseño del 18/11/2026: la propietaria tenía que llegar a la última hoja
+para ver los totales, las cantidades salían "3.00" sin unidad, los montos se
+partían en dos renglones y el Excel traía los importes como texto, imposibles
+de sumar.
 """
 import io
+import re
 from decimal import Decimal
 from datetime import datetime, date
 from django.http import HttpResponse
@@ -43,6 +60,26 @@ def _fecha(momento, formato='%d/%m/%Y %H:%M'):
     return momento.strftime(formato)
 
 
+def _rango(desde, hasta):
+    if desde == hasta:
+        return f'Día {desde.strftime("%d/%m/%Y")}'
+    return f'Del {desde.strftime("%d/%m/%Y")} al {hasta.strftime("%d/%m/%Y")}'
+
+
+def _variante_txt(v):
+    """
+    Lo que distingue a la variante dentro del producto: "60×60 cm — Beige —
+    Mate". `str(variante)` repite adelante el nombre del producto, que ya está
+    en la columna de al lado, y en la hoja eso duplicaba cada renglón.
+    """
+    partes = [v.dimension_display, v.color, v.acabado.nombre if v.acabado_id else '']
+    return ' — '.join(p for p in partes if p) or '—'
+
+
+def _es_negativo(texto):
+    return isinstance(texto, str) and re.match(r'^-\s?(Gs\.\s)?\d', texto) is not None
+
+
 # ════════════════════════════════════════════════════════
 # Render a PDF (reportlab)
 # ════════════════════════════════════════════════════════
@@ -51,6 +88,7 @@ def render_pdf(reporte: dict, tamanio: str = 'a4') -> bytes:
     from reportlab.lib.pagesizes import A4, landscape
     from reportlab.lib.units import mm, inch
     from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.pdfbase.pdfmetrics import stringWidth
     from reportlab.platypus import (
         SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, KeepTogether,
         PageBreak,
@@ -68,14 +106,23 @@ def render_pdf(reporte: dict, tamanio: str = 'a4') -> bytes:
     BORDER   = colors.HexColor('#e8e4df')
     TEXTSEC  = colors.HexColor('#6b6560')
     TEXT     = colors.HexColor('#1a1714')
+    FONDO    = colors.HexColor('#fafaf9')
+    TINTE    = colors.HexColor('#f3ede4')
+    ROJO     = '#b3261e'
+
+    # Las columnas que se imprimen: las de solo Excel quedan afuera.
+    ocultas  = set(reporte.get('solo_excel', []))
+    visibles = [i for i in range(len(reporte['columnas'])) if i not in ocultas]
+    cols_der = set(reporte.get('cols_derecha', []))
 
     buffer = io.BytesIO()
-    muchas_cols = len(reporte['columnas']) > 5
     base_pagesize = OFICIO if tamanio == 'oficio' else A4
-    pagesize = landscape(base_pagesize) if muchas_cols else base_pagesize
+    pagesize = landscape(base_pagesize) if len(visibles) > 5 else base_pagesize
     doc = SimpleDocTemplate(buffer, pagesize=pagesize,
-                            topMargin=18*mm, bottomMargin=20*mm,
-                            leftMargin=14*mm, rightMargin=14*mm)
+                            topMargin=16*mm, bottomMargin=18*mm,
+                            leftMargin=14*mm, rightMargin=14*mm,
+                            title=reporte['titulo'], author='Oga Porã')
+    ancho_total = pagesize[0] - doc.leftMargin - doc.rightMargin
 
     styles = getSampleStyleSheet()
     st_titulo = ParagraphStyle('titulo', parent=styles['Title'],
@@ -83,162 +130,242 @@ def render_pdf(reporte: dict, tamanio: str = 'a4') -> bytes:
     st_marca = ParagraphStyle('marca', parent=styles['Normal'],
         fontSize=10, textColor=GOLDDARK, spaceAfter=1)
     st_sub = ParagraphStyle('sub', parent=styles['Normal'],
-        fontSize=9, textColor=TEXTSEC, spaceAfter=12)
+        fontSize=9, textColor=TEXTSEC, spaceAfter=10)
+    st_seccion = ParagraphStyle('seccion', parent=styles['Normal'],
+        fontSize=11, fontName='Helvetica-Bold', textColor=SIDEBAR, spaceBefore=4, spaceAfter=6)
     st_th = ParagraphStyle('th', parent=styles['Normal'],
         fontSize=8.5, textColor=GOLD, fontName='Helvetica-Bold', leading=11)
+    st_th_der = ParagraphStyle('th_der', parent=st_th, alignment=2)
     st_celda = ParagraphStyle('celda', parent=styles['Normal'],
-        fontSize=8, textColor=TEXT, leading=10)
+        fontSize=8.5, textColor=TEXT, leading=10.5)
     st_celda_der = ParagraphStyle('celda_der', parent=st_celda, alignment=2)
-
-    elementos = []
-    resumen = reporte.get('resumen')
-    elementos.append(Paragraph('ÓGA PORÃ — Acabados de Construcción', st_marca))
-    elementos.append(Paragraph(resumen['titulo'] if resumen else reporte['titulo'], st_titulo))
-    sub = reporte.get('subtitulo', '')
-    generado = datetime.now().strftime('%d/%m/%Y %H:%M')
-    elementos.append(Paragraph(f'{sub}  ·  Generado: {generado}', st_sub))
-
-    # ── Tabla ────────────────────────────────────────────────
-    # colWidths explícitos: sin esto reportlab no envuelve el texto y da
-    # a cada columna su ancho "natural", desbordando la hoja apenas hay
-    # nombres largos de producto o cliente. Las celdas van en Paragraph
-    # (en vez de strings planos) para que sí hagan wrap dentro del ancho
-    # asignado, y escapadas porque son texto libre cargado por el usuario.
-    columnas    = reporte['columnas']
-    cols_der    = set(reporte.get('cols_derecha', []))
-    n_cols      = len(columnas)
-    ancho_total = pagesize[0] - doc.leftMargin - doc.rightMargin
-
-    ancho_num   = ancho_total * 0.09
-    n_texto     = max(n_cols - len(cols_der), 1)
-    ancho_texto = (ancho_total - ancho_num * len(cols_der)) / n_texto
-    col_widths  = [ancho_num if i in cols_der else ancho_texto for i in range(n_cols)]
-
-    header = [Paragraph(escape(str(c)), st_th) for c in columnas]
-    filas_pdf = []
-    for fila in reporte['filas']:
-        fila_pdf = []
-        for i, valor in enumerate(fila):
-            estilo_celda = st_celda_der if i in cols_der else st_celda
-            fila_pdf.append(Paragraph(escape(str(valor)), estilo_celda))
-        filas_pdf.append(fila_pdf)
-
-    tabla = Table([header] + filas_pdf, repeatRows=1, colWidths=col_widths)
-    tabla.setStyle(TableStyle([
-        ('BACKGROUND',     (0,0), (-1,0), SIDEBAR),
-        ('ROWBACKGROUNDS', (0,1), (-1,-1), [colors.white, colors.HexColor('#fafaf9')]),
-        ('GRID',           (0,0), (-1,-1), 0.5, BORDER),
-        ('VALIGN',         (0,0), (-1,-1), 'MIDDLE'),
-        ('TOPPADDING',     (0,0), (-1,-1), 5),
-        ('BOTTOMPADDING',  (0,0), (-1,-1), 5),
-        ('LEFTPADDING',    (0,0), (-1,-1), 6),
-        ('RIGHTPADDING',   (0,0), (-1,-1), 6),
-    ]))
-
     st_nota = ParagraphStyle('nota', parent=styles['Normal'],
         fontSize=8.5, textColor=TEXTSEC, leading=11, spaceAfter=4)
     st_notas_tit = ParagraphStyle('notas_tit', parent=styles['Normal'],
         fontSize=9.5, textColor=SIDEBAR, spaceAfter=4)
-    notas = ([Paragraph('<b>Cómo leer este reporte</b>', st_notas_tit)]
-             + [Paragraph(escape(n), st_nota) for n in reporte.get('notas', [])])
 
-    def _hoja_resumen(resumen, totales):
+    def celda(valor, derecha=False, negrita=False):
+        texto = escape(str(valor))
+        if negrita:
+            texto = f'<b>{texto}</b>'
+        if _es_negativo(valor):
+            texto = f'<font color="{ROJO}">{texto}</font>'
+        return Paragraph(texto, st_celda_der if derecha else st_celda)
+
+    def anchos(columnas, filas, derecha, disponible):
         """
-        Cifras destacadas en recuadros, abajo la cuenta completa a la
-        izquierda y las notas a la derecha: entra en una sola hoja apaisada.
+        Ancho de cada columna según lo que tiene adentro. Antes las numéricas
+        tenían un 9 % fijo de la hoja y en una tabla de tres columnas un
+        "Gs. 1.518.000" se partía en dos renglones; las de texto se repartían
+        parejo, y un SKU largo se cortaba a la mitad.
         """
+        def medida(texto, negrita=False):
+            fuente = 'Helvetica-Bold' if negrita else 'Helvetica'
+            return stringWidth(str(texto), fuente, 8.5) + 13
+
+        necesario = []
+        for i, titulo in enumerate(columnas):
+            # El encabezado puede ir en dos renglones: cuenta su palabra más larga.
+            ancho = max(medida(p, True) for p in str(titulo).split() or [''])
+            for fila in filas:
+                if i < len(fila):
+                    ancho = max(ancho, medida(fila[i]))
+            # Un texto libre muy largo (observaciones, nombres) envuelve.
+            necesario.append(ancho if i in derecha else min(ancho, 70 * mm))
+
+        # No se parten: los números y todo lo corto (fechas, medios, estados).
+        # Solo envuelve el texto largo, que es el que puede ir en dos renglones.
+        fijas = {i for i, a in enumerate(necesario) if i in derecha or a <= 34 * mm}
+        fijo = sum(a for i, a in enumerate(necesario) if i in fijas)
+        texto = sum(a for i, a in enumerate(necesario) if i not in fijas)
+        if fijo + texto <= disponible:
+            # Sobra lugar: se lo llevan las columnas de texto (o todas, si no hay).
+            extra = disponible - fijo - texto
+            if texto:
+                return [a if i in fijas else a + extra * a / texto
+                        for i, a in enumerate(necesario)]
+            return [a * disponible / fijo for a in necesario]
+        if texto and fijo < disponible * 0.8:
+            # Falta: lo fijo queda entero y el texto largo envuelve.
+            resto = disponible - fijo
+            return [a if i in fijas else a * resto / texto for i, a in enumerate(necesario)]
+        return [a * disponible / (fijo + texto) for a in necesario]
+
+    def tabla_de(columnas, filas, derecha, ancho, titulos=frozenset()):
+        cols = list(range(len(columnas)))
+        header = [Paragraph(escape(str(c)), st_th_der if i in derecha else st_th)
+                  for i, c in enumerate(columnas)]
+        cuerpo = []
+        for fila in filas:
+            cuerpo.append([celda(fila[i] if i < len(fila) else '', i in derecha)
+                           for i in cols])
+        estilo = [
+            ('BACKGROUND',     (0,0), (-1,0), SIDEBAR),
+            ('ROWBACKGROUNDS', (0,1), (-1,-1), [colors.white, FONDO]),
+            ('LINEBELOW',      (0,0), (-1,-1), 0.4, BORDER),
+            ('BOX',            (0,0), (-1,-1), 0.5, BORDER),
+            ('VALIGN',         (0,0), (-1,-1), 'MIDDLE'),
+            ('TOPPADDING',     (0,0), (-1,-1), 4),
+            ('BOTTOMPADDING',  (0,0), (-1,-1), 4),
+            ('LEFTPADDING',    (0,0), (-1,-1), 6),
+            ('RIGHTPADDING',   (0,0), (-1,-1), 6),
+        ]
+        for f in titulos:
+            # Encabezado de sección (una caja en el arqueo): fondo y negrita.
+            estilo.append(('BACKGROUND', (0, f + 1), (-1, f + 1), TINTE))
+            estilo.append(('FONTNAME', (0, f + 1), (-1, f + 1), 'Helvetica-Bold'))
+            cuerpo[f] = [celda(filas[f][i] if i < len(filas[f]) else '', i in derecha, True)
+                         for i in cols]
+        tabla = Table([header] + cuerpo, repeatRows=1,
+                      colWidths=anchos(columnas, filas, derecha, ancho))
+        tabla.setStyle(TableStyle(estilo))
+        return tabla
+
+    def cuenta(totales, ancho):
+        """
+        Los totales como una cuenta de dos columnas: lo que se suma, lo que se
+        resta (-) y el resultado (=) en negrita con raya arriba. Antes eran
+        renglones sueltos alineados a la derecha, difíciles de seguir.
+        """
+        st_c = ParagraphStyle('c', parent=styles['Normal'], fontSize=9.5, textColor=TEXT, leading=12)
+        st_c_sub = ParagraphStyle('c_sub', parent=st_c, fontSize=8.5, textColor=TEXTSEC, leftIndent=10)
+        st_c_der = ParagraphStyle('c_der', parent=st_c, alignment=2)
+        st_c_der_sub = ParagraphStyle('c_der_sub', parent=st_c_sub, alignment=2, leftIndent=0)
+        filas, estilo = [], [
+            ('VALIGN',        (0,0), (-1,-1), 'MIDDLE'),
+            ('TOPPADDING',    (0,0), (-1,-1), 3.5),
+            ('BOTTOMPADDING', (0,0), (-1,-1), 3.5),
+            ('LEFTPADDING',   (0,0), (-1,-1), 4),
+            ('RIGHTPADDING',  (0,0), (-1,-1), 4),
+            ('LINEBELOW',     (0,0), (-1,-1), 0.3, BORDER),
+        ]
+        for i, (k, v) in enumerate(totales.items()):
+            sub = str(k).startswith('  ·')
+            k_txt = escape(str(k).replace('  · ', '').strip())
+            v_txt = escape(str(v))
+            if _es_negativo(v):
+                v_txt = f'<font color="{ROJO}">{v_txt}</font>'
+            if k_txt.startswith('(=)'):
+                k_txt, v_txt = f'<b>{k_txt}</b>', f'<b>{v_txt}</b>'
+                estilo.append(('LINEABOVE', (0,i), (-1,i), 0.8, SIDEBAR))
+            if 'Ganancia neta' in k_txt:
+                estilo.append(('BACKGROUND', (0,i), (-1,i), TINTE))
+            filas.append([Paragraph(k_txt, st_c_sub if sub else st_c),
+                          Paragraph(v_txt, st_c_der_sub if sub else st_c_der)])
+        t = Table(filas, colWidths=[ancho * 0.66, ancho * 0.34])
+        t.setStyle(TableStyle(estilo))
+        return t
+
+    def recuadros(destacados):
+        """Las cifras que importan, grandes y en recuadros, arriba de todo."""
         st_k_lbl = ParagraphStyle('k_lbl', parent=styles['Normal'], fontSize=8,
             textColor=TEXTSEC, leading=10)
         st_k_val = ParagraphStyle('k_val', parent=styles['Normal'], fontSize=15,
             fontName='Helvetica-Bold', textColor=SIDEBAR, leading=19)
         st_k_nota = ParagraphStyle('k_nota', parent=st_k_lbl, textColor=GOLDDARK)
-        recuadros = []
-        for etiqueta, valor, nota in resumen['destacados']:
-            color = '#b3261e' if str(valor).startswith('-') else None
+        celdas = []
+        for etiqueta, valor, nota in destacados:
             val = escape(str(valor))
-            recuadros.append([
+            if _es_negativo(valor):
+                val = f'<font color="{ROJO}">{val}</font>'
+            celdas.append([
                 Paragraph(escape(etiqueta).upper(), st_k_lbl),
-                Paragraph(f'<font color="{color}">{val}</font>' if color else val, st_k_val),
+                Paragraph(val, st_k_val),
                 Paragraph(escape(nota or ''), st_k_nota),
             ])
-        n = len(recuadros)
-        cajas = Table([recuadros], colWidths=[ancho_total / n] * n)
+        n = len(celdas)
+        cajas = Table([celdas], colWidths=[ancho_total / n] * n)
         cajas.setStyle(TableStyle([
             ('BOX',           (0,0), (-1,-1), 0.5, BORDER),
             ('LINEBEFORE',    (1,0), (-1,-1), 0.5, BORDER),
-            ('BACKGROUND',    (0,0), (-1,-1), colors.HexColor('#fafaf9')),
+            ('BACKGROUND',    (0,0), (-1,-1), FONDO),
             ('VALIGN',        (0,0), (-1,-1), 'TOP'),
             ('TOPPADDING',    (0,0), (-1,-1), 8),
             ('BOTTOMPADDING', (0,0), (-1,-1), 8),
             ('LEFTPADDING',   (0,0), (-1,-1), 10),
         ]))
+        return cajas
 
-        # La cuenta: los (=) en negrita y con raya arriba, como un estado de
-        # resultados; la ganancia neta, además, resaltada.
-        st_c = ParagraphStyle('c', parent=styles['Normal'], fontSize=9.5, textColor=TEXT, leading=12)
-        st_c_der = ParagraphStyle('c_der', parent=st_c, alignment=2)
-        filas, estilo = [], [
-            ('VALIGN',        (0,0), (-1,-1), 'MIDDLE'),
-            ('TOPPADDING',    (0,0), (-1,-1), 4),
-            ('BOTTOMPADDING', (0,0), (-1,-1), 4),
-            ('LINEBELOW',     (0,0), (-1,-1), 0.3, BORDER),
-        ]
-        for i, (k, v) in enumerate(totales.items()):
-            k, v = escape(str(k)), escape(str(v))
-            if k.startswith('(=)'):
-                k, v = f'<b>{k}</b>', f'<b>{v}</b>'
-                estilo.append(('LINEABOVE', (0,i), (-1,i), 0.8, SIDEBAR))
-            if 'Ganancia neta' in k:
-                estilo.append(('BACKGROUND', (0,i), (-1,i), colors.HexColor('#f3ede4')))
-            filas.append([Paragraph(k, st_c), Paragraph(v, st_c_der)])
-        ancho_cuenta = ancho_total * 0.55
-        cuenta = Table(filas, colWidths=[ancho_cuenta * 0.68, ancho_cuenta * 0.32])
-        cuenta.setStyle(TableStyle(estilo))
+    notas = ([Paragraph('<b>Cómo leer este reporte</b>', st_notas_tit)]
+             + [Paragraph(escape(n), st_nota) for n in reporte.get('notas', [])])
 
-        cuerpo = Table([[cuenta, notas]],
-                       colWidths=[ancho_cuenta, ancho_total - ancho_cuenta])
+    # ── Encabezado ───────────────────────────────────────────
+    elementos = []
+    resumen = reporte.get('resumen')
+    hoja_aparte = bool(resumen and resumen.get('hoja_aparte'))
+    sub = reporte.get('subtitulo', '')
+    generado = timezone.localtime().strftime('%d/%m/%Y %H:%M')
+    elementos.append(Paragraph('ÓGA PORÃ — Acabados de Construcción', st_marca))
+    elementos.append(Paragraph(
+        resumen['titulo'] if hoja_aparte and resumen.get('titulo') else reporte['titulo'], st_titulo))
+    elementos.append(Paragraph(f'{escape(sub)}  ·  Generado: {generado}', st_sub))
+
+    # ── Detalle ──────────────────────────────────────────────
+    columnas = [reporte['columnas'][i] for i in visibles]
+    filas = [[f[i] if i < len(f) else '' for i in visibles] for f in reporte['filas']]
+    derecha = {n for n, i in enumerate(visibles) if i in cols_der}
+    titulos = set(reporte.get('filas_titulo', []))
+    tabla = (tabla_de(columnas, filas, derecha, ancho_total, titulos) if filas
+             else Paragraph('No hay movimientos en este período.', st_nota))
+
+    ancho_cuenta = min(ancho_total, 125 * mm)
+    totales = reporte.get('totales') or {}
+
+    if hoja_aparte:
+        # Hoja 1: el resumen, que es lo que se mira; desde la hoja 2, el
+        # detalle que lo respalda. Quien quiere saber cuánto ganó no tiene
+        # que pasar cuatro hojas de renglones para llegar a los totales.
+        ancho_c = ancho_total * 0.55
+        cuerpo = Table([[cuenta(totales, ancho_c), notas]],
+                       colWidths=[ancho_c, ancho_total - ancho_c])
         cuerpo.setStyle(TableStyle([
             ('VALIGN',       (0,0), (-1,-1), 'TOP'),
             ('LEFTPADDING',  (0,0), (0,0), 0),
             ('LEFTPADDING',  (1,0), (1,0), 18),
             ('RIGHTPADDING', (0,0), (-1,-1), 0),
         ]))
-        return [cajas, Spacer(1, 14), cuerpo]
-
-    if resumen:
-        # Hoja 1: el resumen, que es lo que se mira; desde la hoja 2, el
-        # detalle que lo respalda. Quien quiere saber cuánto ganó no tiene
-        # que pasar cuatro hojas de renglones para llegar a los totales.
-        elementos += _hoja_resumen(resumen, reporte.get('totales', {}))
-        elementos.append(PageBreak())
+        elementos += [recuadros(resumen['destacados']), Spacer(1, 14), cuerpo, PageBreak()]
         elementos.append(Paragraph(reporte['titulo'], ParagraphStyle(
             'titulo2', parent=st_titulo, fontSize=14)))
-        elementos.append(Paragraph(f'{sub}  ·  Los totales están en la página 1', st_sub))
+        elementos.append(Paragraph(f'{escape(sub)}  ·  Los totales están en la página 1', st_sub))
         elementos.append(tabla)
     else:
+        # Lo importante primero: las cifras del resumen y su desglose arriba
+        # de la hoja 1, el detalle debajo y la cuenta completa al final.
+        if resumen:
+            if resumen.get('destacados'):
+                elementos += [recuadros(resumen['destacados']), Spacer(1, 12)]
+            desglose = resumen.get('desglose')
+            if desglose and desglose.get('filas'):
+                elementos.append(Paragraph(escape(desglose['titulo']), st_seccion))
+                t = tabla_de(desglose['columnas'], desglose['filas'],
+                             set(desglose.get('cols_derecha', [])),
+                             min(ancho_total, 170 * mm))
+                t.hAlign = 'LEFT'
+                elementos += [t, Spacer(1, 12)]
+            elementos.append(Paragraph(reporte.get('titulo_detalle', 'Detalle'), st_seccion))
         elementos.append(tabla)
 
-        # Totales
-        if reporte.get('totales'):
-            elementos.append(Spacer(1, 10))
-            for k, v in reporte['totales'].items():
-                elementos.append(Paragraph(
-                    f'<b>{escape(str(k))}:</b> {escape(str(v))}',
-                    ParagraphStyle('tot', parent=styles['Normal'],
-                        fontSize=10, textColor=SIDEBAR, alignment=2, spaceAfter=2)))
+        if totales and not reporte.get('totales_solo_excel'):
+            t = cuenta(totales, ancho_cuenta)
+            t.hAlign = 'RIGHT'
+            elementos += [Spacer(1, 10), KeepTogether([t])]
 
         if reporte.get('notas'):
             # Juntas en la misma hoja: una nota suelta en otra página no se lee.
             elementos.append(Spacer(1, 12))
             elementos.append(KeepTogether(notas))
 
+    titulo_pie = reporte['titulo']
+
     def _pie_pagina(canvas, doc_):
-        """Pie con marca y número de página — evita hojas sueltas sin identificar."""
+        """Pie con el nombre del reporte y la página: una hoja suelta se reconoce."""
         canvas.saveState()
         canvas.setFont('Helvetica', 7.5)
         canvas.setFillColor(TEXTSEC)
         ancho_pagina = doc_.pagesize[0]
-        canvas.drawString(doc_.leftMargin, 10*mm, 'Oga Porã — Documento de uso interno')
+        canvas.drawString(doc_.leftMargin, 10*mm,
+                          f'Oga Porã — {titulo_pie} — {sub} — uso interno')
         canvas.drawRightString(ancho_pagina - doc_.rightMargin, 10*mm, f'Página {doc_.page}')
         canvas.restoreState()
 
@@ -249,71 +376,154 @@ def render_pdf(reporte: dict, tamanio: str = 'a4') -> bytes:
 # ════════════════════════════════════════════════════════
 # Render a Excel (openpyxl)
 # ════════════════════════════════════════════════════════
+FORMATO_GS = '"Gs." #,##0;[Red]-"Gs." #,##0'
+RE_GS = re.compile(r'^(-\s?)?Gs\.\s?(\d{1,3}(?:\.\d{3})*|\d+)$')
+# "12,60 m²", "0,735", "3 u.": solo con las unidades de UNIDAD_CORTA, para no
+# confundir con un texto como "3 cobros".
+RE_CANTIDAD = re.compile(
+    r'^(-?\d{1,3}(?:\.\d{3})*|-?\d+)(?:,(\d+))?(?:\s(m²|u\.|jgo\.|cajas|ml))?$')
+RE_PCT = re.compile(r'^(-?\d+),(\d) %$')
+
+
+def _a_numero(valor):
+    """
+    (número, formato de Excel) si `valor` es un importe, una cantidad o un
+    porcentaje escrito como lo imprime el reporte; None si es texto.
+
+    Los reportes arman sus celdas ya formateadas ("Gs. 1.518.000", "12,60
+    m²") porque así las lee el PDF. En el Excel eso quedaba como texto: no se
+    podía sumar una columna ni ordenar por monto. Se convierte acá, con el
+    mismo aspecto gracias al formato de número.
+    """
+    if not isinstance(valor, str):
+        return None
+    texto = valor.strip()
+    m = RE_GS.match(texto)
+    if m:
+        n = int(m.group(2).replace('.', ''))
+        return (-n if m.group(1) else n), FORMATO_GS
+    m = RE_CANTIDAD.match(texto)
+    if m:
+        entero, decimales, unidad = m.group(1).replace('.', ''), m.group(2), m.group(3)
+        if decimales is None and unidad is None:
+            return None     # un número suelto ("2026") puede ser un código
+        n = float(f'{entero}.{decimales or 0}')
+        formato = ('#,##0.00##' if decimales else '#,##0') + (f' "{unidad}"' if unidad else '')
+        return n, formato
+    m = RE_PCT.match(texto)
+    if m:
+        return float(f'{m.group(1)}.{m.group(2)}') / 100, '0.0 %'
+    return None
+
+
 def render_xlsx(reporte: dict) -> bytes:
     from openpyxl import Workbook
     from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+    from openpyxl.utils import get_column_letter
 
     wb = Workbook()
     ws = wb.active
     ws.title = reporte.get('hoja', 'Reporte')[:31]
 
-    GOLD_FILL = PatternFill('solid', fgColor='453941')
-    GOLD_FONT = Font(color='B99C74', bold=True, size=11)
+    HEAD_FILL = PatternFill('solid', fgColor='453941')
+    HEAD_FONT = Font(color='B99C74', bold=True, size=11)
+    TINTE     = PatternFill('solid', fgColor='F3EDE4')
     borde = Border(*[Side(style='thin', color='E8E4DF')]*4)
+    cols_der = set(reporte.get('cols_derecha', []))
+
+    def escribir(fila, col, valor, **estilo):
+        convertido = _a_numero(valor)
+        c = ws.cell(row=fila, column=col, value=convertido[0] if convertido else valor)
+        if convertido:
+            c.number_format = convertido[1]
+            c.alignment = Alignment(horizontal='right')
+        for k, v in estilo.items():
+            setattr(c, k, v)
+        return c
+
+    def encabezado(fila, columnas, derecha=()):
+        for col_idx, titulo in enumerate(columnas, 1):
+            c = ws.cell(row=fila, column=col_idx, value=titulo)
+            c.fill = HEAD_FILL; c.font = HEAD_FONT; c.border = borde
+            c.alignment = Alignment(horizontal='right' if (col_idx - 1) in derecha else 'left',
+                                    vertical='center', wrap_text=True)
 
     # Encabezado del documento
     ws['A1'] = 'ÓGA PORÃ — Acabados de Construcción'
     ws['A1'].font = Font(color='8a7355', bold=True, size=12)
     ws['A2'] = reporte['titulo']
     ws['A2'].font = Font(color='453941', bold=True, size=14)
-    ws['A3'] = f"{reporte.get('subtitulo','')}  ·  Generado: {datetime.now().strftime('%d/%m/%Y %H:%M')}"
+    ws['A3'] = (f"{reporte.get('subtitulo','')}  ·  Generado: "
+                f"{timezone.localtime().strftime('%d/%m/%Y %H:%M')}")
     ws['A3'].font = Font(color='6b6560', size=9)
 
     fila_header = 5
-    # Cabecera de columnas
-    for col_idx, titulo in enumerate(reporte['columnas'], 1):
-        c = ws.cell(row=fila_header, column=col_idx, value=titulo)
-        c.fill = GOLD_FILL; c.font = GOLD_FONT
-        c.alignment = Alignment(horizontal='left', vertical='center')
-        c.border = borde
-
-    # Filas de datos
-    for r_idx, fila in enumerate(reporte['filas'], fila_header+1):
+    encabezado(fila_header, reporte['columnas'], cols_der)
+    titulos = set(reporte.get('filas_titulo', []))
+    for r_idx, fila in enumerate(reporte['filas'], fila_header + 1):
+        es_titulo = (r_idx - fila_header - 1) in titulos
         for c_idx, valor in enumerate(fila, 1):
-            c = ws.cell(row=r_idx, column=c_idx, value=valor)
-            c.border = borde
-            c.font = Font(size=10)
-            if (c_idx-1) in reporte.get('cols_derecha', []):
+            c = escribir(r_idx, c_idx, valor, border=borde,
+                         font=Font(size=10, bold=es_titulo))
+            if es_titulo:
+                c.fill = TINTE
+            if (c_idx - 1) in cols_der:
                 c.alignment = Alignment(horizontal='right')
+
+    # El encabezado queda fijo al bajar, y cada columna se puede filtrar.
+    ultima_fila = fila_header + len(reporte['filas'])
+    ultima_col = get_column_letter(max(len(reporte['columnas']), 1))
+    ws.freeze_panes = ws.cell(row=fila_header + 1, column=1)
+    if reporte['filas'] and not titulos:
+        ws.auto_filter.ref = f'A{fila_header}:{ultima_col}{ultima_fila}'
 
     # Anchos de columna automáticos
     for col_idx, titulo in enumerate(reporte['columnas'], 1):
         max_len = len(str(titulo))
         for fila in reporte['filas']:
-            if col_idx-1 < len(fila):
-                max_len = max(max_len, len(str(fila[col_idx-1])))
-        ws.column_dimensions[ws.cell(row=fila_header, column=col_idx).column_letter].width = min(max_len+3, 45)
+            if col_idx - 1 < len(fila):
+                max_len = max(max_len, len(str(fila[col_idx - 1])))
+        ws.column_dimensions[get_column_letter(col_idx)].width = min(max_len + 3, 45)
 
-    # Totales
-    fila_tot = fila_header + len(reporte['filas']) + 2
+    # Totales: etiqueta y valor, el valor como número.
+    fila_tot = ultima_fila + 2
     if reporte.get('totales'):
         for k, v in reporte['totales'].items():
-            ws.cell(row=fila_tot, column=1, value=k).font = Font(bold=True, color='453941')
-            ws.cell(row=fila_tot, column=2, value=v).font = Font(bold=True)
+            sub = str(k).startswith('  ·')
+            ws.cell(row=fila_tot, column=1, value=str(k).strip()).font = \
+                Font(bold=not sub, color='6b6560' if sub else '453941')
+            escribir(fila_tot, 2, v, font=Font(bold=not sub))
             fila_tot += 1
         # La etiqueta tiene que leerse entera: el valor está en la columna
         # de al lado y corta lo que desborde.
         largo = max(len(str(k)) for k in reporte['totales']) + 2
         if (ws.column_dimensions['A'].width or 0) < largo:
             ws.column_dimensions['A'].width = min(largo, 60)
+        if (ws.column_dimensions['B'].width or 0) < 16:
+            ws.column_dimensions['B'].width = 16
+
+    # El desglose del resumen (por medio de pago, por ejemplo), como tabla aparte.
+    desglose = (reporte.get('resumen') or {}).get('desglose')
+    if desglose and desglose.get('filas'):
+        fila_tot += 1
+        ws.cell(row=fila_tot, column=1, value=desglose['titulo']).font = \
+            Font(bold=True, color='453941', size=11)
+        fila_tot += 1
+        der = set(desglose.get('cols_derecha', []))
+        encabezado(fila_tot, desglose['columnas'], der)
+        for fila in desglose['filas']:
+            fila_tot += 1
+            for c_idx, valor in enumerate(fila, 1):
+                escribir(fila_tot, c_idx, valor, border=borde, font=Font(size=10))
+        fila_tot += 1
 
     # Notas: una por renglón, combinada a lo ancho de la tabla y con ajuste
     # de texto. Excel no agranda solo una celda combinada, así que el alto
     # se estima por el largo del texto.
     if reporte.get('notas'):
         n_cols = max(len(reporte['columnas']), 2)
-        ancho = sum((ws.column_dimensions[ws.cell(row=fila_header, column=i).column_letter].width
-                     or 10) for i in range(1, n_cols + 1))
+        ancho = sum((ws.column_dimensions[get_column_letter(i)].width or 10)
+                    for i in range(1, n_cols + 1))
         fila_tot += 1
         ws.cell(row=fila_tot, column=1, value='Cómo leer este reporte').font = \
             Font(bold=True, color='453941')
@@ -324,6 +534,13 @@ def render_xlsx(reporte: dict) -> bytes:
             c.font = Font(size=10, color='6b6560')
             c.alignment = Alignment(wrap_text=True, vertical='top')
             ws.row_dimensions[fila_tot].height = 15 * (len(nota) // max(int(ancho * 0.9), 1) + 1)
+
+    # Al imprimir desde Excel: apaisada si es ancha, y a lo ancho de la hoja.
+    ws.page_setup.orientation = 'landscape' if len(reporte['columnas']) > 5 else 'portrait'
+    ws.page_setup.fitToWidth = 1
+    ws.page_setup.fitToHeight = 0
+    ws.sheet_properties.pageSetUpPr.fitToPage = True
+    ws.print_title_rows = f'{fila_header}:{fila_header}'
 
     out = io.BytesIO()
     wb.save(out)
@@ -337,49 +554,66 @@ def reporte_stock():
     from apps.inventario.models import Stock
     # Las mismas variantes y los mismos estados que la pantalla de
     # Inventario: el reporte es la versión impresa de esa pantalla.
-    qs = Stock.objects.select_related('variante__producto').filter(
-        variante__activa=True, variante__producto__activo=True,
-    )
-    etiquetas = {'disponible': 'Disponible', 'bajo': 'Bajo (25%)',
-                 'critico': 'Crítico (15%)', 'sin_stock': 'Sin stock'}
+    qs = Stock.objects.select_related(
+        'variante__producto__categoria', 'variante__acabado',
+    ).filter(variante__activa=True, variante__producto__activo=True)
+    etiquetas = {'disponible': 'Disponible', 'bajo': 'Stock bajo',
+                 'critico': 'Stock crítico', 'sin_stock': 'Sin stock'}
+    # Lo que hay que reponer va arriba: quien imprime el stock lo hace para
+    # saber qué falta, no para leer 130 renglones en orden alfabético.
+    urgencia = {'sin_stock': 0, 'critico': 1, 'bajo': 2, 'disponible': 3}
 
-    filas = []
-    total_unidades = 0
-    sin_stock = 0
-    criticos = 0
-    bajos = 0
+    registros = []
+    conteo = {k: 0 for k in etiquetas}
     for s in qs:
-        disp = float(s.cantidad_disponible)
-        total_unidades += disp
-        if s.estado == 'sin_stock': sin_stock += 1
-        elif s.estado == 'critico': criticos += 1
-        elif s.estado == 'bajo': bajos += 1
-        estado = etiquetas[s.estado]
-        filas.append([
-            s.variante.producto.nombre,
-            s.variante.sku,
-            str(s.variante),
-            f'{float(s.cantidad):.2f}',
-            f'{float(s.cantidad_reservada):.2f}',
-            f'{disp:.2f}',
-            f'{float(s.stock_minimo):.2f}',
-            estado,
-        ])
-    filas.sort(key=lambda f: f[0])
+        v, p = s.variante, s.variante.producto
+        unidad = UNIDAD_CORTA.get(p.unidad_venta, p.unidad_venta)
+        conteo[s.estado] += 1
+        registros.append(((urgencia[s.estado], p.nombre.lower(), _variante_txt(v)), [
+            p.nombre,
+            _variante_txt(v),
+            p.categoria.nombre,
+            _cantidad(s.cantidad, unidad),
+            _cantidad(s.cantidad_reservada, unidad),
+            _cantidad(s.cantidad_disponible, unidad),
+            etiquetas[s.estado],
+            v.sku,
+            _cantidad(s.stock_minimo, unidad),
+        ]))
+    registros.sort(key=lambda r: r[0])
+    filas = [f for _, f in registros]
+    a_reponer = conteo['sin_stock'] + conteo['critico'] + conteo['bajo']
 
     return {
         'titulo':    'Reporte de Stock',
-        'subtitulo': f'{qs.count()} variantes registradas',
+        'subtitulo': f'{len(filas)} productos y variantes · al {timezone.localdate():%d/%m/%Y}',
         'hoja':      'Stock',
-        'columnas':  ['Producto','SKU','Variante','Stock','Reservado','Disponible','Mínimo','Estado'],
-        'cols_derecha': [3,4,5,6],
+        'columnas':  ['Producto', 'Variante', 'Categoría', 'En depósito', 'Reservado',
+                      'Disponible', 'Estado', 'SKU', 'Mínimo'],
+        'cols_derecha': [3, 4, 5, 8],
+        'solo_excel': [7, 8],
         'filas':     filas,
+        'resumen': {'destacados': [
+            ('Con stock', conteo['disponible'], 'sin problemas'),
+            ('Stock bajo', conteo['bajo'], 'queda 25 % o menos'),
+            ('Stock crítico', conteo['critico'], 'queda 15 % o menos'),
+            ('Sin stock', conteo['sin_stock'], 'no se puede vender'),
+        ]},
+        'titulo_detalle': ('Detalle — primero lo que hay que reponer' if a_reponer
+                           else 'Detalle'),
         'totales': {
-            'Variantes sin stock':  sin_stock,
-            'Variantes en crítico': criticos,
-            'Variantes con stock bajo': bajos,
-            'Total unidades disponibles': f'{total_unidades:.2f}',
+            'Variantes con stock':      conteo['disponible'],
+            'Variantes con stock bajo': conteo['bajo'],
+            'Variantes en crítico':     conteo['critico'],
+            'Variantes sin stock':      conteo['sin_stock'],
+            '(=) Para reponer':         a_reponer,
         },
+        'notas': [
+            '"En depósito" es lo que hay físicamente; "Reservado" está apartado para '
+            'pedidos que todavía no se cobraron; "Disponible" es lo que se puede vender hoy.',
+            'Cada producto se cuenta en su unidad: m² para pisos y revestimientos, '
+            'u. (unidades) para grifería, sanitarios y accesorios, jgo. para juegos.',
+        ],
     }
 
 
@@ -402,93 +636,143 @@ def reporte_ventas(desde: date, hasta: date):
     listar aparte los créditos que se usaron para pagar otro pedido. Lo que
     sí se hace es nombrarlo: el renglón dice "Cambio" con la venta original,
     y un cambio sin diferencia no se cuenta como cobro ni como medio de pago.
+
+    El resumen "por medio de pago" suma las líneas de cada cobro, no
+    `Pago.medio_pago`: un pago mixto de efectivo + cheque se reparte entre
+    los dos, en vez de aparecer como un medio más llamado "Pago mixto".
     """
     from apps.caja.models import Devolucion, Pago
     from apps.caja.devoluciones import resumen_cambios
 
+    etiquetas = dict(Pago.MEDIOS)
     pagos = Pago.objects.filter(
         estado=Pago.ESTADO_CONFIRMADO,
         fecha__date__gte=desde,
         fecha__date__lte=hasta,
     ).select_related('pedido', 'cajero',
-                     'devolucion_aplicada__pago_original__pedido').order_by('fecha')
+                     'devolucion_aplicada__pago_original__pedido'
+                     ).prefetch_related('medios').order_by('fecha')
 
     movimientos = []
+    por_medio = {}          # medio → [cobros, monto]
     for p in pagos:
         cambio = getattr(p, 'devolucion_aplicada', None)
         pedido_txt = p.pedido.numero if p.pedido else '—'
-        medio_txt = p.get_medio_pago_display()
+        lineas = [l for l in p.medios.all() if l.monto]
+        # "Cheque + Efectivo", sin repetir el medio si hubo dos cheques.
+        medio_txt = (' + '.join(dict.fromkeys(etiquetas.get(l.medio, l.medio) for l in lineas))
+                     or p.get_medio_pago_display())
         if cambio is not None:
             pedido_txt = (f'Cambio {pedido_txt} '
                           f'(venta {cambio.pago_original.pedido.numero})')
             if not p.monto:
                 medio_txt = 'Sin diferencia'
+        for l in lineas:
+            r = por_medio.setdefault(l.medio, [0, 0.0])
+            r[0] += 1
+            r[1] += float(l.monto)
         movimientos.append((p.fecha, [
             _fecha(p.fecha),
-            p.numero_ticket or '—',
-            pedido_txt,
             p.pedido.cliente_nombre if p.pedido and p.pedido.cliente_nombre else 'Consumidor Final',
+            pedido_txt,
             medio_txt,
+            p.numero_ticket or '—',
             p.cajero.nombre_completo,
         ], float(p.monto), cambio is not None))
     for d in _reintegros(desde, hasta):
         pedido = d.pago_original.pedido
+        r = por_medio.setdefault(d.medio_reintegro, [0, 0.0])
+        r[1] -= float(d.monto_reintegro)
         movimientos.append((d.fecha, [
             _fecha(d.fecha),
-            d.numero,
+            pedido.cliente_nombre or 'Consumidor Final',
             (f'Cambio {pedido.numero}: reintegro' if d.pedido_cambio_id
              else f'Devolución {pedido.numero}'),
-            pedido.cliente_nombre or 'Consumidor Final',
-            d.get_medio_reintegro_display(),
+            f'Reintegro en {d.get_medio_reintegro_display().lower()}',
+            d.numero,
             d.usuario.nombre_completo,
         ], -float(d.monto_reintegro), bool(d.pedido_cambio_id)))
     movimientos.sort(key=lambda m: m[0])
 
     filas = []
     total_general = 0
+    total_cobrado = 0
     total_reintegros = 0
     cobros = 0
-    por_medio = {}
+    cobrado_ventas = 0      # sin la diferencia de los cambios: para el promedio
     for _, fila, monto, es_cambio in movimientos:
         total_general += monto
         if monto < 0:
             total_reintegros += -monto
-        elif not es_cambio:
-            cobros += 1
-        if monto:
-            medio = fila[4]
-            por_medio[medio] = por_medio.get(medio, 0) + monto
-        filas.append(fila + [_gs(monto) if monto >= 0 else f'- {_gs(-monto)}'])
+        else:
+            total_cobrado += monto
+            if not es_cambio:
+                cobros += 1
+                cobrado_ventas += monto
+        filas.append(fila[:4] + [_gs_signo(monto)] + fila[4:])
 
     cambios = resumen_cambios(Devolucion.objects.filter(
         fecha__date__gte=desde, fecha__date__lte=hasta))
 
-    totales = {'Total de ventas': _gs(total_general),
-               'Cantidad de cobros': cobros}
+    totales = {'Cobrado en el período': _gs(total_cobrado)}
     if total_reintegros:
-        totales['Reintegros por devolución'] = f'- {_gs(total_reintegros)}'
+        totales['(-) Reintegros por devolución'] = f'- {_gs(total_reintegros)}'
+    totales['(=) Total de ventas'] = _gs_signo(total_general)
+    totales['Cantidad de cobros'] = cobros
     if cambios['cantidad']:
         totales['Cambios de producto'] = cambios['cantidad']
         totales['  · Crédito tomado de lo devuelto'] = _gs(cambios['credito'])
         totales['  · Diferencia cobrada en cambios'] = _gs(cambios['diferencia_cobrada'])
         if cambios['reintegrado']:
             totales['  · Reintegrado en cambios'] = f'- {_gs(cambios["reintegrado"])}'
-    for medio, m in por_medio.items():
-        totales[f'  · {medio}'] = _gs(m) if m >= 0 else f'- {_gs(-m)}'
+
+    orden = [m for m, _ in Pago.MEDIOS]
+    desglose = [[etiquetas.get(m, m), c or '—', _gs_signo(v)]
+                for m, (c, v) in sorted(por_medio.items(),
+                                        key=lambda kv: orden.index(kv[0]) if kv[0] in orden else 99)]
+
+    destacados = [
+        ('Total de ventas', _gs_signo(total_general),
+         'cobrado menos reintegros' if total_reintegros else 'lo cobrado en el período'),
+        ('Cobros', cobros, 'ventas cobradas'),
+        ('Ticket promedio', _gs(cobrado_ventas / cobros) if cobros else '—', 'por venta'),
+    ]
+    if total_reintegros or cambios['cantidad']:
+        destacados.append(('Devoluciones y cambios', f'- {_gs(total_reintegros)}',
+                           f'{cambios["cantidad"]} cambio(s) de producto'))
 
     return {
         'titulo':    'Balance de Ventas',
-        'subtitulo': f'Del {desde.strftime("%d/%m/%Y")} al {hasta.strftime("%d/%m/%Y")}',
+        'subtitulo': _rango(desde, hasta),
         'hoja':      'Ventas',
-        'columnas':  ['Fecha','Ticket','Pedido','Cliente','Medio','Cajero','Monto'],
-        'cols_derecha': [6],
+        'columnas':  ['Fecha', 'Cliente', 'Pedido', 'Medio', 'Monto', 'Ticket', 'Cajero'],
+        'cols_derecha': [4],
+        'solo_excel': [5, 6],
         'filas':     filas,
         'totales':   totales,
+        'resumen': {
+            'destacados': destacados,
+            'desglose': {
+                'titulo': 'Por medio de pago',
+                'columnas': ['Medio', 'Cobros', 'Monto'],
+                'cols_derecha': [1, 2],
+                'filas': desglose,
+            },
+        },
+        'titulo_detalle': 'Detalle — un renglón por cobro',
+        'notas': ([
+            'Un pago mixto (por ejemplo efectivo + cheque) es un solo cobro en el detalle, '
+            'pero en "Por medio de pago" cada parte suma en su medio.'
+        ] + ([
+            'Una devolución resta lo reintegrado al cliente. En un cambio de producto solo '
+            'se cobra (o se reintegra) la diferencia, y no cuenta como una venta nueva.'
+        ] if total_reintegros or cambios['cantidad'] else [])),
     }
 
 
 def reporte_caja(desde: date, hasta: date):
-    from apps.caja.models import SesionCaja, Pago, PagoMedio
+    """Una fila por turno de caja: con cuánto abrió, qué cobró y con cuánto cerró."""
+    from apps.caja.models import SesionCaja, Pago
 
     sesiones = SesionCaja.objects.filter(
         fecha_apertura__date__gte=desde,
@@ -498,6 +782,7 @@ def reporte_caja(desde: date, hasta: date):
     filas = []
     total_ventas = 0
     total_reintegros = 0
+    abiertas = 0
     for s in sesiones:
         ventas = Pago.objects.filter(
             sesion_caja=s, estado=Pago.ESTADO_CONFIRMADO
@@ -505,48 +790,73 @@ def reporte_caja(desde: date, hasta: date):
         reintegros = float(s.total_reintegros())
         total_ventas += float(ventas)
         total_reintegros += reintegros
+        abierta = s.estado != 'cerrada'
+        abiertas += abierta
         filas.append([
-            _fecha(s.fecha_apertura),
-            _fecha(s.fecha_cierre) if s.fecha_cierre else 'Abierta',
             s.cajero.nombre_completo,
+            _fecha(s.fecha_apertura),
+            _fecha(s.fecha_cierre) if s.fecha_cierre else ('Sigue abierta' if abierta else '—'),
             _gs(s.monto_apertura),
-            _gs(s.monto_cierre) if s.monto_cierre is not None else '—',
             _gs(ventas),
             f'- {_gs(reintegros)}' if reintegros else '—',
             _gs(float(ventas) - reintegros),
-            'Cerrada' if s.estado == 'cerrada' else 'Abierta',
+            _gs(s.monto_cierre) if s.monto_cierre is not None else '—',
         ])
 
+    neto = total_ventas - total_reintegros
     return {
         'titulo':    'Extracto de Caja',
-        'subtitulo': f'Del {desde.strftime("%d/%m/%Y")} al {hasta.strftime("%d/%m/%Y")}',
+        'subtitulo': _rango(desde, hasta),
         'hoja':      'Caja',
-        'columnas':  ['Apertura','Cierre','Cajero','M. Apertura','M. Cierre',
-                      'Cobros','Reintegros','Neto','Estado'],
-        'cols_derecha': [3,4,5,6,7],
+        'columnas':  ['Cajero', 'Abrió', 'Cerró', 'Monto inicial', 'Cobrado',
+                      'Reintegros', 'Neto del turno', 'Declarado al cerrar'],
+        'cols_derecha': [3, 4, 5, 6, 7],
         'filas':     filas,
+        'resumen': {'destacados': [
+            ('Turnos de caja', len(filas),
+             f'{abiertas} sigue(n) abierta(s)' if abiertas else 'todos cerrados'),
+            ('Cobrado', _gs(total_ventas), 'todos los medios de pago'),
+            ('Reintegros', f'- {_gs(total_reintegros)}' if total_reintegros else _gs(0),
+             'por devoluciones'),
+            ('Neto del período', _gs(neto), None),
+        ]},
+        'titulo_detalle': 'Detalle — un renglón por turno',
         'totales': {
-            'Sesiones': len(filas),
-            'Total cobrado del período': _gs(total_ventas),
-            'Reintegros por devolución': f'- {_gs(total_reintegros)}' if total_reintegros else _gs(0),
-            'Total neto del período': _gs(total_ventas - total_reintegros),
+            'Turnos de caja': len(filas),
+            'Cobrado en el período': _gs(total_ventas),
+            '(-) Reintegros por devolución': f'- {_gs(total_reintegros)}' if total_reintegros else _gs(0),
+            '(=) Neto del período': _gs(neto),
         },
+        'notas': [
+            '"Declarado al cerrar" es el efectivo que contó la cajera al cerrar el turno. '
+            'Para comparar contra lo que tenía que haber en el cajón, usá el Arqueo de Caja del día.',
+        ],
     }
 
 
 def _cantidad(valor, unidad=''):
     """
-    Cantidad con dos decimales y su unidad.
+    Cantidad exacta y su unidad: "12,60 m²", "0,735 m²", "3 u.".
 
     Los productos que se venden por m² se piden en fracciones (media caja,
     3,15 m²), así que redondear a entero cambia el número que la propietaria
-    usa para reponer. Se muestra el valor exacto, con la unidad al lado para
-    que se lea qué se está contando.
+    usa para reponer. Se muestran los decimales que guarda el sistema (hasta
+    cuatro, como la pantalla: tres piezas de 0,245 m² son 0,735 y no 0,74),
+    con la unidad al lado para que se lea qué se está contando. Lo que se
+    cuenta de a uno (grifos, juegos) sale entero cuando lo es: "3 u." y no
+    "3,00 u.".
     """
     try:
-        texto = f'{float(valor):,.2f}'.replace(',', 'X').replace('.', ',').replace('X', '.')
-    except (ValueError, TypeError):
-        texto = '0,00'
+        numero = Decimal(str(valor)).quantize(Decimal('0.0001'))
+    except Exception:
+        numero = Decimal('0')
+    if unidad != 'm²' and numero == numero.to_integral_value():
+        texto = f'{int(numero):,}'
+    else:
+        texto = f'{numero:,.4f}'.rstrip('0')
+        entero, _, dec = texto.partition('.')
+        texto = f'{entero}.{dec.ljust(2, "0")}'
+    texto = texto.replace(',', 'X').replace('.', ',').replace('X', '.')
     return f'{texto} {unidad}'.strip()
 
 
@@ -617,7 +927,7 @@ def reporte_productos(desde: date, hasta: date, detalle: bool = False):
     """
     filas = []
     total_ingresos = 0.0
-    subtitulo_rango = f'Del {desde.strftime("%d/%m/%Y")} al {hasta.strftime("%d/%m/%Y")}'
+    subtitulo_rango = _rango(desde, hasta)
 
     if detalle:
         for pago, item in _items_vendidos(desde, hasta):
@@ -629,7 +939,7 @@ def reporte_productos(desde: date, hasta: date, detalle: bool = False):
             filas.append([
                 _fecha(pago.fecha),
                 variante.producto.nombre,
-                str(variante),
+                _variante_txt(variante),
                 variante.sku,
                 _cantidad(item.cantidad, unidad),
                 _gs(item.precio_unitario),
@@ -648,7 +958,7 @@ def reporte_productos(desde: date, hasta: date, detalle: bool = False):
             filas.append([
                 _fecha(devolucion.fecha),
                 variante.producto.nombre,
-                str(variante),
+                _variante_txt(variante),
                 variante.sku,
                 _cantidad(-dev_item.cantidad, unidad),
                 _gs(dev_item.item_pedido.precio_unitario),
@@ -664,10 +974,16 @@ def reporte_productos(desde: date, hasta: date, detalle: bool = False):
             'columnas':  ['Fecha', 'Producto', 'Variante', 'SKU', 'Cantidad',
                           'Precio unit.', 'Total', 'Cliente', 'Pedido'],
             'cols_derecha': [4, 5, 6],
+            'solo_excel': [3],
             'filas':     filas,
+            'resumen': {'destacados': [
+                ('Total vendido', _gs_signo(total_ingresos), 'menos lo devuelto'),
+                ('Renglones de venta', len(filas), None),
+            ]},
+            'titulo_detalle': 'Detalle — un renglón por producto vendido',
             'totales': {
                 'Líneas de venta': len(filas),
-                'Total facturado': _gs(total_ingresos),
+                '(=) Total vendido': _gs_signo(total_ingresos),
             },
         }
 
@@ -677,7 +993,7 @@ def reporte_productos(desde: date, hasta: date, detalle: bool = False):
         variante = item.variante
         registro = acumulado.setdefault(variante.id, {
             'producto': variante.producto.nombre,
-            'variante': str(variante),
+            'variante': _variante_txt(variante),
             'sku':      variante.sku,
             'unidad':   UNIDAD_CORTA.get(variante.producto.unidad_venta,
                                          variante.producto.unidad_venta),
@@ -698,7 +1014,7 @@ def reporte_productos(desde: date, hasta: date, detalle: bool = False):
         fecha = dev_item.devolucion.fecha
         registro = acumulado.setdefault(variante.id, {
             'producto': variante.producto.nombre,
-            'variante': str(variante),
+            'variante': _variante_txt(variante),
             'sku':      variante.sku,
             'unidad':   UNIDAD_CORTA.get(variante.producto.unidad_venta,
                                          variante.producto.unidad_venta),
@@ -711,7 +1027,8 @@ def reporte_productos(desde: date, hasta: date, detalle: bool = False):
         registro['cantidad'] -= float(dev_item.cantidad)
         registro['ingresos'] -= float(dev_item.monto)
 
-    for r in sorted(acumulado.values(), key=lambda r: -r['ingresos']):
+    ordenados = sorted(acumulado.values(), key=lambda r: -r['ingresos'])
+    for r in ordenados:
         total_ingresos += r['ingresos']
         filas.append([
             r['producto'],
@@ -731,11 +1048,23 @@ def reporte_productos(desde: date, hasta: date, detalle: bool = False):
         'columnas':  ['Producto', 'Variante', 'SKU', 'Cantidad vendida',
                       'Ventas', 'Primera venta', 'Última venta', 'Ingresos'],
         'cols_derecha': [3, 4, 7],
+        'solo_excel': [2],
         'filas':     filas,
+        'resumen': {'destacados': [
+            ('Total vendido', _gs_signo(total_ingresos), 'menos lo devuelto'),
+            ('Productos distintos', len(filas), 'variantes que se vendieron'),
+            ('El que más vendió', ordenados[0]['producto'] if ordenados else '—',
+             _gs(ordenados[0]['ingresos']) if ordenados else None),
+        ]},
+        'titulo_detalle': 'Detalle — de lo que más ingresó a lo que menos',
         'totales': {
             'Variantes distintas vendidas': len(filas),
-            'Total facturado': _gs(total_ingresos),
+            '(=) Total vendido': _gs_signo(total_ingresos),
         },
+        'notas': [
+            '"Cantidad vendida" ya descuenta lo que se devolvió en el período. '
+            '"Ventas" es en cuántos cobros distintos salió el producto.',
+        ],
     }
 
 
@@ -762,7 +1091,7 @@ def reporte_ganancias(desde: date, hasta: date, detalle: bool = False):
     from . import ganancias
 
     datos = ganancias.resumen(desde, hasta, con_lineas=True)
-    subtitulo = f'Del {desde.strftime("%d/%m/%Y")} al {hasta.strftime("%d/%m/%Y")}'
+    subtitulo = _rango(desde, hasta)
     filas = []
 
     def unidad(variante):
@@ -776,7 +1105,7 @@ def reporte_ganancias(desde: date, hasta: date, detalle: bool = False):
                 _fecha(l.fecha),
                 v.producto.nombre + (' (devolución' + (', dañada' if l.danada else '') + ')'
                                      if l.devolucion else ''),
-                str(v),
+                _variante_txt(v),
                 _cantidad(l.cantidad, unidad(v)),
                 _gs(costo_u) if costo_u is not None else 'sin costo',
                 _gs(l.ingreso / l.cantidad) if l.cantidad else '—',
@@ -810,7 +1139,7 @@ def reporte_ganancias(desde: date, hasta: date, detalle: bool = False):
             v, cant = r['v'], r['cantidad']
             filas.append([
                 v.producto.nombre,
-                str(v),
+                _variante_txt(v),
                 _cantidad(cant, unidad(v)),
                 'sin costo' if r['sin_costo'] else (_gs(r['costo'] / cant) if cant else '—'),
                 _gs(r['ingreso'] / cant) if cant else '—',
@@ -877,6 +1206,7 @@ def reporte_ganancias(desde: date, hasta: date, detalle: bool = False):
         'notas':     notas,
         # Solo el PDF: hoja 1 con esto y los totales, el detalle desde la hoja 2.
         'resumen': {
+            'hoja_aparte': True,
             'titulo': 'Resumen de ganancias',
             'destacados': [
                 ('Cobrado por mercadería', _gs(datos['ingresos']), None),
@@ -892,10 +1222,14 @@ def reporte_ganancias(desde: date, hasta: date, detalle: bool = False):
 
 def reporte_comisiones(desde: date, hasta: date):
     """
-    Lo que el banco descuenta de cada cobro con tarjeta, QR o PIX, armado
-    como la liquidación del banco para poder conciliarla renglón por renglón:
-    cobrado, comisión, IVA de la comisión, las dos retenciones y el neto que
-    se acredita. La cuenta está en apps/caja/comisiones.py.
+    Lo que el banco descuenta de cada cobro con tarjeta, QR o PIX. La cuenta
+    está en apps/caja/comisiones.py.
+
+    En papel van las cuatro cifras que importan, igual que la solapa de
+    Costos: cobrado, comisión + IVA, retenciones y lo que acredita el banco.
+    El Excel trae además cada componente por separado (comisión, su IVA, las
+    dos retenciones), que es como viene la liquidación del banco, para
+    conciliarla renglón por renglón.
     """
     from . import comisiones
     from apps.caja.models import Pago
@@ -904,43 +1238,71 @@ def reporte_comisiones(desde: date, hasta: date):
     filas = []
     total = comisiones.Desglose(cobrado=Decimal('0'))
     por_medio = {}
+    cobros = {}
     for l in comisiones.lineas(desde, hasta):
         d, linea = l.desglose, l.linea
         total = total + d
         por_medio[linea.medio] = por_medio.get(
             linea.medio, comisiones.Desglose(cobrado=Decimal('0'))) + d
+        cobros[linea.medio] = cobros.get(linea.medio, 0) + 1
         tasa = l.tasa
         filas.append([
             _fecha(l.fecha),
-            linea.pago.numero_ticket,
             linea.pago.pedido.cliente_nombre or 'Consumidor Final',
+            linea.pago.numero_ticket,
             etiquetas.get(linea.medio, linea.medio),
             (f'{tasa.porcentaje.normalize()} %' + (' + IVA' if tasa.iva_aparte else ' IVA incl.'))
             if tasa else 'sin tasa',
-            _gs(d.cobrado), _gs(d.comision), _gs(d.iva_comision),
-            _gs(d.retencion_renta), _gs(d.retencion_iva), _gs(d.neto),
+            _gs(d.cobrado),
+            f'- {_gs(d.costo)}',
+            f'- {_gs(d.retenciones)}',
+            _gs(d.neto),
+            _gs(d.comision), _gs(d.iva_comision),
+            _gs(d.retencion_renta), _gs(d.retencion_iva),
         ])
 
-    totales = {}
-    for medio, d in por_medio.items():
-        totales[f'{etiquetas.get(medio, medio)}: cobrado {_gs(d.cobrado)}'] = \
-            f'descuentan {_gs(d.descuento)} · acreditan {_gs(d.neto)}'
-    totales.update({
-        'Total cobrado con medios bancarios': _gs(total.cobrado),
-        'Comisiones + IVA (costo del local)': _gs(total.costo),
-        'Retenciones de renta e IVA (a cuenta de impuestos)': _gs(total.retenciones),
-        'Neto acreditado por los bancos': _gs(total.neto),
-    })
+    desglose = [[etiquetas.get(m, m), cobros[m], _gs(d.cobrado), f'- {_gs(d.costo)}',
+                 f'- {_gs(d.retenciones)}', _gs(d.neto)] for m, d in por_medio.items()]
+    n_cobros = sum(cobros.values())
     return {
         'titulo':    'Comisiones bancarias',
-        'subtitulo': f'Del {desde.strftime("%d/%m/%Y")} al {hasta.strftime("%d/%m/%Y")}'
-                     ' · tarjetas, QR y PIX',
+        'subtitulo': _rango(desde, hasta) + ' · tarjetas, QR y PIX',
         'hoja':      'Comisiones',
-        'columnas':  ['Fecha', 'Ticket', 'Cliente', 'Medio', 'Tasa', 'Cobrado', 'Comisión',
-                      'IVA s/comisión', 'Ret. renta', 'Ret. IVA', 'Neto acreditado'],
-        'cols_derecha': [5, 6, 7, 8, 9, 10],
+        'columnas':  ['Fecha', 'Cliente', 'Ticket', 'Medio', 'Tasa', 'Cobrado',
+                      'Comisión + IVA', 'Retenciones', 'Te acredita',
+                      'Comisión', 'IVA s/comisión', 'Ret. renta', 'Ret. IVA'],
+        'cols_derecha': [5, 6, 7, 8, 9, 10, 11, 12],
+        'solo_excel': [2, 9, 10, 11, 12],
         'filas':     filas,
-        'totales':   totales,
+        'resumen': {
+            'destacados': [
+                ('Cobrado con tarjetas, QR y PIX', _gs(total.cobrado),
+                 f'{n_cobros} cobro{"s" if n_cobros != 1 else ""}'),
+                ('Comisiones + IVA', f'- {_gs(total.costo)}', 'lo que cobra el banco'),
+                ('Retenciones', f'- {_gs(total.retenciones)}', 'a cuenta de impuestos'),
+                ('Te acredita el banco', _gs(total.neto), None),
+            ],
+            'desglose': {
+                'titulo': 'Por medio de pago',
+                'columnas': ['Medio', 'Cobros', 'Cobrado', 'Comisión + IVA',
+                             'Retenciones', 'Te acredita'],
+                'cols_derecha': [1, 2, 3, 4, 5],
+                'filas': desglose,
+            },
+        },
+        'titulo_detalle': 'Detalle — un renglón por cobro',
+        'totales': {
+            'Cobrado con tarjetas, QR y PIX': _gs(total.cobrado),
+            '(-) Comisiones + IVA (costo del local)': f'- {_gs(total.costo)}',
+            '(-) Retenciones de renta e IVA': f'- {_gs(total.retenciones)}',
+            '(=) Te acredita el banco': _gs(total.neto),
+        },
+        'notas': [
+            'Esto se calcula solo con los cobros registrados en Caja: no hay que cargar nada aparte.',
+            'La comisión y su IVA son el costo del local y se restan de la ganancia. Las '
+            'retenciones no son una pérdida: el banco las paga a la DNIT a nombre del local '
+            'y se descuentan en la liquidación de impuestos.',
+        ],
     }
 
 
@@ -977,6 +1339,8 @@ def reporte_arqueo(dia: date):
     total_cobrado_dia = 0.0
     total_efectivo_dia = 0.0
     diferencia_dia = 0.0
+    esperado_dia = 0.0
+    sin_cerrar = 0
     cambios_dia = 0
 
     for sesion in sesiones:
@@ -1001,6 +1365,7 @@ def reporte_arqueo(dia: date):
         reintegro_efectivo = float(sesion.total_reintegros(Pago.MEDIO_EFECTIVO))
         apertura = float(sesion.monto_apertura or 0)
         esperado = apertura + efectivo - reintegro_efectivo
+        esperado_dia += esperado
 
         total_cobrado_dia  += cobrado
         total_efectivo_dia += efectivo - reintegro_efectivo
@@ -1081,6 +1446,7 @@ def reporte_arqueo(dia: date):
             filas.append(['   Declarado al cerrar', '', _gs(declarado)])
             filas.append(['   Diferencia', leyenda, _gs(abs(diferencia))])
         else:
+            sin_cerrar += 1
             filas.append(['   Declarado al cerrar', 'la caja sigue abierta', '________'])
             filas.append(['   Diferencia', 'se calcula al cerrar', '________'])
 
@@ -1101,21 +1467,53 @@ def reporte_arqueo(dia: date):
     filas.append(['Cuenta el efectivo', 'firma', '__________________'])
     filas.append(['Controla', 'firma', '__________________'])
 
+    if abs(diferencia_dia) < 0.005:
+        leyenda_dia = 'cuadra'
+    else:
+        leyenda_dia = 'sobrante' if diferencia_dia > 0 else 'faltante'
+    if sin_cerrar:
+        nota_dif = f'{sin_cerrar} caja(s) sin cerrar todavía'
+    elif not sesiones:
+        nota_dif = 'no hubo cajas'
+    else:
+        nota_dif = 'lo contado contra lo esperado'
+    titulos = [n for n, f in enumerate(filas)
+               if f[0].startswith('CAJA DE ') or f[0] == 'CONTEO FÍSICO DEL EFECTIVO']
+
     return {
         'titulo':    'Arqueo de Caja',
-        'subtitulo': f'Día {dia.strftime("%d/%m/%Y")} · {sesiones.count()} sesión(es)',
+        'subtitulo': f'Día {dia.strftime("%d/%m/%Y")} · {sesiones.count()} caja(s) abierta(s) ese día',
         'hoja':      'Arqueo',
         'columnas':  ['Concepto', 'Detalle', 'Monto'],
         'cols_derecha': [2],
         'filas':     filas,
+        'filas_titulo': titulos,
+        'resumen': {'destacados': [
+            ('Cobrado en el día', _gs(total_cobrado_dia), 'todos los medios'),
+            ('Efectivo esperado', _gs(esperado_dia), 'lo que tiene que haber en los cajones'),
+            ('Diferencia', ('' if leyenda_dia == 'cuadra' else
+                            ('- ' if leyenda_dia == 'faltante' else '+ ')) + _gs(abs(diferencia_dia)),
+             f'{leyenda_dia} · {nota_dif}'),
+            ('Acreditan los bancos', _gs(total_banco_dia.neto), 'tarjetas, QR y PIX, ya descontado'),
+        ]},
+        'titulo_detalle': 'Caja por caja',
+        # En papel las cifras ya están arriba, y debajo de la planilla de
+        # conteo y las firmas no se leerían.
+        'totales_solo_excel': True,
         'totales': {
             'Total cobrado en el día':   _gs(total_cobrado_dia),
             'Efectivo neto (sin reintegros)': _gs(total_efectivo_dia),
-            'Diferencia acumulada':      _gs(diferencia_dia),
+            'Efectivo que debía haber en los cajones': _gs(esperado_dia),
+            f'Diferencia del día ({leyenda_dia})': _gs(abs(diferencia_dia)),
             'Cambios de producto en el día': cambios_dia,
             'Descuento del banco en el día': f'- {_gs(total_banco_dia.descuento)}',
             'Neto que acreditan los bancos': _gs(total_banco_dia.neto),
         },
+        'notas': [
+            'Solo el efectivo se cuenta en el cajón: lo cobrado con tarjeta, QR, PIX, '
+            'transferencia o cheque no está ahí, por eso no entra en la diferencia.',
+            'Al final de la hoja está la planilla para contar los billetes a mano.',
+        ],
     }
 
 

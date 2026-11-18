@@ -98,6 +98,22 @@ class CobrosTests(BaseDevolucionTests):
         self.assertEqual(r['total'].cobrado, Decimal('200000'))
         self.assertEqual(r['total'].comision, Decimal('6000'))
 
+    def test_la_solapa_muestra_cuantos_cobros_hubo_por_medio(self):
+        # La solapa de Costos es lo que la propietaria mira para saber que
+        # sus cobros con tarjeta ya entraron solos: tiene que poder contarlos.
+        self._vender([(self.porcelanato, '1', '150000')], medio='credito')
+        self._vender([(self.porcelanato, '1', '150000')], medio='credito')
+        self._vender([(self.porcelanato, '1', '150000')], medio='pix')
+        self._vender([(self.porcelanato, '1', '150000')], medio='efectivo')
+        admin = crear_usuario('admin_solapa', rol='admin')
+        api = APIClient()
+        api.force_authenticate(admin)
+        mes = api.get('/api/v1/caja/comisiones/').data['mes']
+        self.assertEqual(mes['total']['cobros'], 3)
+        self.assertEqual({m['medio']: m['cobros'] for m in mes['por_medio']},
+                         {'credito': 2, 'pix': 1})
+        self.assertEqual(mes['hasta'], self.hoy.isoformat())
+
     def test_ganancia_neta_resta_comision_y_no_retenciones(self):
         self._vender([(self.porcelanato, '2', '150000')], medio='qr_credito')
         r = ganancias.resumen(self.hoy, self.hoy)
@@ -132,7 +148,7 @@ class CobrosTests(BaseDevolucionTests):
         r = reportes.reporte_comisiones(self.hoy, self.hoy)
         self.assertEqual(len(r['filas']), 1)
         self.assertEqual(r['filas'][0][3], 'PIX')
-        self.assertEqual(r['totales']['Comisiones + IVA (costo del local)'], reportes._gs(3300))
+        self.assertEqual(r['totales']['(-) Comisiones + IVA (costo del local)'], '- ' + reportes._gs(3300))
 
 
 class ApiTasasTests(TestCase):

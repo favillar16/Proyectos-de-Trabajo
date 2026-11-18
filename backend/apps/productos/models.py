@@ -140,6 +140,11 @@ class Producto(ModeloSincronizable):
         (UNIDAD_CAJA,  'Caja'),
         (UNIDAD_ML,    'Metro lineal'),
     ]
+    # Para los textos de cantidades: "4 piezas", "12,6 m²".
+    UNIDADES_PLURAL = {
+        UNIDAD_M2: 'm²', UNIDAD_PIEZA: 'piezas', UNIDAD_JUEGO: 'juegos',
+        UNIDAD_CAJA: 'cajas', UNIDAD_ML: 'metros lineales',
+    }
 
     # ── Identificación ────────────────────────────────────────
     codigo      = models.CharField(max_length=50, unique=True, db_index=True)
@@ -609,13 +614,37 @@ class Variante(ModeloSincronizable):
             )
         return None
 
+    @property
+    def unidades_por_caja(self):
+        """
+        Cuánto de la unidad de venta trae una caja: m² si se vende por m²,
+        piezas si se vende por pieza o juego, 1 si la caja es la unidad.
+        None si no se sabe.
+
+        Hasta el 18/11/2026 la conversión usaba siempre los m² de la caja,
+        aunque el producto se vendiera por unidad: "2 cajas" de una bacha
+        50×40 de a 2 por caja sumaban 0,8 al stock en vez de 4 bachas.
+        """
+        unidad = self.producto.unidad_venta
+        if unidad == self.producto.UNIDAD_M2:
+            return self.m2_por_caja_calculado
+        if unidad in (self.producto.UNIDAD_PIEZA, self.producto.UNIDAD_JUEGO):
+            return self.piezas_por_caja or None
+        if unidad == self.producto.UNIDAD_CAJA:
+            return 1
+        # Metro lineal: lo que rinde una caja de zócalos depende del largo de
+        # cada pieza y de cuántas trae, y un dato mal cargado daría un stock
+        # inventado. Se carga en metros, que es como se vende.
+        return None
+
     def convertir_a_unidad_venta(self, cantidad, unidad='venta'):
         """
-        Convierte una cantidad ingresada en 'venta' (m²/unidad tal cual),
-        'caja' o 'pallet' a la unidad de venta de esta variante (m²
-        normalmente). Único punto de conversión — lo usan tanto el ajuste
-        manual de stock (apps.inventario) como la recepción de pedidos a
-        proveedor (apps.costos), para no repetir la cuenta en dos lugares.
+        Convierte una cantidad ingresada en 'venta' (la unidad de venta tal
+        cual), 'caja' o 'pallet' a la unidad de venta de esta variante: m²,
+        piezas, juegos o cajas según el producto (ver `unidades_por_caja`).
+        Único punto de conversión — lo usan el ajuste manual de stock
+        (apps.inventario), el stock inicial del alta y la recepción de
+        pedidos a proveedor (apps.costos), para no repetir la cuenta.
         Lanza ValueError con un mensaje legible si a la variante le faltan
         los datos necesarios para la conversión pedida.
         """
@@ -623,21 +652,27 @@ class Variante(ModeloSincronizable):
         cantidad = Decimal(str(cantidad))
         if unidad == 'venta':
             return cantidad
+        if unidad not in ('caja', 'pallet'):
+            raise ValueError(f'Unidad de ingreso desconocida: {unidad}')
 
-        m2_caja = self.m2_por_caja_calculado
-        if not m2_caja or m2_caja <= 0:
-            raise ValueError('Esta variante no tiene m² por caja definido; no se puede cargar en cajas.')
-
-        if unidad == 'caja':
-            return (cantidad * Decimal(str(m2_caja))).quantize(Decimal('0.0001'))
+        por_caja = self.unidades_por_caja
+        if not por_caja or por_caja <= 0:
+            uv = self.producto.unidad_venta
+            if uv == self.producto.UNIDAD_M2:
+                falta = 'no tiene m² por caja definido'
+            elif uv == self.producto.UNIDAD_ML:
+                falta = 'se vende por metro lineal'
+            else:
+                falta = 'no tiene piezas por caja definidas'
+            plural = self.producto.UNIDADES_PLURAL.get(uv, uv)
+            raise ValueError(f'Esta variante {falta}; no se puede cargar en cajas. '
+                             f'Cargá la cantidad en {plural}.')
 
         if unidad == 'pallet':
             if not self.cajas_por_pallet or self.cajas_por_pallet <= 0:
                 raise ValueError('Esta variante no tiene cajas por pallet definidas; no se puede cargar en pallets.')
-            cajas = cantidad * self.cajas_por_pallet
-            return (cajas * Decimal(str(m2_caja))).quantize(Decimal('0.0001'))
-
-        raise ValueError(f'Unidad de ingreso desconocida: {unidad}')
+            cantidad = cantidad * self.cajas_por_pallet
+        return (cantidad * Decimal(str(por_caja))).quantize(Decimal('0.0001'))
 
     @property
     def stock_actual(self):

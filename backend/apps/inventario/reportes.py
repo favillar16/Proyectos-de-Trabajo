@@ -7,7 +7,7 @@ Arma la misma estructura que los reportes de caja
 con `apps.caja.reportes.render_pdf` / `render_xlsx`: un solo formato de hoja
 para todo lo que se imprime en el local.
 """
-from apps.caja.reportes import _fecha
+from apps.caja.reportes import UNIDAD_CORTA, _cantidad, _fecha
 
 TIPOS = {
     'entrada':    'Entrada',
@@ -23,6 +23,7 @@ def reporte_ajustes(movimientos, desde=None, hasta=None, buscar=''):
     sin_motivo = 0
     for m in movimientos:
         v = m.variante
+        unidad = UNIDAD_CORTA.get(v.producto.unidad_venta, v.producto.unidad_venta)
         descripcion = ' — '.join(x for x in (v.producto.nombre, v.dimension_display, v.color) if x)
         if not m.observaciones:
             sin_motivo += 1
@@ -31,8 +32,8 @@ def reporte_ajustes(movimientos, desde=None, hasta=None, buscar=''):
             descripcion,
             v.sku,
             TIPOS.get(m.tipo, m.get_tipo_display()),
-            f'{float(m.cantidad_anterior):.2f}',
-            f'{float(m.cantidad_posterior):.2f}',
+            _cantidad(m.cantidad_anterior, unidad),
+            _cantidad(m.cantidad_posterior, unidad),
             m.observaciones or 'Sin motivo cargado',
             m.usuario.nombre_completo if m.usuario_id else '',
         ])
@@ -55,6 +56,7 @@ def reporte_ajustes(movimientos, desde=None, hasta=None, buscar=''):
         'columnas':  ['Fecha', 'Producto', 'SKU', 'Movimiento', 'Antes', 'Después',
                       'Motivo', 'Usuario'],
         'cols_derecha': [4, 5],
+        'solo_excel': [2],
         'filas':     filas,
         'totales': {
             'Ajustes en el reporte': len(filas),

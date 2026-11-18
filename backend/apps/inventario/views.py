@@ -379,12 +379,16 @@ class AjusteStockView(views.APIView):
         except ValueError as e:
             return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
+        # La cuenta queda escrita en el movimiento, en la unidad del producto:
+        # "2 caja(s) × 2 piezas = 4 piezas", no siempre en m².
+        variante = stock.variante
+        uv = variante.producto.UNIDADES_PLURAL.get(variante.producto.unidad_venta, '')
         if unidad_ingreso == 'caja':
-            detalle = f"{data['cantidad']:.0f} caja(s) × {stock.variante.m2_por_caja_calculado} m² = {cantidad_final} m²"
+            detalle = f"{data['cantidad']:.0f} caja(s) × {variante.unidades_por_caja} {uv} = {cantidad_final} {uv}"
             obs = f'{obs} [{detalle}]'.strip()
         elif unidad_ingreso == 'pallet':
-            detalle = (f"{data['cantidad']:.0f} pallet(s) × {stock.variante.cajas_por_pallet} cajas "
-                       f"× {stock.variante.m2_por_caja_calculado} m² = {cantidad_final} m²")
+            detalle = (f"{data['cantidad']:.0f} pallet(s) × {variante.cajas_por_pallet} cajas "
+                       f"× {variante.unidades_por_caja} {uv} = {cantidad_final} {uv}")
             obs = f'{obs} [{detalle}]'.strip()
 
         try:

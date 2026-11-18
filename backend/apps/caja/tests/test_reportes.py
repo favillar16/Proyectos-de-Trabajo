@@ -170,3 +170,82 @@ class ReporteArqueoTests(TestCase):
             cajero=self.cajero, monto_apertura=Decimal('100000'))
         self._cobrar(sesion, 200000, 'efectivo')
         self.assertTrue(rep.render_pdf(rep.reporte_arqueo(self.hoy)).startswith(b'%PDF'))
+
+
+class FormatoDeReportesTests(TestCase):
+    """
+    El rediseño del 18/11/2026: lo que la propietaria lee tiene que entenderse
+    sin explicación, y lo que baja en Excel tiene que poder sumarse.
+    """
+    databases = {'default', 'sync'}
+
+    def setUp(self):
+        self.cajero = crear_usuario('cajera_formato')
+        self.sesion = crear_sesion(self.cajero)
+        self.hoy = date.today()
+        self.piso = crear_variante('Piso Formato', Decimal('100000'))
+
+    def test_las_cantidades_salen_en_su_unidad(self):
+        self.assertEqual(rep._cantidad(Decimal('12.6'), 'm²'), '12,60 m²')
+        self.assertEqual(rep._cantidad(Decimal('0.735'), 'm²'), '0,735 m²')
+        self.assertEqual(rep._cantidad(Decimal('1234.5'), 'm²'), '1.234,50 m²')
+        # Lo que se cuenta de a uno no lleva decimales: un grifo es "3 u.".
+        self.assertEqual(rep._cantidad(Decimal('3'), 'u.'), '3 u.')
+        self.assertEqual(rep._cantidad(Decimal('-2'), 'jgo.'), '-2 jgo.')
+
+    def test_el_excel_trae_numeros_y_no_texto(self):
+        self.assertEqual(rep._a_numero('Gs. 1.518.000')[0], 1518000)
+        self.assertEqual(rep._a_numero('- Gs. 220.000')[0], -220000)
+        self.assertEqual(rep._a_numero('12,60 m²')[0], 12.6)
+        self.assertEqual(rep._a_numero('3 u.')[0], 3)
+        self.assertAlmostEqual(rep._a_numero('33,7 %')[0], 0.337)
+        # Lo que no es un importe ni una cantidad queda como texto.
+        for texto in ('3 cobros', '2026', 'NP-202610-0001', 'Sin stock'):
+            self.assertIsNone(rep._a_numero(texto), texto)
+
+        from io import BytesIO
+        from openpyxl import load_workbook
+        pedido = crear_pedido(self.cajero, [(self.piso, '2', '100000')])
+        crear_pago(pedido, self.sesion, self.cajero, Decimal('200000'))
+        reporte = rep.reporte_ventas(self.hoy, self.hoy)
+        ws = load_workbook(BytesIO(rep.render_xlsx(reporte))).active
+        col_monto = reporte['columnas'].index('Monto') + 1
+        self.assertEqual(ws.cell(row=6, column=col_monto).value, 200000)
+        self.assertEqual(ws.freeze_panes, 'A6')
+
+    def test_el_pago_mixto_se_reparte_por_medio(self):
+        from apps.caja.models import PagoMedio
+        pedido = crear_pedido(self.cajero, [(self.piso, '3', '100000')])
+        pago = crear_pago(pedido, self.sesion, self.cajero, Decimal('300000'))
+        PagoMedio.objects.filter(pago=pago).delete()
+        PagoMedio.objects.create(pago=pago, medio='efectivo', monto=Decimal('100000'))
+        PagoMedio.objects.create(pago=pago, medio='cheque', monto=Decimal('120000'))
+        PagoMedio.objects.create(pago=pago, medio='cheque', monto=Decimal('80000'))
+        pago.medio_pago = 'mixto'
+        pago.save(update_fields=['medio_pago'])
+
+        reporte = rep.reporte_ventas(self.hoy, self.hoy)
+        por_medio = {f[0]: f[2] for f in reporte['resumen']['desglose']['filas']}
+        self.assertEqual(por_medio, {'Efectivo': 'Gs. 100.000', 'Cheque': 'Gs. 200.000'})
+        self.assertNotIn('Pago mixto', por_medio)
+        # En el detalle es un solo cobro, nombrado por sus medios y sin repetir.
+        col_medio = reporte['columnas'].index('Medio')
+        self.assertEqual(reporte['filas'][0][col_medio], 'Efectivo + Cheque')
+
+    def test_todos_los_reportes_se_imprimen(self):
+        pedido = crear_pedido(self.cajero, [(self.piso, '2', '100000')])
+        crear_pago(pedido, self.sesion, self.cajero, Decimal('200000'))
+        reportes = [
+            rep.reporte_stock(), rep.reporte_ventas(self.hoy, self.hoy),
+            rep.reporte_caja(self.hoy, self.hoy), rep.reporte_productos(self.hoy, self.hoy),
+            rep.reporte_productos(self.hoy, self.hoy, detalle=True),
+            rep.reporte_ganancias(self.hoy, self.hoy), rep.reporte_comisiones(self.hoy, self.hoy),
+            rep.reporte_arqueo(self.hoy),
+        ]
+        for r in reportes:
+            self.assertTrue(rep.render_pdf(r).startswith(b'%PDF'), r['titulo'])
+            self.assertTrue(rep.render_pdf(r, tamanio='oficio').startswith(b'%PDF'), r['titulo'])
+            self.assertTrue(rep.render_xlsx(r).startswith(b'PK'), r['titulo'])
+        # Sin movimientos también se imprime, con un aviso en vez de una tabla vacía.
+        vacio = rep.reporte_comisiones(self.hoy - timedelta(days=400), self.hoy - timedelta(days=399))
+        self.assertTrue(rep.render_pdf(vacio).startswith(b'%PDF'))
