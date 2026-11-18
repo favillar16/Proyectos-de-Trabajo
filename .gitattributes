@@ -1,0 +1,8 @@
+# Archivos binarios: git no tiene que convertirles los fines de línea.
+# Sin esto, con core.autocrlf=true en Windows, un PDF podía bajar dañado.
+*.pdf  binary
+*.xlsx binary
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.mp4  binary
